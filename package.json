@@ -1,7 +1,7 @@
 {
   "name": "grokbuild-tokyo",
   "productName": "Grokbuild Tokyo",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "A Tokyo rainy-night desktop client for the locally installed Grok Build CLI",
   "main": "src/main.cjs",
   "private": true,

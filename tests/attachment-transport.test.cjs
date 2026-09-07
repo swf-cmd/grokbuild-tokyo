@@ -126,7 +126,7 @@ test('attachment preparation reserves the turn, rejects double sends and honors 
   assert(events.some(item => item.status === 'cancelled'));
 });
 
-test('non-image ACP resources become attachment events in messages, tools and replay', async t => {
+test('non-image ACP message resources become attachments while tool resources retain their tool origin', async t => {
   const { adapter, sessionId, events, send } = await fixture(t);
   const link = { type: 'resource_link', uri: 'file:///reports/result.pdf', name: 'result.pdf', mimeType: 'application/pdf', size: 42 };
   const update = data => send({ method: 'session/update', params: { sessionId, update: data } });
@@ -137,13 +137,13 @@ test('non-image ACP resources become attachment events in messages, tools and re
   update({ sessionUpdate: 'tool_call_update', toolCallId: 'build-report', content: [{ type: 'content', content: link }] });
   update({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', mimeType: 'image/png', data: png.toString('base64') } });
   const attachments = events.filter(item => item.type === 'attachment');
-  assert.equal(attachments.length, 3);
+  assert.equal(attachments.length, 2);
   assert.equal(attachments[0].role, 'user');
   assert.equal(attachments[0].replay, true);
   assert.equal(attachments[0].attachment.name, 'result.pdf');
   assert.equal(attachments[1].role, 'assistant');
   assert.equal(attachments[1].replay, false);
-  assert.equal(attachments[2].role, 'assistant');
+  assert.deepEqual(events.find(item => item.type === 'tool').content, [{ type: 'content', content: link }]);
   assert.equal(events.filter(item => item.type === 'image').length, 1);
   assert(!events.some(item => item.type === 'text' && item.text === 'Some notes'), 'embedded documents are not duplicated into assistant chat text');
 });

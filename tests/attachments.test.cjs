@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { stageAttachments, attachmentsFromContent, attachmentsFromText, resolveAttachment, safeName } = require('../src/attachments.cjs');
+const { stageAttachments, attachmentsFromContent, attachmentsFromText, attachmentsFromTools, restoreMessageAttachments, resolveAttachment, safeName } = require('../src/attachments.cjs');
 
 async function fixture(t) {
   const base = path.resolve(__dirname, '../work/attachment-tests');
@@ -70,6 +70,37 @@ test('Markdown file links become attachments while web pages and images remain o
   assert.equal(attachmentsFromText('[结论](#summary)').length, 0);
   assert.equal(attachmentsFromText('`[example](fake.txt)`').length, 0);
   assert.equal(attachmentsFromText('[报告][result]\n\n[result]: report.csv')[0].src, 'report.csv');
+});
+
+test('read-tool links, text resources and binary resources stay out of reply attachments', () => {
+  const resources = [
+    { type: 'resource_link', uri: 'file:///report.pdf', mimeType: 'application/pdf' },
+    { type: 'resource', resource: { uri: 'table.csv', mimeType: 'text/csv', text: 'name,value\nTokyo,1' } },
+    { type: 'resource', resource: { uri: 'archive.zip', mimeType: 'application/zip', blob: 'AAECAw==' } },
+  ];
+  for (const resource of resources) {
+    const content = [{ type: 'content', content: resource }];
+    const read = { title: 'read_file', kind: 'other', content };
+    const legacy = attachmentsFromContent(content);
+    assert.equal(legacy.length, 1, 'the previous unfiltered path promoted this resource');
+    assert.deepEqual(attachmentsFromTools([null, read]), []);
+    assert.deepEqual(restoreMessageAttachments({ role: 'assistant', attachments: legacy, tools: [null, read] }), []);
+    assert.deepEqual(restoreMessageAttachments({ role: 'user', attachments: legacy, tools: [read] }), legacy);
+    assert.equal(attachmentsFromTools([{ ...read, title: 'Create file', kind: 'execute' }]).length, 1);
+  }
+});
+
+test('explicit assistant attachments and Markdown links survive matching read results', () => {
+  const content = [{ type: 'resource_link', uri: 'report.pdf', mimeType: 'application/pdf' }];
+  const [attachment] = attachmentsFromContent(content);
+  const tools = [{ kind: 'read', content }];
+  const explicit = { ...attachment, origin: 'assistant' };
+  assert.deepEqual(restoreMessageAttachments({ role: 'assistant', attachments: [explicit], tools }), [explicit]);
+  const linked = restoreMessageAttachments({ role: 'assistant', attachments: [attachment], text: '[Download](report.pdf)', tools });
+  assert(linked.some(item => item.name === 'Download' && item.origin === 'assistant'));
+  const generated = restoreMessageAttachments({ role: 'assistant', tools: [...tools, { toolCallId: 'generate', kind: 'execute', content }] });
+  assert.equal(generated.length, 1);
+  assert.equal(generated[0].toolCallId, 'generate');
 });
 
 test('local downloads validate real paths, encoded paths, schemes and symlink escapes', async t => {

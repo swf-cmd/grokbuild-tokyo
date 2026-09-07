@@ -464,8 +464,7 @@ class GrokAdapter extends EventEmitter {
       }
       this._event(event);
       // The controller merges partial tool updates and decides which tool media
-      // are output. A read_file image is input context, not an assistant reply.
-      for (const attachment of attachmentsFromContent(update.content)) this._event({ ...common, type: 'attachment', attachment, role: 'assistant' });
+      // are output. Read images and file resources are input context, not replies.
     } else if (sessionUpdate === 'plan') {
       this._event({ ...common, type: 'status', status: 'plan', entries: update.entries || [] });
     } else if (sessionUpdate === 'config_option_update') {

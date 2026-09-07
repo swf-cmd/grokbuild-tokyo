@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { fileURLToPath } = require('node:url');
-const { imageMime } = require('./media.cjs');
+const { imageMime, isReadTool } = require('./media.cjs');
 const { createI18n } = require('./i18n.js');
 const { lexer, walkTokens } = require('./renderer/vendor/marked.umd.js');
 const defaultT = createI18n('en');
@@ -126,6 +126,24 @@ function attachmentsFromText(text) {
   return result;
 }
 
+function attachmentsFromTools(tools) {
+  return (Array.isArray(tools) ? tools : []).filter(tool => !isReadTool(tool)).flatMap(tool =>
+    attachmentsFromContent(tool?.content).map(attachment => ({ ...attachment, origin: 'tool', toolCallId: tool.toolCallId })));
+}
+
+function restoreMessageAttachments(message) {
+  const tools = Array.isArray(message.tools) ? message.tools : [];
+  const outputs = message.role === 'assistant' ? attachmentsFromTools(tools) : [];
+  const explicit = message.role === 'assistant' ? attachmentsFromText(message.text).map(attachment => ({ ...attachment, origin: 'assistant' })) : [];
+  const readSources = new Set(tools.filter(isReadTool).flatMap(tool => attachmentsFromContent(tool.content)).map(attachment => attachment.src));
+  const outputSources = new Set([...outputs, ...explicit].map(attachment => attachment.src));
+  const saved = (Array.isArray(message.attachments) ? message.attachments : []).filter(attachment => typeof attachment?.id === 'string' && typeof attachment.src === 'string'
+    && (message.role !== 'assistant' || attachment.origin === 'assistant' || !readSources.has(attachment.src) || outputSources.has(attachment.src)));
+  // Old clients promoted read results into reply attachments. Remove those
+  // echoes while preserving uploads, generated files and explicit reply links.
+  return [...new Map([...outputs, ...saved, ...explicit].map(attachment => [attachment.id, attachment])).values()];
+}
+
 async function resolveAttachment(src, directories, t = defaultT, fetcher = globalThis.fetch) {
   if (typeof src !== 'string' || !src.trim()) throw new Error(t('无效的附件'));
   src = src.trim();
@@ -180,4 +198,4 @@ async function resolveAttachment(src, directories, t = defaultT, fetcher = globa
   throw new Error(t('找不到附件文件，文件可能已移动或删除'));
 }
 
-module.exports = { MAX_ATTACHMENT_BYTES, MAX_TOTAL_BYTES, MAX_ATTACHMENTS, safeName, stageAttachments, attachmentsFromContent, attachmentsFromText, resolveAttachment };
+module.exports = { MAX_ATTACHMENT_BYTES, MAX_TOTAL_BYTES, MAX_ATTACHMENTS, safeName, stageAttachments, attachmentsFromContent, attachmentsFromText, attachmentsFromTools, restoreMessageAttachments, resolveAttachment };

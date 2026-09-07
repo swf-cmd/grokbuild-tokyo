@@ -6,7 +6,7 @@ const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
 const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
-const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromContent, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
+const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
 const { pathToFileURL } = require('node:url');
 
 function isPathType(value, type) {
@@ -70,8 +70,7 @@ class AppController extends EventEmitter {
           for (const m of session.messages || []) {
             if (m.status === 'working') m.status = 'cancelled';
             m.images = restoreMessageImages(m);
-            const attachments = [...(Array.isArray(m.attachments) ? m.attachments : []), ...attachmentsFromContent(m.tools), ...(m.role === 'assistant' ? attachmentsFromText(m.text) : [])];
-            m.attachments = [...new Map(attachments.filter(item => typeof item?.id === 'string' && typeof item.src === 'string').map(item => [item.id, item])).values()];
+            m.attachments = restoreMessageAttachments(m);
           }
         }
       } catch {
@@ -532,15 +531,25 @@ class AppController extends EventEmitter {
       }
       const addAttachment = attachment => {
         message.attachments ||= [];
-        if (!attachment?.id || !attachment.src || message.attachments.some(item => item.id === attachment.id)) return;
+        if (!attachment?.id || !attachment.src) return;
+        const index = message.attachments.findIndex(item => item.id === attachment.id);
+        if (index >= 0) {
+          // Explicit assistant output remains output even when a tool previously
+          // returned the same resource. Keep that provenance across restarts.
+          if (attachment.origin === 'assistant') message.attachments[index] = attachment;
+          return;
+        }
         message.attachments.push(attachment);
         if (event.type !== 'attachment') this.emitEvent({ type: 'attachment', sessionId: current.sessionId, attachment });
       };
       if (event.type === 'text') {
         message.text += event.text || '';
-        for (const attachment of attachmentsFromText(message.text)) addAttachment(attachment);
+        for (const attachment of attachmentsFromText(message.text)) addAttachment({ ...attachment, origin: 'assistant' });
       }
-      if (event.type === 'attachment') addAttachment(event.attachment);
+      if (event.type === 'attachment') {
+        event = { ...event, attachment: { ...event.attachment, origin: 'assistant' } };
+        addAttachment(event.attachment);
+      }
       if (event.type === 'thought') message.thought += event.text || '';
       if (event.type === 'image' && event.image?.src) {
         event = { ...event, image: { ...event.image, origin: 'assistant' } };
@@ -551,7 +560,7 @@ class AppController extends EventEmitter {
       if (event.type === 'tool') {
         const existing = message.tools.find(t => t.toolCallId === event.toolCallId);
         if (existing) Object.assign(existing, event); else message.tools.push({ ...event });
-        for (const attachment of attachmentsFromContent(event.content)) addAttachment(attachment);
+        for (const attachment of attachmentsFromTools([existing || event])) addAttachment(attachment);
         const images = imagesFromTools([existing || event]);
         for (const image of images) {
           message.images ||= [];

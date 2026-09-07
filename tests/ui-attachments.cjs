@@ -85,6 +85,45 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       assert.equal(await page.locator('.message.assistant').last().locator('.chat-image').count(), 0);
       assert.deepEqual(readState().sessions.find(item => item.id === firstSession).messages.at(-1).images, []);
     });
+    await stage('reading text uploads never echoes embedded resources or resource links, including after reload', async () => {
+      await choose([documentFile], 1);
+      await page.locator('#prompt').fill('WAIT summarize uploaded document');
+      await page.locator('#send-button').click();
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden);
+      const embedded = { type: 'content', content: { type: 'resource', resource: { uri: 'notes.txt', mimeType: 'text/plain', text: fs.readFileSync(documentFile, 'utf8') } } };
+      const linked = { type: 'content', content: { type: 'resource_link', uri: documentFile, name: 'notes.txt', mimeType: 'text/plain' } };
+      const updates = [
+        { title: 'read_file', kind: 'other', status: 'pending', content: [embedded] },
+        { title: 'Read `notes.txt`', kind: 'read', status: 'in_progress', rawInput: { variant: 'ReadFile' }, content: [linked] },
+        { status: 'completed', content: [embedded, linked] },
+      ];
+      for (const update of updates) {
+        await desktop.evaluate((_electron, update) => {
+          const fixture = globalThis.__tokyoUITest;
+          const sessionId = fixture.calls.filter(item => item.method === 'prompt').at(-1).sessionId;
+          fixture.adapter.emit('event', { type: 'tool', sessionId, toolCallId: 'read-document', ...update });
+        }, update);
+        await page.locator(`.message.assistant .tool-entry[data-tool-id="read-document"][data-status="${update.status}"]`).waitFor();
+        assert.equal(await page.locator('.message.assistant').last().locator('.attachment-card').count(), 0, `${update.status} read result must remain inside the tool output`);
+        assert.deepEqual(await page.locator('.message.user').last().locator('.attachment-name').allTextContents(), ['notes.txt']);
+      }
+      await desktop.evaluate(() => {
+        const adapter = globalThis.__tokyoUITest.adapter;
+        for (const [sessionId, resolve] of adapter.pending) {
+          adapter.emit('event', { type: 'text', sessionId, text: 'The document contains a multilingual attachment test.' });
+          resolve({ stopReason: 'end_turn' }); adapter.pending.delete(sessionId);
+        }
+      });
+      await idle();
+      const persisted = readState().sessions.find(item => item.id === firstSession).messages;
+      assert.deepEqual(persisted.at(-1).attachments || [], []);
+      assert.deepEqual(persisted.at(-2).attachments.map(item => item.name), ['notes.txt']);
+      await page.reload(); await ready();
+      await page.locator('.session-select').first().click(); await idle();
+      await page.locator('.message.assistant').last().filter({ hasText: 'The document contains a multilingual attachment test.' }).waitFor();
+      assert.equal(await page.locator('.message.assistant').last().locator('.attachment-card').count(), 0);
+      assert.deepEqual(await page.locator('.message.user').last().locator('.attachment-name').allTextContents(), ['notes.txt']);
+    });
     await stage('draft attachments stay with their conversation and survive IPC send rejection', async () => {
       await choose([documentFile], 1); await page.locator('#prompt').fill('First draft');
       await page.locator('#new-session').click(); await drafts(0);
@@ -200,10 +239,12 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
         const adapter = globalThis.__tokyoUITest.adapter;
         adapter.emit('event', { type: 'text', sessionId, text: '[Download report](report.csv)' });
         adapter.emit('event', { type: 'attachment', sessionId, attachment: { id: 'embedded-fixture', name: '<unsafe>.txt', mimeType: 'text/plain', size: 8, src: 'data:text/plain;base64,ZW1iZWRkZWQ=' } });
+        adapter.emit('event', { type: 'tool', sessionId, toolCallId: 'generate-report', title: 'generate_file', kind: 'edit', status: 'completed', content: [{ type: 'content', content: { type: 'resource', resource: { uri: 'generated.txt', mimeType: 'text/plain', text: 'A newly generated report.' } } }] });
       }, { sessionId });
       const report = page.locator('.message.assistant .attachment-card').filter({ hasText: 'Download report' });
       const embedded = page.locator('.message.assistant .attachment-card').filter({ hasText: '<unsafe>.txt' });
-      await report.waitFor(); await embedded.waitFor();
+      const generated = page.locator('.message.assistant .attachment-card').filter({ hasText: 'generated.txt' });
+      await report.waitFor(); await embedded.waitFor(); await generated.waitFor();
       assert.equal(await page.locator('.attachment-card unsafe').count(), 0);
       await queueDialog({ canceled: true }); await page.locator('.message-body a').filter({ hasText: 'Download report' }).click();
       await queueDialog({ canceled: false, filePath: path.join(testRoot, 'saved-report.csv') }); await report.locator('.attachment-save').click();
@@ -212,11 +253,13 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       assert.equal(fs.readFileSync(path.join(testRoot, 'saved-report.csv'), 'utf8'), fs.readFileSync(resultFile, 'utf8'));
       await queueDialog({ canceled: false, filePath: path.join(testRoot, 'embedded.txt') }); await embedded.locator('.attachment-save').click();
       await page.locator('.toast').filter({ hasText: 'embedded.txt' }).waitFor(); assert.equal(fs.readFileSync(path.join(testRoot, 'embedded.txt'), 'utf8'), 'embedded');
+      await queueDialog({ canceled: false, filePath: path.join(testRoot, 'generated.txt') }); await generated.locator('.attachment-save').click();
+      await page.locator('.toast').filter({ hasText: 'generated.txt' }).waitFor(); assert.equal(fs.readFileSync(path.join(testRoot, 'generated.txt'), 'utf8'), 'A newly generated report.');
       await page.locator('#stop-button').click(); await idle(); await page.reload(); await ready();
       await page.locator('.session-select').filter({ hasText: 'Second conversation' }).click(); await idle();
-      await report.waitFor(); await embedded.waitFor();
+      await report.waitFor(); await embedded.waitFor(); await generated.waitFor();
       const persisted = readState().sessions.find(session => session.id === sessionId).messages.at(-1).attachments;
-      assert.equal(persisted.length, 2);
+      assert.equal(persisted.length, 3);
       assert.ok(readState().sessions.find(session => session.id === firstSession).messages[0].attachments.length === 2);
     });
     await stage('compact layout and all seven translated attachment controls', async () => {

@@ -6,6 +6,7 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppController } = require('../src/app-controller.cjs');
+const { attachmentsFromContent } = require('../src/attachments.cjs');
 
 // Fixtures must never resolve the caller's inline or redirected authentication.
 for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
@@ -128,6 +129,65 @@ test('attachment-only turns preserve files, validate tokens and survive restart'
   assert.match(controller.exportMarkdown(session.id), /report\.txt/);
   const restored = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
   assert.equal((await restored.attachmentBytes({ sessionId: session.id, attachmentId: file.id })).toString(), 'hello file');
+  await restored.close();
+});
+
+test('read resources never become live reply attachments, and legacy echoes are removed on restart', async t => {
+  const { root, controller, session, adapter } = await started(t);
+  const [file] = await controller.importAttachments({ files: [{ name: 'input.txt', data: Buffer.from('uploaded text').toString('base64') }] });
+  await controller.send({ sessionId: session.id, text: 'Summarize this file', attachments: [file.id] });
+  const events = []; controller.on('event', event => events.push(event));
+  const resources = [
+    { type: 'resource_link', uri: adapter.prompts[0].attachments[0].uri, mimeType: 'text/plain' },
+    { type: 'resource', resource: { uri: 'table.csv', mimeType: 'text/csv', text: 'name,value\nTokyo,1' } },
+    { type: 'resource', resource: { uri: 'report.pdf', mimeType: 'application/pdf', blob: 'JVBERg==' } },
+  ];
+  for (const [index, resource] of resources.entries()) {
+    const emit = update => adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: `read-${index}`, ...update });
+    emit({ title: 'read_file', kind: 'other', status: 'pending' });
+    emit({ title: 'Read `input file`', kind: 'read', rawInput: { variant: 'ReadFile' } });
+    emit({ status: 'completed', content: [{ type: 'content', content: resource }] });
+    emit({ status: 'completed' });
+  }
+  adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'read-plain', kind: 'read', content: [{ type: 'content', content: { type: 'text', text: 'Plain tool text [file](input.txt)' } }] });
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: 'A summary of the uploaded data.' });
+  assert.equal(events.filter(event => event.type === 'attachment').length, 0);
+  assert.deepEqual(session.messages[1].attachments, []);
+  assert.equal(session.messages[1].text, 'A summary of the uploaded data.');
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
+  // Simulate a history saved by the previous client, including already-promoted
+  // read resources. Loading must also remove them from export and reply cards.
+  session.messages[1].attachments = attachmentsFromContent(resources);
+  controller.save();
+  const restored = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+  assert.deepEqual(restored.sessions[0].messages[1].attachments, []);
+  assert.equal(restored.sessions[0].messages[0].attachments.length, 1);
+  assert.equal((await restored.attachmentBytes({ sessionId: session.id, attachmentId: file.id })).toString(), 'uploaded text');
+  assert(!restored.exportMarkdown(session.id).includes('table.csv'));
+  assert(!restored.exportMarkdown(session.id).includes('report.pdf'));
+  await restored.close();
+});
+
+test('generated and explicit assistant attachments are preserved, including matching read content', async t => {
+  const { root, controller, session, adapter } = await started(t);
+  const resource = { type: 'resource', resource: { uri: 'result.txt', mimeType: 'text/plain', text: 'Generated report' } };
+  const [attachment] = attachmentsFromContent(resource);
+  const events = []; controller.on('event', event => events.push(event));
+  await controller.send({ sessionId: session.id, text: 'Create a report' });
+  for (const update of [
+    { title: 'Create report', kind: 'execute', status: 'pending' },
+    { status: 'completed', content: [{ type: 'content', content: resource }] },
+    { status: 'completed' },
+  ]) adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'create-report', ...update });
+  assert.equal(events.filter(event => event.type === 'attachment').length, 1);
+  assert.equal(session.messages[1].attachments.length, 1);
+  adapter.emit('event', { type: 'attachment', sessionId: session.id, attachment });
+  assert.equal(session.messages[1].attachments[0].origin, 'assistant');
+  adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'read-report', kind: 'read', content: [{ type: 'content', content: resource }] });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
+  const restored = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+  assert.equal(restored.sessions[0].messages[1].attachments.length, 1);
+  assert.equal((await restored.attachmentBytes({ sessionId: session.id, attachmentId: attachment.id })).toString(), 'Generated report');
   await restored.close();
 });
 
