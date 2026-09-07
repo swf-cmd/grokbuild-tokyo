@@ -10,7 +10,7 @@ const root = path.resolve(__dirname, '..');
     out: path.join(root, 'work', 'package'), overwrite: true, asar: true,
     icon: path.join(root, 'src', 'renderer', 'assets', 'icon.ico'),
     ignore: ignorePackagePath,
-    win32metadata: { CompanyName: 'Local desktop project', FileDescription: 'Grokbuild Tokyo — 东京雨夜', ProductName: 'Grokbuild Tokyo' }
+    win32metadata: { CompanyName: 'swf-cmd', FileDescription: 'Grokbuild Tokyo — 东京雨夜', ProductName: 'Grokbuild Tokyo' }
   });
   const { appDir } = installPackagedBuild(root, builds[0]);
   console.log(path.join(appDir, 'Grokbuild Tokyo.exe'));

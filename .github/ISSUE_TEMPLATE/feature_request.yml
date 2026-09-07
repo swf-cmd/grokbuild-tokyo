@@ -1,0 +1,28 @@
+name: Feature request / 功能建议
+description: Suggest an improvement / 提出改进建议
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user need and check for existing requests first.
+        请先查找类似建议，再描述希望解决的实际需求。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 问题或使用场景
+      description: What are you trying to accomplish? / 你希望完成什么？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议的行为
+      description: Describe the desired experience; include a sketch if helpful / 描述希望的使用体验，可附草图。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context / 替代方案与补充信息
+      description: Optional. Include relevant official CLI capabilities or limitations / 可选，可补充相关官方 CLI 能力或限制。

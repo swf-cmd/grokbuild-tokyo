@@ -5,8 +5,16 @@
   "description": "A Tokyo rainy-night desktop client for the locally installed Grok Build CLI",
   "main": "src/main.cjs",
   "private": true,
-  "author": "Local desktop project",
-  "license": "UNLICENSED",
+  "author": "swf-cmd",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swf-cmd/grokbuild-tokyo.git"
+  },
+  "homepage": "https://github.com/swf-cmd/grokbuild-tokyo#readme",
+  "bugs": {
+    "url": "https://github.com/swf-cmd/grokbuild-tokyo/issues"
+  },
   "engines": {
     "node": ">=22.12.0"
   },

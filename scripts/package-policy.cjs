@@ -4,7 +4,7 @@ const path = require('node:path');
 
 // Shipping a file is an explicit decision. Git ignores are not packaging rules.
 const packageFiles = [
-  'package.json', 'THIRD_PARTY_NOTICES.md',
+  'package.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
   'licenses/DOMPurify-LICENSE.txt', 'licenses/marked-LICENSE.txt',
   'src/account-manager.cjs', 'src/app-controller.cjs', 'src/attachments.cjs',
   'src/grok-adapter.cjs', 'src/i18n.js', 'src/locales.js', 'src/main.cjs',

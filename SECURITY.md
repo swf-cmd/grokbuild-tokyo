@@ -1,17 +1,26 @@
-# 安全说明
+# Security policy
 
-本客户端是 Grok Build CLI 的本地界面。渲染进程启用隔离、沙箱和 CSP，主进程仅接受主窗口主框架的有限 IPC。回复 HTML 使用标签和属性允许列表；权限请求使用不可复用的客户端 ID，授权选择必须来自当前请求提供的选项。
+English · [简体中文](SECURITY.zh-CN.md)
 
-## 信任与数据边界
+Grokbuild Tokyo is an unofficial local interface for Grok Build CLI. Security fixes target the latest version on the default branch; older versions do not have a separate maintenance commitment. Check whether an issue still occurs on the latest version when it is safe to do so.
 
-- CLI、工作目录以及用户批准执行的工具仍具有当前系统用户的权限。独立账户提供配置和历史隔离，不是操作系统级安全沙箱。客户端不会覆盖官方 CLI 的授权规则；运行前应理解自己的 CLI 配置。
-- `data` 中包含聊天、附件、账户配置和 CLI 保存的凭据；本应用不额外加密这些文件。不要上传该目录或将其放入共享发布包。相同系统用户可读取这些本地文件。
-- 本地图片和回复附件仅允许读取当前会话的工作目录、对应缓存或账户附件目录。读取时检查真实路径及打开文件的身份，并限制读取长度。该机制不能阻止已经获准运行的 CLI 自己读取其他文件。
-- 远程图片和附件只连接公开 HTTP/HTTPS 地址，逐次验证重定向及实际连接的 DNS 结果，拒绝私网、回环、链路本地等特殊地址。每次下载最多 20 MB、总计 60 秒，不携带浏览器 Cookie，不使用环境代理；远程图片在格式检查后以 data URL 显示。
-- 公开图片会自动发起网络请求，来源网站可看到连接信息；HTTP 不提供 HTTPS 的传输保护。需要浏览器登录、环境代理、局域网访问或强制压缩响应的资源可能无法加载。
-- 点击网页链接会交给系统浏览器。仅允许 HTTP/HTTPS；浏览器中的登录和网页行为由用户确认。
+## Report a vulnerability
 
-## 发布前检查
+Use [GitHub private vulnerability reporting](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new) when available. If that page is unavailable, open an issue asking for a private reporting channel **without disclosing vulnerability details**. Wait for a private channel before sharing a proof of concept or sensitive logs.
+
+Include the affected application and CLI versions, Windows version, minimal reproduction steps, expected and actual behavior, and the potential impact. Remove credentials, personal conversations, account identifiers, and private file contents from all attachments. Please allow time to investigate and prepare a fix before public disclosure; no fixed response time is promised.
+
+## Trust and data boundaries
+
+- The renderer enables context isolation, sandboxing, and a Content Security Policy. The main process exposes limited IPC to the main window's main frame. Reply HTML uses tag and attribute allowlists. Permission requests use non-reusable client IDs; a response must match an option from the active request.
+- The CLI, working directory, and tools you authorize still operate with the current system user's permissions. Separate accounts isolate configuration and history; they are not operating-system security sandboxes. The client does not override the official CLI's authorization rules. Understand your CLI configuration before running it.
+- `data/` contains conversations, attachments, account configuration, and credentials saved by the CLI. This application does not add encryption to those files. Do not upload this directory or include it in a shared build. Other processes running as the same system user can read these files.
+- Local images and reply attachments can only be read from the current session's working directory, corresponding cache, or account attachment directory. Reads check the real path and the opened file's identity and impose size limits. These restrictions do not prevent an authorized CLI tool from reading other files itself.
+- Remote images and attachments only connect to public HTTP/HTTPS addresses. Every redirect and the DNS results used for the actual connection are checked; private, loopback, link-local, and other special-use addresses are rejected. Each download is limited to 20 MB and a total of 60 seconds. Downloads do not carry browser cookies or use environment proxies. Remote images are checked for a supported format and displayed as data URLs.
+- Public images can trigger automatic network requests, exposing connection information to their source websites. HTTP does not provide HTTPS transport protection. Resources that require browser login, an environment proxy, LAN access, or a forcibly compressed response may not load.
+- Web links open in the system browser. Only HTTP/HTTPS links are allowed; browser authentication and activity are handled outside the client.
+
+## Checks before a release
 
 ```powershell
 npm ci
@@ -23,8 +32,6 @@ node scripts/verify-package.cjs
 node tests/ui-security.cjs --packaged
 ```
 
-常规界面回归及打包后测试见 README。测试默认使用隔离的模拟 CLI，不执行真实模型请求。构建使用明确的文件清单，拒绝清单中的符号链接，并整体替换输出目录；旧 `App` 留在 `work/package-backups`。发布新版本时应扫描完整 Git 历史和最终发布文件，不要只依赖 `.gitignore`。本次核查不意味着以后新增提交或发行包自动安全。
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete UI and packaged checks. Default tests use isolated mock CLI/login behavior and do not execute real model requests. Live checks are separate, require local CLI access, and can consume account usage.
 
-## 漏洞反馈
-
-请勿在公开 issue 中附上登录凭据、个人聊天或可直接利用的漏洞细节。若仓库已开启 GitHub 私密漏洞报告，请使用该入口；否则先发起不含敏感细节的 issue，请维护者提供私密联系渠道。报告应包含受影响版本、最小复现步骤及去除个人数据的日志。
+Packaging uses an explicit file allowlist, rejects symbolic links in that list, and replaces the entire output directory. The previous `App/` directory is retained under `work/package-backups/`. Scan the full Git history and final distribution for private data before a release; `.gitignore` alone is insufficient. Passing checks for one revision does not establish that future changes or release files are safe.

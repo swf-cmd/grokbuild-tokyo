@@ -1,0 +1,37 @@
+name: Bug report / 问题反馈
+description: Report a reproducible problem / 反馈可复现的问题
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check existing issues first. Never post credentials or private conversations.
+        请先搜索已有问题，不要提交凭据或私人聊天。
+        For vulnerabilities / 漏洞反馈: [Security policy / 安全说明](https://github.com/swf-cmd/grokbuild-tokyo/blob/main/SECURITY.md).
+  - type: input
+    id: versions
+    attributes:
+      label: Versions / 版本
+      description: App version, Grok Build CLI version, Windows version, and Node.js version if running from source.
+      placeholder: "App 1.2.4; Grok Build 1.0.13; Windows 11; Node.js 24"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      description: Include relevant settings, using demo data and anonymized paths / 使用演示数据和匿名路径，说明相关设置。
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior / 预期与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or logs / 截图或日志
+      description: Optional. Remove account identifiers, tokens, private paths, and personal content / 可选，请删除账户标识、令牌、私人路径及个人内容。
