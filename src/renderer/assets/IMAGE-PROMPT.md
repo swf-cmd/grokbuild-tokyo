@@ -1,0 +1,7 @@
+# 涩谷雨夜背景
+
+工具：内置 imagegen。最终文件：tokyo-rain.png。
+
+最终提示词：
+
+Replace the quiet narrow street in this background with a spectacular busy and prosperous SHIBUYA MAIN STREET / Shibuya scramble crossing, Tokyo on a rainy night. The user explicitly wants a much more bustling big-city scene. Keep cinematic photorealism and landscape 16:9 composition, but completely change the location. Wide multi-lane avenue leading into the famous large pedestrian scramble crossing, monumental buildings densely covered with huge bright illuminated video billboards and colorful vertical shop signs, crowded umbrella-carrying pedestrians, multiple taxis and buses with headlight trails, energetic modern urban activity. Large commercial buildings and screen facades like the heart of Shibuya, unmistakably a bustling grand Tokyo shopping district, not a narrow alley. Prominent crosswalk stripes with wet asphalt reflecting cyan, white, red and warm amber signage. Eye-level wide-angle photograph looking down the vibrant avenue, realistic photographic film grain and fine rain. Busy lights and buildings on right two thirds, left third somewhat darker so desktop app text will remain readable, but clearly part of the same busy avenue. Dramatic attractive deep navy night tones with substantially more luminous signs and city life than the reference. No UI, no app title, no logos overlaid on the image, no watermark. The scene must feel glamorous and bustling, an exciting rainy night in the center of Shibuya.

@@ -1,0 +1,1112 @@
+/* Grokbuild Tokyo — local desktop renderer. All engine access stays in preload. */
+'use strict';
+
+(() => {
+  const $ = id => document.getElementById(id);
+  const api = window.tokyo;
+  const state = {
+    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90 },
+    info: { models: [], modes: [], version: '' },
+    sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true,
+    sending: false, configuring: false, selecting: false, savingSettings: false, renaming: false, deleting: false,
+    busy: new Set(), started: new Map(), permissions: new Map(),
+    drafts: new Map(), selectedModel: '', selectedMode: '', menuId: null,
+    renameId: null, deleteId: null, renderPending: false, lastError: '',
+    accounts: [], activeAccountId: 'local', login: null, accountAction: false, accountDrafts: new Map(),
+    accountRenameId: null, accountDeleteId: null, accountCancelPending: false,
+  };
+  const activeSession = () => state.sessions.find(s => s.id === state.activeId);
+  const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
+  const clearPermissions = id => { for (const [key, permission] of state.permissions) if (permission.sessionId === id) state.permissions.delete(key); };
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const safeText = value => typeof value === 'string' ? value : value == null ? '' : Array.isArray(value) ? value.map(safeText).join('\n') : typeof value === 'object' ? value.type === 'image' || value.resource?.blob ? '[图片]' : value.text != null ? safeText(value.text) : value.content != null ? safeText(value.content) : JSON.stringify(value, null, 2) : String(value);
+  const sessionTime = session => new Date(session.updatedAt || session.createdAt || 0).getTime() || 0;
+  const sessionTitle = session => session.title || '新的对话';
+  const pathName = path => (path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path || '选择工作空间';
+  const uid = () => `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let unsubscribe;
+  let ambience;
+  let searchVisible = false;
+
+  function toast(message, error = false, duration = 4200) {
+    for (const previous of $('toast-container').children) {
+      if (previous.textContent === safeText(message)) previous.remove();
+    }
+    const element = document.createElement('div');
+    element.className = `toast${error ? ' error' : ''}`;
+    element.textContent = safeText(message);
+    $('toast-container').append(element);
+    setTimeout(() => element.remove(), duration);
+  }
+
+  async function call(method, ...args) {
+    if (!api || typeof api[method] !== 'function') throw new Error('桌面连接尚未就绪，请重新启动客户端。');
+    const result = await api[method](...args);
+    if (result?.error && (result.ok === false || result.success === false)) throw new Error(safeText(result.error));
+    return result;
+  }
+
+  async function guarded(work) {
+    try { return await work(); }
+    catch (error) { toast(error.message || '操作失败，请稍后重试。', true, 6500); return null; }
+  }
+
+  function normalizeChoices(value) {
+    const list = Array.isArray(value) ? value : value?.availableModels || value?.availableModes || [];
+    return list.map(item => typeof item === 'string' ? { id: item, name: item } : { ...item, id: item.id || item.modelId || item.modeId, name: item.label || item.name || item.id || item.modelId || item.modeId }).filter(item => item.id);
+  }
+
+  function normalizeInfo(info = {}) {
+    return { ...state.info, ...info, models: normalizeChoices(info.models ?? state.info.models), modes: normalizeChoices(info.modes ?? state.info.modes) };
+  }
+
+  function normalizeSession(session) {
+    return { ...session, messages: (session.messages || []).map(message => ({ ...message, id: message.id || uid(), role: message.role || 'assistant', text: safeText(message.text ?? message.content), thought: safeText(message.thought), tools: message.tools || [] })) };
+  }
+
+  function upsertSession(session) {
+    if (!session?.id) return;
+    if ((session.accountId || 'local') !== state.activeAccountId) return;
+    const normalized = normalizeSession(session);
+    const index = state.sessions.findIndex(item => item.id === session.id);
+    if (index >= 0) state.sessions[index] = normalized;
+    else state.sessions.unshift(normalized);
+    const pending = normalized.messages.some(message => message.status === 'working');
+    if (pending) { state.busy.add(normalized.id); if (!state.started.has(normalized.id)) state.started.set(normalized.id, Date.now()); }
+  }
+
+  function fillSelect(element, items, selected, placeholder) {
+    element.replaceChildren();
+    const choices = [...items];
+    if (selected && !choices.some(item => item.id === selected)) choices.unshift({ id: selected, name: `${selected}（未验证）`, disabled: true });
+    if (!selected) choices.unshift({ id: '', name: placeholder, disabled: true });
+    for (const item of choices) {
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name;
+      option.title = item.description || item.name;
+      option.disabled = Boolean(item.disabled);
+      element.append(option);
+    }
+    element.value = selected || '';
+  }
+
+  function newChatModes(model = state.selectedModel) {
+    const modelInfo = state.info.models.find(item => item.id === model);
+    return normalizeChoices(model === state.info.currentModelId ? state.info.modes : modelInfo?.reasoningEfforts);
+  }
+
+  function syncNewChatChoices(reset = false) {
+    if (reset || !state.info.models.some(item => item.id === state.selectedModel && !item.disabled)) {
+      state.selectedModel = state.info.models.find(item => item.id === state.info.currentModelId && !item.disabled)?.id || '';
+      state.selectedMode = '';
+    }
+    const modes = newChatModes();
+    if (modes.some(item => item.id === state.selectedMode && !item.disabled)) return;
+    const model = state.info.models.find(item => item.id === state.selectedModel);
+    const current = state.selectedModel === state.info.currentModelId ? state.info.currentModeId : '';
+    state.selectedMode = modes.find(item => !item.disabled && item.id === current)?.id
+      || modes.find(item => !item.disabled && (item.id === model?.reasoningEffort || item.value === model?.reasoningEffort))?.id || '';
+  }
+
+  function newChatConfigReady() {
+    const session = activeSession();
+    if (session) {
+      const modes = normalizeChoices(session.modes);
+      return Boolean(session.model || session.modelId) && (!modes.length || modes.some(item => item.id === (session.mode || session.modeId) && !item.disabled));
+    }
+    const modes = newChatModes();
+    return state.info.models.some(item => item.id === state.selectedModel && !item.disabled)
+      && (!modes.length || modes.some(item => item.id === state.selectedMode && !item.disabled));
+  }
+
+  function renderConnection() {
+    const pending = state.initializing || state.connectionStatus === 'connecting';
+    const online = state.connected && !state.initializing;
+    const label = online ? '引擎已连接' : pending ? '连接中' : '引擎未连接';
+    const dotClass = `connection-dot ${online ? 'online' : pending ? 'connecting' : 'offline'}`;
+    for (const id of ['sidebar-dot', 'connection-dot', 'settings-dot']) $(id).className = dotClass;
+    $('connection-label').textContent = label;
+    $('sidebar-status').textContent = online ? '本地引擎在线' : pending ? '正在连接本地引擎' : '本地引擎离线';
+    $('connection-button').title = state.connected ? 'Grokbuild 已连接，点击重新连接' : '点击重新连接 Grokbuild';
+    $('settings-engine-status').textContent = state.connected ? `Grokbuild ${state.info.version || ''} · 已连接` : state.lastError || 'Grokbuild 未连接，请检查文件路径与登录状态';
+    $('settings-engine-status').title = $('settings-engine-status').textContent;
+    $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : 'LOCAL';
+    $('version-label').title = state.info.version || '本地 Grokbuild';
+    renderSelects();
+    renderComposerState();
+  }
+
+  function renderWorkspace() {
+    const cwd = activeSession()?.cwd || state.settings.workspace;
+    $('workspace-name').textContent = pathName(cwd);
+    $('workspace-subtitle').textContent = cwd || '让想法有个落脚点';
+    $('workspace-button').title = cwd ? `${cwd}\n点击更换默认工作目录` : '选择默认工作目录';
+    $('session-path').textContent = cwd || 'TOKYO / NIGHT SHIFT';
+    $('session-path').title = cwd || '';
+    applyAmbience();
+  }
+
+  function ambiencePreferences() {
+    return $('settings-dialog').open ? {
+      rainEnabled: $('rain-input').checked,
+      musicEnabled: $('music-input').checked,
+      musicVolume: Number($('music-volume').value),
+    } : state.settings;
+  }
+
+  function renderMusicStatus(status) {
+    const preferences = ambiencePreferences();
+    const labels = {
+      playing: '正在播放 · 东京午夜电台 · 离线循环',
+      starting: '正在准备东京午夜电台…',
+      blocked: '点击窗口或按任意键，开启东京午夜电台。',
+      error: '音乐暂时无法播放，请关闭音乐后重新开启。',
+      paused: preferences.musicEnabled && preferences.musicVolume === 0 ? '音量为 0 · 已静音' : '音乐已关闭',
+    };
+    $('music-status').textContent = labels[status.state] || labels.starting;
+    $('music-status').dataset.state = status.state;
+  }
+
+  function applyAmbience() {
+    const preferences = ambiencePreferences();
+    $('rain-layer').hidden = preferences.rainEnabled === false;
+    $('music-volume-value').textContent = `${preferences.musicVolume}%`;
+    $('music-volume').setAttribute('aria-valuetext', `${preferences.musicVolume}%`);
+    ambience?.setPreferences(preferences);
+    if (ambience) renderMusicStatus(ambience.getStatus());
+  }
+
+  function renderSelects() {
+    const session = activeSession();
+    if (!session) syncNewChatChoices();
+    const models = session && Array.isArray(session.models) ? normalizeChoices(session.models) : state.info.models;
+    const model = session ? session.model || session.modelId || '' : state.selectedModel;
+    const modes = session ? normalizeChoices(session.modes) : newChatModes();
+    const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
+    fillSelect($('model-select'), models, model, session ? '未返回模型' : '请选择模型');
+    fillSelect($('mode-select'), modes, mode, session ? '未返回推理档位' : '请选择推理档位');
+    const locked = state.initializing || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || state.busy.size > 0;
+    for (const element of [$('model-select'), $('mode-select')]) {
+      element.disabled = locked;
+      element.title = state.login ? '请先完成或取消账户登录。' : state.configuring ? '正在等待 Grokbuild 确认配置…' : !state.connected ? '离线时仅可查看历史，重新连接后可更改配置。' : state.busy.size ? '任务结束后可更改配置。' : session ? '更改后由 Grokbuild 确认生效，用于后续消息。' : '新对话会明确使用所选模型和推理档位。';
+    }
+    if (!models.length) $('model-select').disabled = true;
+    if (!modes.length) {
+      $('mode-select').disabled = true;
+      $('mode-select').title = '当前模型不提供可选的推理档位。';
+      if (!mode) $('mode-select').options[0].textContent = model ? '无可选推理档位' : '请先选择模型';
+    }
+    if (session?.modelSelectionVerified === false) {
+      for (const element of [$('model-select'), $('mode-select')]) {
+        if (element.value) element.selectedOptions[0].textContent += '（待确认）';
+        element.title += ' 当前显示的是保存的选择，尚未经本次连接确认。';
+      }
+    }
+  }
+
+  function historyGroup(session) {
+    const date = new Date(sessionTime(session));
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    return date.getTime() >= start ? '今天' : date.getTime() >= start - 86400000 ? '昨天' : '更早';
+  }
+
+  function renderSessions() {
+    const list = $('session-list');
+    const query = $('session-search').value.toLocaleLowerCase().trim();
+    const sessions = state.sessions.filter(session => sessionTitle(session).toLocaleLowerCase().includes(query)).sort((a, b) => sessionTime(b) - sessionTime(a));
+    list.replaceChildren();
+    if (!sessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'history-empty';
+      empty.textContent = query ? '没有找到这段对话。' : '新的故事，从这里开始。';
+      list.append(empty);
+      return;
+    }
+    let lastGroup = '';
+    for (const session of sessions) {
+      const group = historyGroup(session);
+      if (group !== lastGroup) {
+        const label = document.createElement('div');
+        label.className = 'history-group-label';
+        label.textContent = group;
+        list.append(label);
+        lastGroup = group;
+      }
+      const row = document.createElement('div');
+      row.className = `session-item${session.id === state.activeId ? ' active' : ''}${state.busy.has(session.id) ? ' working' : ''}`;
+      const select = document.createElement('button');
+      select.className = 'session-select';
+      select.disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings;
+      select.title = sessionTitle(session);
+      select.setAttribute('aria-current', session.id === state.activeId ? 'page' : 'false');
+      const icon = document.createElement('span');
+      icon.className = 'chat-icon'; icon.textContent = state.busy.has(session.id) ? '◌' : '⌁'; icon.setAttribute('aria-hidden', 'true');
+      const title = document.createElement('span');
+      title.className = 'session-title'; title.textContent = sessionTitle(session);
+      select.append(icon, title);
+      select.addEventListener('click', () => guarded(() => selectSession(session.id)));
+      const more = document.createElement('button');
+      more.disabled = select.disabled;
+      more.className = 'session-more'; more.textContent = '···'; more.setAttribute('aria-label', `${sessionTitle(session)}的更多操作`);
+      more.addEventListener('click', event => { event.stopPropagation(); openSessionMenu(session.id, more); });
+      row.append(select, more);
+      list.append(row);
+    }
+  }
+
+  function markdown(text) {
+    if (window.marked && window.DOMPurify) {
+      try {
+        const renderer = new window.marked.Renderer();
+        const image = ({ href, text }) => `<span data-image-source="${escapeHtml(href)}" data-image-alt="${escapeHtml(text || '图片')}"></span>`;
+        renderer.image = image;
+        renderer.html = ({ text }) => {
+          const template = document.createElement('template'); template.innerHTML = text;
+          for (const img of template.content.querySelectorAll('img')) {
+            const placeholder = document.createElement('span');
+            placeholder.dataset.imageSource = img.getAttribute('src') || '';
+            placeholder.dataset.imageAlt = img.getAttribute('alt') || '图片';
+            img.replaceWith(placeholder);
+          }
+          return template.innerHTML;
+        };
+        const link = renderer.link;
+        renderer.link = function(token) {
+          if (/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i.test(token.href || '')) return image(token);
+          return link.call(this, token);
+        };
+        return window.DOMPurify.sanitize(window.marked.parse(text || '', { breaks: true, gfm: true, renderer }), { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'input', 'button', 'form', 'iframe', 'style'], FORBID_ATTR: ['style', 'srcset'] });
+      } catch (_) { /* Fall through to safe plain text. */ }
+    }
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+
+  const imageCache = new Map();
+  function createImage(source, session, messageId, previousImages) {
+    const key = `${messageId}:${source.src}`;
+    if (previousImages.has(key)) return previousImages.get(key);
+    const figure = document.createElement('figure'); figure.className = 'chat-image'; figure.imageKey = key;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'image-thumbnail'; button.disabled = true;
+    button.setAttribute('aria-label', `放大图片：${source.alt || '图片'}`);
+    const img = document.createElement('img'); img.alt = source.alt || '图片'; img.loading = 'lazy'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
+    const caption = document.createElement('figcaption'); caption.textContent = '正在加载图片…';
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'image-retry'; retry.textContent = '重新加载'; retry.hidden = true;
+    button.append(img); figure.append(button, caption, retry);
+    const cacheKey = `${state.activeAccountId}:${session.id}:${source.src}`;
+    const load = async () => {
+      const follow = nearBottom();
+      caption.textContent = '正在加载图片…'; retry.hidden = true; img.hidden = false; button.disabled = true;
+      try {
+        let request = imageCache.get(cacheKey);
+        if (!request) {
+          request = call('readImage', { sessionId: session.id, src: source.src });
+          imageCache.set(cacheKey, request);
+          if (imageCache.size > 24) imageCache.delete(imageCache.keys().next().value);
+        }
+        const resolved = await request;
+        img.onload = () => {
+          button.disabled = false; caption.textContent = `${source.alt || '图片'} · 点击放大`;
+          if (follow && figure.isConnected) $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight;
+        };
+        img.onerror = () => failed('图片加载失败，地址可能已失效或需要登录');
+        img.src = resolved.src;
+      } catch (error) { failed(error.message); }
+    };
+    const failed = message => { imageCache.delete(cacheKey); img.hidden = true; button.disabled = true; caption.textContent = message; retry.hidden = false; };
+    retry.addEventListener('click', () => { void load(); });
+    button.addEventListener('click', () => {
+      $('image-title').textContent = source.alt || '图片预览';
+      $('image-preview').alt = source.alt || '图片'; $('image-preview').referrerPolicy = 'no-referrer'; $('image-preview').src = img.src;
+      $('image-dialog').showModal();
+    });
+    void load();
+    return figure;
+  }
+
+  function mountImages(body, message, session, previousImages) {
+    const seen = new Set();
+    for (const placeholder of body.querySelectorAll('[data-image-source]')) {
+      const src = placeholder.dataset.imageSource;
+      seen.add(src);
+      placeholder.replaceWith(createImage({ src, alt: placeholder.dataset.imageAlt }, session, message.id, previousImages));
+    }
+    for (const image of message.images || []) {
+      if (typeof image.src !== 'string' || seen.has(image.src)) continue;
+      seen.add(image.src); body.append(createImage(image, session, message.id, previousImages));
+    }
+  }
+
+  function toolStatus(status) {
+    return ({ pending: '等待中', running: '执行中', in_progress: '执行中', completed: '已完成', complete: '已完成', success: '已完成', failed: '失败', error: '失败', cancelled: '已取消' })[status] || status || '执行中';
+  }
+
+  function createTool(tool) {
+    const details = document.createElement('details');
+    details.className = 'tool-entry';
+    details.dataset.status = tool.status || 'running';
+    details.dataset.toolId = tool.toolCallId || tool.id || '';
+    const summary = document.createElement('summary');
+    const status = document.createElement('span');
+    status.className = 'tool-state';
+    status.textContent = ['completed', 'complete', 'success'].includes(tool.status) ? '✓' : ['failed', 'error'].includes(tool.status) ? '!' : '↗';
+    const title = document.createElement('span');
+    title.className = 'tool-title'; title.textContent = tool.title || tool.name || '工具调用'; title.title = title.textContent;
+    const label = document.createElement('span');
+    label.className = 'tool-status'; label.textContent = toolStatus(tool.status);
+    summary.append(status, title, label);
+    const content = document.createElement('pre');
+    content.textContent = safeText(tool.content ?? tool.output ?? tool.rawInput ?? tool.input) || '等待工具返回结果…';
+    details.append(summary, content);
+    return details;
+  }
+
+  function nearBottom() {
+    const scroller = $('conversation-scroll');
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
+  }
+
+  function renderMessages(forceBottom = false) {
+    const scroller = $('conversation-scroll');
+    const pinned = forceBottom || nearBottom();
+    const session = activeSession();
+    const messages = session?.messages || [];
+    const hasMessages = messages.length > 0;
+    $('welcome').hidden = hasMessages;
+    $('messages').hidden = !hasMessages;
+    document.querySelector('.main-panel').classList.toggle('has-messages', hasMessages);
+    $('breadcrumb-title').textContent = session ? sessionTitle(session) : '新对话';
+    $('export-button').disabled = !session || !messages.length;
+    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId));
+    const container = $('messages');
+    const previousImages = new Map([...container.querySelectorAll('.chat-image')].map(figure => [figure.imageKey, figure]));
+    container.replaceChildren();
+    messages.forEach((message, index) => {
+      const article = document.createElement('article');
+      article.className = `message ${message.role === 'user' ? 'user' : 'assistant'}`;
+      article.dataset.messageId = message.id;
+      const heading = document.createElement('div'); heading.className = 'message-heading';
+      const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? '你' : '✳'; avatar.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('strong'); name.textContent = message.role === 'user' ? 'YOU' : 'GROKBUILD';
+      const time = document.createElement('time');
+      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }); } }
+      heading.append(avatar, name, time); article.append(heading);
+      if (message.thought) {
+        const thought = document.createElement('details'); thought.className = 'thought-details'; thought.dataset.thoughtId = message.id;
+        thought.open = openDetails.has(message.id);
+        const summary = document.createElement('summary'); summary.textContent = '思考过程';
+        const body = document.createElement('div'); body.className = 'thought-content'; body.textContent = message.thought;
+        thought.append(summary, body); article.append(thought);
+      }
+      if (message.tools?.length) {
+        const tools = document.createElement('div'); tools.className = 'message-tools';
+        for (const tool of message.tools) { const element = createTool(tool); element.open = openDetails.has(element.dataset.toolId); tools.append(element); }
+        article.append(tools);
+      }
+      const body = document.createElement('div'); body.className = 'message-body';
+      if (message.role === 'user') body.textContent = message.text;
+      else body.innerHTML = markdown(message.text);
+      mountImages(body, message, session, previousImages);
+      const last = index === messages.length - 1;
+      if (message.role === 'assistant' && last && state.busy.has(session.id)) {
+        const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', '正在生成'); body.append(cursor);
+      }
+      if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = message.error || '本次请求未能完成，请检查引擎连接后重试。'; body.append(error); }
+      if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = '本次生成已停止'; body.append(cancelled); }
+      article.append(body); container.append(article);
+    });
+    container.querySelectorAll('pre > code').forEach(code => {
+      const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = '复制'; button.setAttribute('aria-label', '复制代码');
+      button.addEventListener('click', async () => {
+        try { await call('copyText', code.textContent); button.textContent = '已复制'; setTimeout(() => { if (button.isConnected) button.textContent = '复制'; }, 1800); }
+        catch (_) { toast('无法访问剪贴板，请选择代码后复制。', true); }
+      });
+      code.parentElement.append(button);
+    });
+    if (pinned) scroller.scrollTop = scroller.scrollHeight;
+    $('scroll-bottom').hidden = !hasMessages || nearBottom();
+    renderComposerState();
+    renderPermissions();
+  }
+
+  function queueMessages() {
+    if (state.renderPending) return;
+    state.renderPending = true;
+    requestAnimationFrame(() => { state.renderPending = false; renderMessages(); });
+  }
+
+  function renderComposerState() {
+    const busy = state.busy.has(state.activeId);
+    const changing = state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login;
+    $('send-button').hidden = busy;
+    $('stop-button').hidden = !busy;
+    $('send-button').disabled = state.initializing || state.sending || changing || state.busy.size > 0 || !$('prompt').value.trim() || !state.connected || !newChatConfigReady();
+    $('settings-button').disabled = state.initializing || state.sending || changing;
+    $('account-button').disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction;
+    $('workspace-button').disabled = state.initializing || state.sending || changing || state.busy.size > 0;
+    $('new-session').disabled = state.sending || changing;
+    for (const element of document.querySelectorAll('.session-select, .session-more')) element.disabled = state.initializing || state.sending || changing;
+    for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
+    for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
+    $('prompt').disabled = state.sending;
+    $('prompt').placeholder = state.login ? '请先完成或取消账户登录，可以先写好草稿…' : state.configuring ? '正在等待引擎确认配置，可以先写好下一条消息…' : state.selecting ? '正在恢复这段对话…' : !state.connected ? '当前离线；连接引擎后可继续对话…' : busy ? '可以先写好下一条消息，等待当前任务完成…' : state.busy.size ? '另一段对话正在运行，可以先写下你的想法…' : '在雨声中，开始你的下一个想法…';
+    $('activity-strip').hidden = !busy;
+    if (busy) updateActivity();
+  }
+
+  function updateActivity() {
+    if (!state.busy.has(state.activeId)) return;
+    const message = activeSession()?.messages.filter(item => item.role === 'assistant').at(-1);
+    const tool = message?.tools?.filter(item => ['running', 'pending', 'in_progress'].includes(item.status)).at(-1);
+    $('activity-text').textContent = sessionPermissions(state.activeId).length ? '等待你的授权' : tool ? tool.title || '正在执行工具' : message?.text ? 'Grokbuild 正在回答' : 'Grokbuild 正在思考';
+    const start = state.started.get(state.activeId) || Date.now();
+    const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
+    $('activity-duration').textContent = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+  }
+
+  function renderPermissions() {
+    const panel = $('permission-panel');
+    const permissionSessionId = state.activeId;
+    const permission = sessionPermissions(permissionSessionId)[0];
+    panel.replaceChildren(); panel.hidden = !permission;
+    if (!permission) return;
+    const heading = document.createElement('div'); heading.className = 'permission-heading'; heading.textContent = permission.title || permission.toolCall?.title || 'Grokbuild 请求执行操作';
+    const description = document.createElement('p'); description.className = 'permission-description';
+    description.textContent = safeText(permission.toolCall?.rawInput ?? permission.toolCall?.content ?? permission.description) || '请确认是否允许此操作。你的选择会发送给本地引擎。';
+    const actions = document.createElement('div'); actions.className = 'permission-actions';
+    for (const option of permission.options || []) {
+      const button = document.createElement('button');
+      button.textContent = option.name || option.optionId;
+      if ((option.kind || '').startsWith('allow')) button.className = 'allow';
+      button.addEventListener('click', () => guarded(async () => {
+        for (const other of actions.children) other.disabled = true;
+        try { await call('permission', { requestId: permission.requestId, optionId: option.optionId }); state.permissions.delete(String(permission.requestId)); renderPermissions(); updateActivity(); }
+        catch (error) { for (const other of actions.children) other.disabled = false; throw error; }
+      }));
+      actions.append(button);
+    }
+    panel.append(heading, description, actions);
+  }
+
+  function rememberDraft() { state.drafts.set(state.activeId || '__new__', $('prompt').value); }
+  function restoreDraft() { $('prompt').value = state.drafts.get(state.activeId || '__new__') || ''; resizePrompt(); }
+
+  function newChat() {
+    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    rememberDraft();
+    state.activeId = null;
+    syncNewChatChoices(true);
+    restoreDraft(); renderSessions(); renderSelects(); renderWorkspace(); renderMessages(true);
+    $('prompt').focus();
+  }
+
+  async function selectSession(id) {
+    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || id === state.activeId) return;
+    rememberDraft();
+    state.selecting = true; renderSelects(); renderComposerState();
+    try {
+      const session = await call('selectSession', id);
+      if (!session?.id) throw new Error('无法读取这段对话。');
+      upsertSession(session);
+      state.activeId = id;
+      restoreDraft(); renderSessions(); renderWorkspace(); renderMessages(true);
+      closeSessionMenu(); $('prompt').focus();
+    } finally { state.selecting = false; renderSelects(); renderComposerState(); }
+  }
+
+  async function configureSession(patch) {
+    const session = activeSession();
+    if (!session || !state.connected || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    state.configuring = true; renderSelects(); renderComposerState();
+    try {
+      const updated = await call('configureSession', { sessionId: session.id, ...patch });
+      if (updated?.id !== session.id) throw new Error('引擎未确认这段对话的新配置，请重新连接后重试。');
+      upsertSession(updated);
+      toast('对话配置已由 Grokbuild 确认。');
+    } finally {
+      state.configuring = false;
+      renderSelects(); renderComposerState();
+    }
+  }
+
+  async function prepareModel(model) {
+    if (state.initializing || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    state.configuring = true; renderSelects(); renderComposerState();
+    try {
+      // A model without a published effort menu needs an actual session readback.
+      const session = await call('createSession', { cwd: state.settings.workspace || undefined, model });
+      if (!session?.id) throw new Error('引擎未返回该模型的配置，请重试。');
+      upsertSession(session); state.activeId = session.id;
+      state.drafts.delete('__new__'); rememberDraft();
+      renderSessions(); renderWorkspace(); renderMessages();
+    } finally { state.configuring = false; renderSelects(); renderComposerState(); }
+  }
+
+  function resizePrompt() {
+    $('prompt').style.height = 'auto';
+    $('prompt').style.height = `${Math.max(60, Math.min(170, $('prompt').scrollHeight))}px`;
+    renderComposerState();
+  }
+
+  async function sendMessage() {
+    const text = $('prompt').value.trim();
+    if (!text || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
+    if (!state.connected) { toast('请先连接本地 Grokbuild。点击右上角的连接状态可重试。', true); return; }
+    if (!newChatConfigReady()) { toast('请先选择具体的模型和推理档位。', true); return; }
+    state.sending = true;
+    renderComposerState(); renderSelects();
+    let session;
+    try {
+      session = activeSession();
+      if (!session) {
+        session = await call('createSession', { cwd: state.settings.workspace || undefined, model: state.selectedModel || undefined, mode: state.selectedMode || undefined });
+        if (!session?.id) throw new Error('引擎未能创建对话，请重试。');
+        upsertSession(session); state.activeId = session.id;
+        state.drafts.delete('__new__');
+      }
+      state.busy.add(session.id); state.started.set(session.id, Date.now());
+      $('prompt').value = ''; state.drafts.delete(session.id); resizePrompt();
+      renderSessions(); renderSelects(); renderWorkspace(); renderMessages(true);
+      const result = await call('send', { sessionId: session.id, text });
+      if (result?.accepted === false) {
+        state.busy.delete(session.id); state.started.delete(session.id);
+        $('prompt').value = text; resizePrompt();
+        if (!result.cancelled) throw new Error('引擎未接受这条消息，请重试。');
+      }
+    } catch (error) {
+      if (session?.id) { state.busy.delete(session.id); state.started.delete(session.id); }
+      if (!$('prompt').value) { $('prompt').value = text; resizePrompt(); }
+      toast(error.message || '消息发送失败。', true, 6500);
+    } finally {
+      state.sending = false; renderComposerState(); renderSelects(); renderSessions(); $('prompt').focus();
+    }
+  }
+
+  function getStreamMessage(sessionId) {
+    const session = state.sessions.find(item => item.id === sessionId);
+    if (!session) return null;
+    let message = session.messages.at(-1);
+    if (!message || message.role !== 'assistant' || ['complete', 'error', 'cancelled'].includes(message.status)) {
+      message = { id: uid(), role: 'assistant', text: '', thought: '', tools: [], status: 'working', createdAt: new Date().toISOString() };
+      session.messages.push(message);
+    }
+    return message;
+  }
+
+  function onEvent(event) {
+    if (!event || typeof event !== 'object') return;
+    if (event.type === 'account-changed') { applyAccountSnapshot(event.state); return; }
+    if (event.type === 'account-login') {
+      state.accounts = event.accounts || state.accounts;
+      const login = event.login;
+      state.login = login && ['starting', 'waiting', 'cancelling'].includes(login.status) ? login : null;
+      if (login && ['succeeded', 'failed', 'cancelled'].includes(login.status)) state.loginTerminal = login.status;
+      renderAccounts(); renderComposerState(); renderSelects();
+      if (login?.status === 'succeeded') {
+        $('account-feedback').textContent = '登录成功，正在连接…';
+        if (state.accountAction) state.loginCompletedAccount = login.accountId;
+        else void accountWork(() => changeAccount(login.accountId));
+      } else if (login?.status === 'failed') $('account-feedback').textContent = login.error || '登录未完成，请重试并在浏览器中完成授权。';
+      else if (login?.status === 'cancelled') $('account-feedback').textContent = '登录已取消，可重新登录或切换账户。';
+      else if (login?.error) $('account-feedback').textContent = login.error;
+      return;
+    }
+    const sessionId = event.sessionId || event.session?.id || state.activeId;
+    if (event.type === 'session-updated') {
+      if (event.session) upsertSession(event.session);
+      renderSessions(); if (sessionId === state.activeId) { renderSelects(); renderWorkspace(); queueMessages(); }
+      return;
+    }
+    if (event.type === 'info') {
+      state.info = normalizeInfo(event.info || event);
+      if (typeof event.connected === 'boolean') state.connected = event.connected;
+      renderSelects(); renderConnection(); return;
+    }
+    if (event.type === 'status') {
+      const status = event.status;
+      if (status === 'permission_resolved') {
+        state.permissions.delete(String(event.requestId)); renderPermissions(); updateActivity(); return;
+      }
+      if (['connecting', 'ready', 'disconnected'].includes(status)) {
+        state.connectionStatus = status;
+        state.connected = status === 'ready';
+        if (state.connected) state.lastError = '';
+        if (status === 'disconnected') { state.busy.clear(); state.permissions.clear(); }
+        renderConnection(); renderPermissions(); renderSessions(); queueMessages();
+      }
+      if (sessionId && ['working', 'busy'].includes(status)) {
+        state.busy.add(sessionId); if (!state.started.has(sessionId)) state.started.set(sessionId, Date.now());
+      }
+      if (sessionId && ['idle', 'cancelled', 'error'].includes(status)) {
+        state.busy.delete(sessionId); state.started.delete(sessionId); clearPermissions(sessionId);
+        const session = state.sessions.find(item => item.id === sessionId);
+        const last = session?.messages.at(-1);
+        if (last?.role === 'assistant' && last.status === 'working') last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete';
+        if (event.stopReason === 'max_tokens') toast('已达到本次回复的长度限制，可以继续追问。');
+      }
+      renderSessions(); if (sessionId === state.activeId) queueMessages();
+      renderComposerState(); renderSelects(); return;
+    }
+    if (event.type === 'error') {
+      state.lastError = safeText(event.message || event.error || '本地引擎出现错误。');
+      toast(state.lastError, true, 9000); renderConnection(); renderSessions(); queueMessages(); return;
+    }
+    if (event.type === 'permission') {
+      state.permissions.set(String(event.requestId), { ...event, sessionId });
+      if (sessionId === state.activeId) { renderPermissions(); updateActivity(); }
+      else toast(`对话“${sessionTitle(state.sessions.find(item => item.id === sessionId) || {})}”需要你的授权。`, false, 8000);
+      return;
+    }
+    if (['text', 'thought', 'tool', 'image'].includes(event.type)) {
+      const message = getStreamMessage(sessionId); if (!message) return;
+      const wasBusy = state.busy.has(sessionId);
+      state.busy.add(sessionId);
+      if (!wasBusy) { renderSelects(); renderComposerState(); }
+      if (event.type === 'text') message.text = event.delta === false ? safeText(event.text) : message.text + safeText(event.text);
+      if (event.type === 'thought') message.thought = event.delta === false ? safeText(event.text) : message.thought + safeText(event.text);
+      if (event.type === 'image' && event.image?.src) {
+        message.images ||= [];
+        if (!message.images.some(image => image.src === event.image.src)) message.images.push(event.image);
+      }
+      if (event.type === 'tool') {
+        const tool = event.tool || event;
+        const toolId = tool.toolCallId || tool.id;
+        const index = message.tools.findIndex(item => (item.toolCallId || item.id) === toolId);
+        if (index >= 0) message.tools[index] = { ...message.tools[index], ...tool };
+        else message.tools.push({ ...tool });
+      }
+      if (sessionId === state.activeId) queueMessages();
+    }
+  }
+
+  function openSessionMenu(id, button) {
+    state.menuId = id;
+    const rect = button.getBoundingClientRect();
+    const menu = $('session-menu'); menu.hidden = false;
+    menu.style.left = `${Math.min(rect.right + 7, window.innerWidth - 180)}px`;
+    menu.style.top = `${Math.max(55, Math.min(rect.top, window.innerHeight - 140))}px`;
+    $('menu-rename').focus();
+  }
+  function closeSessionMenu() { $('session-menu').hidden = true; state.menuId = null; }
+
+  function renderAccounts() {
+    const current = state.accounts.find(a => a.id === state.activeAccountId);
+    $('account-name').textContent = current?.name || '本机 Grok 账户';
+    $('account-button').title = current?.email || current?.name || '账户切换';
+    $('account-list').replaceChildren();
+    const locked = accountsLocked();
+    for (const account of state.accounts) {
+      const row = document.createElement('div'); row.className = 'account-row'; row.dataset.accountId = account.id;
+      const selected = account.id === state.activeAccountId; row.classList.toggle('selected', selected);
+      const info = document.createElement('div'); info.className = 'account-info'; const name = document.createElement('strong'); name.textContent = account.name;
+      const detail = document.createElement('small'); detail.textContent = account.email || (account.signedIn ? '登录已保存' : account.kind === 'local' ? '沿用本机 Grok 登录与配置' : '尚未登录');
+      info.append(name, detail);
+      if (account.kind === 'local') {
+        const note = document.createElement('small'); note.className = 'account-local-note'; note.textContent = '默认账户不可移除，保留本机 Grok 登录与配置。'; info.append(note);
+      }
+      const actions = document.createElement('div'); actions.className = 'account-row-actions';
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary-button'; button.dataset.accountAction = 'switch'; button.textContent = selected ? '当前账户 ✓' : '切换'; button.disabled = selected || locked;
+      button.setAttribute('aria-label', selected ? `${account.name}，当前账户` : `切换到${account.name}`);
+      button.addEventListener('click', () => { void accountWork(() => changeAccount(account.id)); });
+      const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'secondary-button'; rename.dataset.accountAction = 'rename'; rename.textContent = '重命名'; rename.disabled = locked; rename.setAttribute('aria-label', `重命名${account.name}`);
+      rename.addEventListener('click', () => openAccountRename(account));
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger-button'; remove.dataset.accountAction = 'delete'; remove.textContent = '删除'; remove.disabled = locked || account.kind !== 'profile'; remove.setAttribute('aria-label', `删除${account.name}`);
+      remove.title = account.kind === 'local' ? '默认账户不可移除，保留本机 Grok 登录与配置。' : '删除此客户端的账户及其本地登录与聊天记录';
+      remove.addEventListener('click', () => openAccountDelete(account));
+      actions.append(button, rename, remove); row.append(info, actions); $('account-list').append(row);
+    }
+    $('account-login').textContent = current?.signedIn ? '重新登录当前账户' : '登录当前账户';
+    $('account-login').disabled = locked;
+    $('accounts-dialog').querySelector('[data-close-dialog]').disabled = state.accountAction;
+    $('account-name-input').disabled = locked; $('add-account-button').disabled = locked;
+    $('account-login-panel').hidden = !state.login;
+    if (state.login) {
+      $('account-login-status').textContent = state.login.status === 'cancelling' ? '正在取消登录，等待本地登录进程退出…' : state.login.status === 'waiting' ? '等待浏览器确认登录…' : '正在准备 Grok 登录页面…';
+      $('account-open-login').hidden = !state.login.url;
+      $('account-code-row').hidden = !state.login.code; $('account-login-code').textContent = state.login.code || '';
+    } else {
+      $('account-login-status').textContent = ''; $('account-login-code').textContent = '';
+      $('account-open-login').hidden = true; $('account-code-row').hidden = true;
+    }
+    $('account-cancel-login').disabled = state.accountCancelPending;
+    $('account-cancel-login').textContent = state.accountCancelPending ? '正在取消…' : state.login?.status === 'cancelling' ? '重试取消登录' : '取消登录';
+    $('account-open-login').disabled = state.accountCancelPending || state.login?.status === 'cancelling'; $('account-copy-code').disabled = state.accountCancelPending || state.login?.status === 'cancelling';
+    if (state.busy.size) $('account-feedback').textContent = '请先停止生成或等待回复完成，再切换账户。';
+  }
+
+  function accountsLocked() {
+    return state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.accountCancelPending || state.busy.size > 0 || !!state.login;
+  }
+
+  function validateAccountName(input, feedback) {
+    const name = input.value.trim();
+    const error = !name ? '请输入账户名称。' : Array.from(name).length > 60 ? '账户名称不能超过 60 个字符。' : '';
+    input.setCustomValidity(error); input.setAttribute('aria-invalid', String(!!error));
+    if (error) { $(feedback).textContent = error; input.reportValidity(); return null; }
+    return name;
+  }
+
+  function openAccountRename(account) {
+    if (accountsLocked()) return;
+    state.accountRenameId = account.id; $('account-rename-feedback').textContent = '';
+    const input = $('account-rename-input'); input.value = account.name; input.setCustomValidity(''); input.removeAttribute('aria-invalid');
+    $('account-rename-dialog').showModal(); input.select();
+  }
+
+  function openAccountDelete(account) {
+    if (accountsLocked() || account.kind !== 'profile') return;
+    state.accountDeleteId = account.id; $('account-delete-name').textContent = account.name;
+    $('account-delete-current').hidden = account.id !== state.activeAccountId;
+    $('account-delete-feedback').textContent = ''; $('account-delete-dialog').showModal(); $('account-delete-cancel').focus();
+  }
+
+  async function accountDialogWork(dialogId, feedbackId, action) {
+    if (accountsLocked()) return;
+    const dialog = $(dialogId);
+    await accountWork(async () => {
+      for (const element of dialog.querySelectorAll('button, input')) element.disabled = true;
+      $(feedbackId).textContent = '';
+      try { await action(); dialog.close(); }
+      catch (error) { $(feedbackId).textContent = error.message || '操作失败，请重试。'; }
+      finally { for (const element of dialog.querySelectorAll('button, input')) element.disabled = false; }
+    });
+  }
+
+  function applyAccountSnapshot(result) {
+    const survivingAccounts = new Set((result.accounts || []).map(account => account.id));
+    if (result.activeAccountId !== state.activeAccountId) {
+      if (survivingAccounts.has(state.activeAccountId)) {
+        rememberDraft(); state.accountDrafts.set(state.activeAccountId, { drafts: state.drafts, activeId: state.activeId });
+      }
+      const saved = state.accountDrafts.get(result.activeAccountId);
+      state.drafts = saved?.drafts || new Map(); state.activeId = saved?.activeId || null;
+      imageCache.clear(); closeSessionMenu();
+      if ($('image-dialog').open) $('image-dialog').close();
+      $('image-preview').removeAttribute('src');
+      $('session-search').value = ''; $('history-search').hidden = true; searchVisible = false;
+    }
+    for (const id of state.accountDrafts.keys()) if (!survivingAccounts.has(id)) state.accountDrafts.delete(id);
+    for (const key of imageCache.keys()) if (!survivingAccounts.has(key.split(':')[0])) imageCache.delete(key);
+    state.activeAccountId = result.activeAccountId;
+    state.accounts = result.accounts || []; state.login = result.login || null;
+    state.sessions = (result.sessions || []).map(normalizeSession);
+    if (!state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
+    state.info = { ...result.info, models: normalizeChoices(result.info?.models), modes: normalizeChoices(result.info?.modes) };
+    state.connected = result.connected === true; state.connectionStatus = state.connected ? 'ready' : 'disconnected'; state.lastError = result.error || '';
+    state.busy.clear(); state.permissions.clear(); state.started.clear(); syncNewChatChoices(true);
+    restoreDraft(); renderAccounts(); renderSessions(); renderWorkspace(); renderSelects(); renderMessages(true); renderConnection();
+  }
+
+  async function accountWork(action) {
+    if (state.accountAction) return;
+    state.accountAction = true; renderAccounts(); renderComposerState(); renderSelects();
+    $('account-feedback').textContent = '';
+    try { return await action(); }
+    catch (error) { $('account-feedback').textContent = error.message; }
+    finally {
+      state.accountAction = false; renderAccounts(); renderComposerState(); renderSelects();
+      if (state.loginCompletedAccount) {
+        const id = state.loginCompletedAccount; state.loginCompletedAccount = null;
+        void accountWork(() => changeAccount(id));
+      }
+    }
+  }
+
+  async function changeAccount(id) {
+    applyAccountSnapshot(await call('switchAccount', id));
+    $('account-feedback').textContent = state.lastError || '账户已切换。';
+  }
+
+  async function startAccountLogin() {
+    state.loginTerminal = null;
+    const login = await call('loginAccount', state.activeAccountId);
+    if (!state.loginTerminal) state.login = login;
+    renderAccounts();
+  }
+
+  function showSettings() {
+    if (state.initializing) { toast('正在读取本地配置，请稍候。'); return; }
+    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || document.querySelector('dialog[open]')) return;
+    $('executable-input').value = state.settings.executable || '';
+    $('workspace-input').value = state.settings.workspace || '';
+    $('rain-input').checked = state.settings.rainEnabled !== false;
+    $('music-input').checked = state.settings.musicEnabled !== false;
+    $('music-volume').value = state.settings.musicVolume;
+    $('subagents-input').checked = state.settings.subagentsEnabled !== false;
+    $('settings-feedback').textContent = '';
+    renderConnection(); updateSettingsReconnect();
+    if (!$('settings-dialog').open) $('settings-dialog').showModal();
+    applyAmbience();
+  }
+
+  function settingsPatch() {
+    return { executable: $('executable-input').value.trim(), workspace: $('workspace-input').value.trim(), rainEnabled: $('rain-input').checked, subagentsEnabled: $('subagents-input').checked, musicEnabled: $('music-input').checked, musicVolume: Number($('music-volume').value) };
+  }
+
+  function updateSettingsReconnect() {
+    const dirty = Object.entries(settingsPatch()).some(([key, value]) => value !== state.settings[key]);
+    $('settings-reconnect').textContent = dirty ? '保存并重连 ↗' : '重新连接 ↗';
+    $('settings-reconnect').title = dirty ? '保存当前设置后重新连接引擎' : '使用已保存的设置重新连接引擎';
+  }
+
+  async function savePreferences(forceReconnect = false) {
+    if (state.savingSettings || state.configuring || state.selecting || state.sending) return;
+    state.savingSettings = true; renderSelects(); renderComposerState();
+    $('save-settings-button').disabled = true; $('settings-feedback').textContent = '';
+    try {
+      const patch = settingsPatch();
+      if (!patch.executable) throw new Error('请选择 Grokbuild 的 grok.exe 文件。');
+      if (!patch.workspace) throw new Error('请选择默认工作目录。');
+      const reconnectRequired = forceReconnect || ['executable', 'workspace', 'subagentsEnabled'].some(key => patch[key] !== state.settings[key]);
+      if (reconnectRequired && state.busy.size) throw new Error('此设置需要重新连接引擎，请先停止正在执行的任务，再保存。');
+      for (const element of $('settings-form').querySelectorAll('input, button')) element.disabled = true;
+      const changes = Object.fromEntries(Object.entries(patch).filter(([key, value]) => value !== state.settings[key]));
+      const result = await call('saveSettings', changes);
+      state.settings = { ...state.settings, ...patch, ...(result?.settings || result || {}) };
+      renderWorkspace();
+      if (reconnectRequired) { $('settings-feedback').textContent = '设置已保存，正在重新连接…'; await reconnect(); }
+      else toast('设置已保存。');
+      $('settings-dialog').close();
+    } catch (error) { $('settings-feedback').textContent = error.message; if (!$('settings-dialog').open) toast(error.message, true, 7000); }
+    finally {
+      state.savingSettings = false;
+      for (const element of $('settings-form').querySelectorAll('input, button')) element.disabled = false;
+      updateSettingsReconnect(); renderSelects(); renderComposerState();
+    }
+  }
+
+  async function reconnect() {
+    if (state.connectionStatus === 'connecting') return;
+    if (state.sending || state.configuring || state.selecting) { toast('请等待当前操作完成，再重新连接引擎。'); return; }
+    if (state.busy.size) { toast('请先停止正在执行的任务，再重新连接引擎。'); return; }
+    state.selecting = true;
+    state.connectionStatus = 'connecting'; state.connected = false; state.lastError = ''; renderConnection();
+    try {
+      const result = await call('reconnect');
+      state.info = normalizeInfo(result?.info || result || {});
+      state.connected = result?.connected !== false;
+      state.connectionStatus = state.connected ? 'ready' : 'disconnected';
+      if (!state.connected) throw new Error(result?.error || '引擎尚未连接，请检查设置。');
+      if (state.activeId) {
+        const session = await call('selectSession', state.activeId);
+        if (session?.id) upsertSession(session);
+      }
+      renderSelects(); renderWorkspace(); queueMessages(); toast('Grokbuild 已重新连接。');
+    } catch (error) { state.connected = false; state.connectionStatus = 'disconnected'; state.lastError = error.message; throw error; }
+    finally { state.selecting = false; renderConnection(); }
+  }
+
+  async function exportSession(id) {
+    if (!id) return;
+    const result = await call('exportSession', id);
+    if (result) toast(`对话已导出：${typeof result === 'string' ? result : result.filePath || result.path || '保存完成'}`, false, 6000);
+  }
+
+  function installListeners() {
+    $('account-button').addEventListener('click', () => guarded(async () => {
+      if (document.querySelector('dialog[open]')) return;
+      const result = await call('listAccounts');
+      state.accounts = result.accounts; state.login = result.login;
+      $('account-feedback').textContent = ''; renderAccounts(); $('accounts-dialog').showModal();
+    }));
+    $('account-login').addEventListener('click', () => { void accountWork(startAccountLogin); });
+    $('add-account-form').addEventListener('submit', event => {
+      event.preventDefault();
+      if (accountsLocked()) return;
+      const name = validateAccountName($('account-name-input'), 'account-feedback'); if (!name) return;
+      void accountWork(async () => {
+        const account = await call('addAccount', { name });
+        $('account-name-input').value = ''; await changeAccount(account.id); await startAccountLogin();
+      });
+    });
+    for (const id of ['account-name-input', 'account-rename-input']) $(id).addEventListener('input', () => { $(id).setCustomValidity(''); $(id).removeAttribute('aria-invalid'); });
+    $('account-rename-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const name = validateAccountName($('account-rename-input'), 'account-rename-feedback'); if (!name) return;
+      const id = state.accountRenameId; if (!id) return;
+      void accountDialogWork('account-rename-dialog', 'account-rename-feedback', async () => {
+        applyAccountSnapshot(await call('renameAccount', id, name));
+        $('account-feedback').textContent = '账户名称已保存。';
+      });
+    });
+    $('account-delete-confirm').addEventListener('click', () => {
+      const id = state.accountDeleteId; if (!id) return;
+      const wasCurrent = id === state.activeAccountId;
+      void accountDialogWork('account-delete-dialog', 'account-delete-feedback', async () => {
+        applyAccountSnapshot(await call('deleteAccount', id));
+        $('account-feedback').textContent = `账户及其本地聊天记录已删除。${wasCurrent ? '已返回默认账户。' : ''}${state.lastError ? ` ${state.lastError}` : ''}`;
+      });
+    });
+    for (const [dialogId, action, getId] of [
+      ['account-rename-dialog', 'rename', () => state.accountRenameId],
+      ['account-delete-dialog', 'delete', () => state.accountDeleteId],
+    ]) $(dialogId).addEventListener('close', () => {
+      const row = [...$('account-list').children].find(item => item.dataset.accountId === getId());
+      const button = row?.querySelector(`[data-account-action="${action}"]`);
+      if (button && !button.disabled) button.focus(); else $('account-login').focus();
+    });
+    $('account-cancel-login').addEventListener('click', () => guarded(async () => {
+      if (!state.login || state.accountCancelPending) return;
+      state.accountCancelPending = true; renderAccounts();
+      try { await call('cancelAccountLogin'); }
+      catch (error) { $('account-feedback').textContent = error.message || '取消登录失败，请重试。'; }
+      finally { state.accountCancelPending = false; renderAccounts(); }
+    }));
+    $('account-open-login').addEventListener('click', () => { if (state.login?.url) void guarded(() => call('openExternal', state.login.url)); });
+    $('account-copy-code').addEventListener('click', () => guarded(async () => { if (state.login?.code) { await call('copyText', state.login.code); toast('验证码已复制。'); } }));
+    $('image-dialog').addEventListener('close', () => $('image-preview').removeAttribute('src'));
+    $('new-session').addEventListener('click', newChat);
+    $('composer-form').addEventListener('submit', event => { event.preventDefault(); void sendMessage(); });
+    $('prompt').addEventListener('input', () => { resizePrompt(); rememberDraft(); });
+    $('prompt').addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); }
+    });
+    $('stop-button').addEventListener('click', () => guarded(async () => {
+      const sessionId = state.activeId;
+      $('stop-button').disabled = true;
+      try { await call('cancel', sessionId); }
+      finally { $('stop-button').disabled = false; }
+    }));
+    document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => {
+      $('prompt').value = button.dataset.prompt; resizePrompt(); rememberDraft(); $('prompt').focus();
+    }));
+    $('model-select').addEventListener('change', () => {
+      const model = $('model-select').value;
+      if (activeSession()) { void guarded(() => configureSession({ model })); return; }
+      const modelInfo = state.info.models.find(item => item.id === model);
+      if (model !== state.info.currentModelId && !Array.isArray(modelInfo?.reasoningEfforts)) { void guarded(() => prepareModel(model)); return; }
+      state.selectedModel = model; syncNewChatChoices(); renderSelects(); renderComposerState();
+    });
+    $('mode-select').addEventListener('change', () => {
+      const mode = $('mode-select').value;
+      if (activeSession()) { void guarded(() => configureSession({ mode })); return; }
+      state.selectedMode = mode; renderSelects(); renderComposerState();
+    });
+    $('settings-button').addEventListener('click', showSettings);
+    $('connection-button').addEventListener('click', () => guarded(reconnect));
+    $('settings-reconnect').addEventListener('click', () => { void savePreferences(true); });
+    $('settings-form').addEventListener('input', updateSettingsReconnect);
+    for (const id of ['rain-input', 'music-input', 'music-volume']) $(id).addEventListener('input', applyAmbience);
+    $('settings-dialog').addEventListener('close', applyAmbience);
+    const unlockMusic = () => { void ambience?.unlock(); };
+    document.addEventListener('pointerdown', unlockMusic, { capture: true });
+    document.addEventListener('keydown', unlockMusic, { capture: true });
+    $('choose-executable').addEventListener('click', () => guarded(async () => { const result = await call('chooseExecutable'); if (result) { $('executable-input').value = result; updateSettingsReconnect(); } }));
+    $('choose-workspace').addEventListener('click', () => guarded(async () => { const result = await call('chooseFolder'); if (result) { $('workspace-input').value = result; updateSettingsReconnect(); } }));
+    $('workspace-button').addEventListener('click', () => guarded(async () => {
+      if (state.savingSettings || state.sending || state.configuring || state.selecting || state.busy.size) return;
+      state.savingSettings = true; renderSelects(); renderComposerState();
+      try {
+        const workspace = await call('chooseFolder'); if (!workspace || workspace === state.settings.workspace) return;
+        const result = await call('saveSettings', { workspace });
+        state.settings = { ...state.settings, workspace, ...(result?.settings || result || {}) };
+        renderWorkspace();
+        toast(activeSession() ? '默认工作目录已更新，将用于新对话。' : '工作空间已更新。');
+        await reconnect();
+      } finally { state.savingSettings = false; renderSelects(); renderComposerState(); }
+    }));
+    $('settings-form').addEventListener('submit', event => {
+      event.preventDefault();
+      void savePreferences();
+    });
+    document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(button.dataset.closeDialog).close()));
+    document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('click', event => {
+      if (state.savingSettings || state.renaming || state.deleting || state.accountAction) return;
+      if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); }
+    }));
+    document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('cancel', event => {
+      if (state.savingSettings || state.renaming || state.deleting || state.accountAction) event.preventDefault();
+    }));
+    document.querySelectorAll('[data-window]').forEach(button => button.addEventListener('click', () => guarded(() => call('windowControl', button.dataset.window))));
+    $('search-toggle').addEventListener('click', () => {
+      searchVisible = !searchVisible; $('history-search').hidden = !searchVisible;
+      if (searchVisible) $('session-search').focus(); else { $('session-search').value = ''; renderSessions(); }
+    });
+    $('session-search').addEventListener('input', renderSessions);
+    $('session-search').addEventListener('keydown', event => { if (event.key === 'Escape') { $('session-search').value = ''; renderSessions(); searchVisible = false; $('history-search').hidden = true; } });
+    $('export-button').addEventListener('click', () => guarded(() => exportSession(state.activeId)));
+    $('menu-export').addEventListener('click', () => { const id = state.menuId; closeSessionMenu(); void guarded(() => exportSession(id)); });
+    $('menu-rename').addEventListener('click', () => {
+      state.renameId = state.menuId; const session = state.sessions.find(item => item.id === state.renameId); closeSessionMenu();
+      if (!session) return;
+      $('rename-input').value = sessionTitle(session); $('rename-dialog').showModal(); $('rename-input').select();
+    });
+    $('rename-form').addEventListener('submit', event => {
+      event.preventDefault(); void guarded(async () => {
+        if (state.renaming) return;
+        const title = $('rename-input').value.trim(); if (!title) return;
+        const sessionId = state.renameId;
+        state.renaming = true;
+        for (const element of $('rename-form').querySelectorAll('input, button')) element.disabled = true;
+        try {
+          const result = await call('renameSession', { sessionId, title });
+          if (result?.id) upsertSession(result); else { const session = state.sessions.find(item => item.id === sessionId); if (session) session.title = title; }
+          $('rename-dialog').close(); renderSessions(); renderMessages();
+        } finally { state.renaming = false; for (const element of $('rename-form').querySelectorAll('input, button')) element.disabled = false; }
+      });
+    });
+    $('menu-delete').addEventListener('click', () => {
+      state.deleteId = state.menuId; const session = state.sessions.find(item => item.id === state.deleteId); closeSessionMenu();
+      if (!session) return;
+      if (state.busy.has(session.id)) { toast('请先停止这段对话中的任务，再删除记录。'); return; }
+      $('delete-title').textContent = sessionTitle(session); $('delete-dialog').showModal();
+    });
+    $('confirm-delete').addEventListener('click', () => guarded(async () => {
+      const id = state.deleteId; if (!id || state.deleting) return;
+      state.deleting = true;
+      for (const element of $('delete-dialog').querySelectorAll('button')) element.disabled = true;
+      try {
+        await call('deleteSession', id);
+        state.sessions = state.sessions.filter(session => session.id !== id); state.drafts.delete(id); clearPermissions(id); state.busy.delete(id);
+        $('delete-dialog').close(); if (state.activeId === id) { newChat(); state.drafts.delete(id); } else renderSessions(); toast('对话已删除。');
+      } finally { state.deleting = false; for (const element of $('delete-dialog').querySelectorAll('button')) element.disabled = false; }
+    }));
+    document.addEventListener('click', event => {
+      if (!$('session-menu').hidden && !$('session-menu').contains(event.target) && !event.target.closest('.session-more')) closeSessionMenu();
+      const anchor = event.target.closest('.message-body a');
+      if (anchor) { event.preventDefault(); const url = anchor.getAttribute('href'); if (url && /^https?:\/\//i.test(url)) void guarded(() => call('openExternal', url)); else toast('此链接不是网页地址，请在项目中查看对应文件。'); }
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeSessionMenu();
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); if (!document.querySelector('dialog[open]')) newChat(); }
+      if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); showSettings(); }
+    });
+    $('conversation-scroll').addEventListener('scroll', () => { $('scroll-bottom').hidden = !activeSession()?.messages.length || nearBottom(); });
+    $('scroll-bottom').addEventListener('click', () => { $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight; });
+    window.addEventListener('resize', closeSessionMenu);
+    window.addEventListener('beforeunload', () => { if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
+  }
+
+  function updateClock() {
+    $('tokyo-time').textContent = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false }) + ' JST';
+  }
+
+  async function bootstrap() {
+    ambience = window.TokyoAmbience.create({ onStatus: renderMusicStatus });
+    installListeners(); updateClock(); setInterval(updateClock, 15000); setInterval(updateActivity, 1000);
+    renderConnection();
+    try {
+      if (api?.onEvent) unsubscribe = api.onEvent(onEvent);
+      const result = await call('bootstrap');
+      state.settings = { ...state.settings, ...(result?.settings || {}) };
+      state.info = normalizeInfo(result?.info || {});
+      state.sessions = (result?.sessions || []).map(normalizeSession);
+      state.accounts = result?.accounts || []; state.activeAccountId = result?.activeAccountId || 'local'; state.login = result?.login || null;
+      state.connected = result?.connected === true;
+      state.connectionStatus = state.connected ? 'ready' : 'disconnected';
+      state.lastError = result?.error || '';
+      state.initializing = false;
+      syncNewChatChoices(true);
+      renderWorkspace(); renderSessions(); renderSelects(); renderMessages(); renderConnection(); renderAccounts();
+      if (state.lastError) toast(state.lastError, true, 9000);
+    } catch (error) {
+      state.initializing = false;
+      state.connected = false; state.connectionStatus = 'disconnected'; state.lastError = error.message; renderConnection();
+      toast(error.message, true, 10000);
+    }
+    resizePrompt(); $('prompt').focus();
+  }
+
+  void bootstrap();
+})();
