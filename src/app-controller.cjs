@@ -5,7 +5,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
-const { imagesFromContent, resolveImage, findSessionImageDirectory } = require('./media.cjs');
+const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
 const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromContent, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
 const { pathToFileURL } = require('node:url');
 
@@ -28,7 +28,7 @@ class AppController extends EventEmitter {
     this.dir = path.join(root, 'data');
     fs.mkdirSync(this.dir, { recursive: true });
     this.file = path.join(this.dir, 'conversations.json');
-    this.settings = { executable: path.join(home, '.grok', 'bin', 'grok.exe'), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, language: 'zh-CN' };
+    this.settings = { executable: path.join(home, '.grok', 'bin', 'grok.exe'), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, language: 'en' };
     this.t = createI18n(() => this.settings.language);
     this.sessions = [];
     this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
@@ -69,9 +69,7 @@ class AppController extends EventEmitter {
           session.modelSelectionVerified = false;
           for (const m of session.messages || []) {
             if (m.status === 'working') m.status = 'cancelled';
-            // Older clients saved tool payloads but did not display their images.
-            const images = [...(Array.isArray(m.images) ? m.images : []), ...imagesFromContent(m.tools)];
-            m.images = [...new Map(images.filter(image => typeof image?.src === 'string').map(image => [image.src, image])).values()];
+            m.images = restoreMessageImages(m);
             const attachments = [...(Array.isArray(m.attachments) ? m.attachments : []), ...attachmentsFromContent(m.tools), ...(m.role === 'assistant' ? attachmentsFromText(m.text) : [])];
             m.attachments = [...new Map(attachments.filter(item => typeof item?.id === 'string' && typeof item.src === 'string').map(item => [item.id, item])).values()];
           }
@@ -545,17 +543,22 @@ class AppController extends EventEmitter {
       if (event.type === 'attachment') addAttachment(event.attachment);
       if (event.type === 'thought') message.thought += event.text || '';
       if (event.type === 'image' && event.image?.src) {
+        event = { ...event, image: { ...event.image, origin: 'assistant' } };
         message.images ||= [];
-        if (!message.images.some(image => image.src === event.image.src)) message.images.push(event.image);
+        const index = message.images.findIndex(image => image.src === event.image.src);
+        if (index < 0) message.images.push(event.image); else message.images[index] = event.image;
       }
       if (event.type === 'tool') {
         const existing = message.tools.find(t => t.toolCallId === event.toolCallId);
         if (existing) Object.assign(existing, event); else message.tools.push({ ...event });
         for (const attachment of attachmentsFromContent(event.content)) addAttachment(attachment);
-        const images = imagesFromContent(event.content);
+        const images = imagesFromTools([existing || event]);
         for (const image of images) {
           message.images ||= [];
-          if (!message.images.some(item => item.src === image.src)) message.images.push(image);
+          if (!message.images.some(item => item.src === image.src)) {
+            message.images.push(image);
+            this.emitEvent({ type: 'image', sessionId: current.sessionId, image });
+          }
         }
       }
       if (event.type === 'error') message.error = event.message;

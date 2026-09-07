@@ -17,7 +17,7 @@ fs.mkdirSync(output, { recursive: true });
   try {
     const page = await desktop.firstWindow();
     page.on('pageerror', e => errors.push(e.message));
-    await page.waitForFunction(() => document.querySelector('#connection-label')?.textContent.includes('已连接'), { timeout: 60000 });
+    await page.waitForFunction(() => document.querySelector('#connection-label')?.textContent === window.TokyoI18n.t('引擎已连接'), { timeout: 60000 });
     await page.screenshot({ path: path.join(output, 'welcome.png') });
     const state = await page.evaluate(() => ({
       title: document.title,

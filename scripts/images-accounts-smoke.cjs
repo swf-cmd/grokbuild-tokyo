@@ -14,7 +14,7 @@ const png = fs.readFileSync(path.join(root, 'src/renderer/assets/tokyo-rain.png'
 const icon = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 fs.writeFileSync(path.join(workspace, '东京 image.png'), png);
 fs.writeFileSync(path.join(workspace, 'absolute.png'), icon);
-fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false }, sessions: [] }));
+fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false, language: 'zh-CN' }, sessions: [] }));
 const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/conversations.json'), 'utf8'));
 
 (async () => {

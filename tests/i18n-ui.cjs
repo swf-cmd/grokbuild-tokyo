@@ -58,9 +58,9 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   };
   try {
-    await launch(); await ready('zh-CN');
-    await stage('legacy settings default to Chinese with all seven native language names', async () => {
-      assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+    await launch(); await ready('en');
+    await stage('settings without a saved language default to English with all seven native language names', async () => {
+      assert.equal(await page.locator('html').getAttribute('lang'), 'en');
       await openSettings();
       assert.deepEqual(await page.locator('#language-select option').evaluateAll(items => items.map(item => item.value)), codes);
       for (const locale of codes) assert.equal(await page.locator(`#language-select option[value="${locale}"]`).textContent(), languages[locale]);
@@ -74,13 +74,13 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
     await page.locator('.thought-details summary').first().click();
     const originalMessages = JSON.stringify(readState().sessions[0].messages);
     const originalTitle = readState().sessions[0].title;
-    let savedLocale = 'zh-CN';
+    let savedLocale = 'en';
 
     for (const locale of codes) {
       await stage(`${locale}: preview, translated controls and dynamic history, save without reconnect`, async () => {
         const before = await starts();
         await openSettings(); await choose(locale);
-        assert.equal(readState().settings.language || 'zh-CN', savedLocale, 'preview is not persisted');
+        assert.equal(readState().settings.language || 'en', savedLocale, 'preview is not persisted');
         await assertText('#settings-dialog h2', '偏好设置', locale);
         await assertText('#connection-label', '引擎已连接', locale);
         await assertText('.titlebar-center', 'A PLACE FOR YOUR NEXT IDEA', locale);

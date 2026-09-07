@@ -15,7 +15,7 @@ const executable = path.join(testRoot, 'grok.exe');
 const alternateExecutable = path.join(testRoot, 'alternate-grok.exe');
 for (const folder of [workspace, alternateWorkspace, path.join(testRoot, 'data')]) fs.mkdirSync(folder, { recursive: true });
 for (const file of [executable, alternateExecutable]) fs.writeFileSync(file, 'Test fixture only; never executed.');
-fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, rainEnabled: true, subagentsEnabled: true }, sessions: [] }));
+fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, rainEnabled: true, subagentsEnabled: true, language: 'zh-CN' }, sessions: [] }));
 const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
 
 (async () => {

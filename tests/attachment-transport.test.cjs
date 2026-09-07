@@ -91,7 +91,7 @@ test('malformed, missing, non-image and oversized files fail without dispatching
   const attachment = await file('document.txt', Buffer.from('hello'), 'text/plain');
   await assert.rejects(adapter.prompt({ sessionId, attachments: [{ ...attachment, path: 'relative.txt' }] }), { code: 'INVALID_ATTACHMENT' });
   await assert.rejects(adapter.prompt({ sessionId, attachments: [{ ...attachment, path: path.join(cwd, 'missing.txt') }] }), { code: 'ENOENT' });
-  await assert.rejects(adapter.prompt({ sessionId, attachments: [{ ...attachment, mimeType: 'image/png' }] }), /图片/);
+  await assert.rejects(adapter.prompt({ sessionId, attachments: [{ ...attachment, mimeType: 'image/png' }] }), /image format/);
   const handle = await fs.open(attachment.path, 'w');
   await handle.truncate(20 * 1024 * 1024 + 1);
   await handle.close();

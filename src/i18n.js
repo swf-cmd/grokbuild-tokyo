@@ -5,8 +5,8 @@
 })(typeof globalThis === 'object' ? globalThis : this, function(catalogs) {
   'use strict';
   const languages = Object.freeze({ 'zh-CN': '简体中文', ja: '日本語', en: 'English', ko: '한국어', es: 'Español', de: 'Deutsch', fr: 'Français' });
-  const normalizeLanguage = value => typeof value === 'string' && Object.hasOwn(languages, value) ? value : 'zh-CN';
-  let language = 'zh-CN';
+  const normalizeLanguage = value => typeof value === 'string' && Object.hasOwn(languages, value) ? value : 'en';
+  let language = 'en';
   const createI18n = getLocale => (source, params = {}) => {
     const locale = normalizeLanguage(typeof getLocale === 'function' ? getLocale() : getLocale);
     const catalog = catalogs?.[locale];

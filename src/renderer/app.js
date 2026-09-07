@@ -8,7 +8,7 @@
   const t = i18n.t;
   const diagnostic = i18n.localizeDiagnostic;
   const state = {
-    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'zh-CN' },
+    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'en' },
     info: { models: [], modes: [], version: '' },
     sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true,
     sending: false, configuring: false, selecting: false, savingSettings: false, renaming: false, deleting: false,
@@ -31,6 +31,9 @@
   let unsubscribe;
   let ambience;
   let searchVisible = false;
+  let clockTimer;
+  let clockDay;
+  let clockOffset;
 
   function toast(message, error = false, duration = 4200) {
     message = diagnostic(safeText(message));
@@ -231,7 +234,8 @@
     const date = new Date(sessionTime(session));
     const today = new Date();
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    return date.getTime() >= start ? t('今天') : date.getTime() >= start - 86400000 ? t('昨天') : t('更早');
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1).getTime();
+    return date.getTime() >= start ? t('今天') : date.getTime() >= yesterday ? t('昨天') : t('更早');
   }
 
   function renderSessions() {
@@ -467,7 +471,7 @@
       const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? t('你') : '✳'; avatar.setAttribute('aria-hidden', 'true');
       const name = document.createElement('strong'); name.textContent = message.role === 'user' ? t('YOU') : 'GROKBUILD';
       const time = document.createElement('time');
-      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit', hour12: false }); } }
+      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } }
       heading.append(avatar, name, time); article.append(heading);
       if (message.thought) {
         const thought = document.createElement('details'); thought.className = 'thought-details'; thought.dataset.thoughtId = message.id;
@@ -1276,7 +1280,9 @@
     const composerObserver = new ResizeObserver(() => { $('scroll-bottom').style.bottom = `${composerRegion.getBoundingClientRect().height + 8}px`; });
     composerObserver.observe(composerRegion);
     window.addEventListener('resize', closeSessionMenu);
-    window.addEventListener('beforeunload', () => { composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
+    window.addEventListener('focus', updateClock);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) updateClock(); });
+    window.addEventListener('beforeunload', () => { clearTimeout(clockTimer); composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
   }
 
   function applyLanguage(language) {
@@ -1294,18 +1300,32 @@
   }
 
   function updateClock() {
-    $('tokyo-time').textContent = new Date().toLocaleTimeString(i18n.getLanguage(), { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false }) + ' JST';
+    clearTimeout(clockTimer);
+    const now = new Date();
+    const label = now.toLocaleTimeString(i18n.getLanguage(), { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) + ' JST';
+    if ($('tokyo-time').textContent !== label) $('tokyo-time').textContent = label;
+    // History and message times use the system timezone, while the location
+    // clock above always represents Tokyo. Refresh after midnight or a zone change.
+    const day = now.toDateString();
+    const offset = now.getTimezoneOffset();
+    if (clockDay !== undefined && (clockDay !== day || clockOffset !== offset)) renderSessions();
+    if (clockOffset !== undefined && clockOffset !== offset) renderMessages();
+    clockDay = day; clockOffset = offset;
+    // Align to the system clock, including after sleep or a manual time change.
+    clockTimer = setTimeout(updateClock, 1000 - Date.now() % 1000);
   }
 
   async function bootstrap() {
+    i18n.apply(document);
     ambience = window.TokyoAmbience.create({ onStatus: renderMusicStatus });
-    installListeners(); updateClock(); setInterval(updateClock, 15000); setInterval(updateActivity, 1000);
+    installListeners(); updateClock(); setInterval(updateActivity, 1000);
     renderConnection();
     try {
       if (api?.onEvent) unsubscribe = api.onEvent(onEvent);
       const result = await call('bootstrap');
       state.settings = { ...state.settings, ...(result?.settings || {}) };
       i18n.setLanguage(state.settings.language); i18n.apply(document);
+      updateClock();
       state.info = normalizeInfo(result?.info || {});
       state.sessions = (result?.sessions || []).map(normalizeSession);
       state.accounts = result?.accounts || []; state.activeAccountId = result?.activeAccountId || 'local'; state.login = result?.login || null;

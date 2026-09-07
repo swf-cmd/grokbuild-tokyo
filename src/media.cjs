@@ -1,7 +1,7 @@
 'use strict';
 
 const { createI18n } = require('./i18n.js');
-const defaultT = createI18n(() => 'zh-CN');
+const defaultT = createI18n('en');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
@@ -19,6 +19,30 @@ function imagesFromContent(content) {
     if (typeof src === 'string' && src.length <= MAX_IMAGE_BYTES * 1.4) return [{ src, alt: resource.name || resource.title || 'Grok 返回的图片', altIsDefault: !resource.name && !resource.title }];
   }
   return content.content ? imagesFromContent(content.content) : [];
+}
+
+function isReadTool(tool) {
+  // ACP updates are partial: callers must pass the merged tool record. Older
+  // Grok versions also identify read_file in the title or raw input variant.
+  return tool?.kind === 'read' || tool?.rawInput?.variant === 'ReadFile'
+    || /^(?:read_file\b|Read\s+`)/i.test(tool?.title || '');
+}
+
+function imagesFromTools(tools) {
+  return (Array.isArray(tools) ? tools : []).filter(tool => !isReadTool(tool)).flatMap(tool =>
+    imagesFromContent(tool?.content).map(image => ({ ...image, origin: 'tool', toolCallId: tool.toolCallId })));
+}
+
+function restoreMessageImages(message) {
+  const tools = Array.isArray(message.tools) ? message.tools : [];
+  const outputs = message.role === 'assistant' ? imagesFromTools(tools) : [];
+  const readSources = new Set(tools.filter(isReadTool).flatMap(tool => imagesFromContent(tool.content)).map(image => image.src));
+  const outputSources = new Set(outputs.map(image => image.src));
+  const saved = (Array.isArray(message.images) ? message.images : []).filter(image => typeof image?.src === 'string'
+    && (message.role !== 'assistant' || image.origin === 'assistant' || !readSources.has(image.src) || outputSources.has(image.src)));
+  // Remove legacy read-tool echoes on load, while retaining explicit assistant
+  // image chunks and images produced by other tools, including the same bytes.
+  return [...new Map([...outputs, ...saved].map(image => [image.src, image])).values()];
 }
 
 function imageMime(bytes, t = defaultT) {
@@ -168,4 +192,4 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
   } finally { await handle.close(); }
 }
 
-module.exports = { imagesFromContent, resolveImage, imageMime, findSessionImageDirectory };
+module.exports = { imagesFromContent, imagesFromTools, restoreMessageImages, isReadTool, resolveImage, imageMime, findSessionImageDirectory };

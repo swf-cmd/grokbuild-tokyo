@@ -1,7 +1,7 @@
 {
   "name": "grokbuild-tokyo",
   "productName": "Grokbuild Tokyo",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "A Tokyo rainy-night desktop client for the locally installed Grok Build CLI",
   "main": "src/main.cjs",
   "private": true,
@@ -17,6 +17,7 @@
     "test:accounts": "node scripts/images-accounts-smoke.cjs",
     "test:attachments": "node tests/ui-attachments.cjs",
     "test:i18n": "node tests/i18n-ui.cjs",
+    "test:time": "node tests/time-ui.cjs",
     "build": "node scripts/package.cjs"
   },
   "devDependencies": {

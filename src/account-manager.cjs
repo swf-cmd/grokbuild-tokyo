@@ -9,7 +9,7 @@ const path = require('node:path');
 const ACCOUNT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 class AccountManager extends EventEmitter {
-  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'zh-CN', getWorkingDirectory = () => process.cwd() }) {
+  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'en', getWorkingDirectory = () => process.cwd() }) {
     super();
     this.dir = dir;
     this.t = createI18n(getLanguage);

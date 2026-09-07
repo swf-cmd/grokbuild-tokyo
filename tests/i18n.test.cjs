@@ -9,11 +9,11 @@ const { languages, normalizeLanguage, createI18n, setLanguage, localizeDiagnosti
 const codes = ['zh-CN', 'ja', 'en', 'ko', 'es', 'de', 'fr'];
 const tokens = text => [...new Set(text.match(/\{[A-Za-z][A-Za-z0-9_]*\}/g) || [])].sort();
 
-test('all seven native language choices are available, with safe Chinese defaults', () => {
+test('all seven native language choices are available, with safe English defaults', () => {
   assert.deepEqual(Object.keys(languages), codes);
   assert.deepEqual(Object.values(languages), ['简体中文', '日本語', 'English', '한국어', 'Español', 'Deutsch', 'Français']);
   for (const code of codes) assert.equal(normalizeLanguage(code), code);
-  for (const unsupported of [undefined, null, '', 'it', 'en-US', 'EN', 'constructor', '__proto__', 3]) assert.equal(normalizeLanguage(unsupported), 'zh-CN');
+  for (const unsupported of [undefined, null, '', 'it', 'en-US', 'EN', 'constructor', '__proto__', 3]) assert.equal(normalizeLanguage(unsupported), 'en');
 });
 
 test('every translated catalog covers the same nonempty strings and preserves parameters', () => {
@@ -54,7 +54,7 @@ test('persisted and IPC diagnostics follow preview language without changing int
       }
       assert.equal(localizeDiagnostic('External engine: 任意内容 / keep {path}'), 'External engine: 任意内容 / keep {path}');
     }
-  } finally { setLanguage('zh-CN'); }
+  } finally { setLanguage('en'); }
 });
 
 test('all declared static text, placeholders, accessible names and starter prompts have translations', () => {
@@ -81,7 +81,7 @@ test('translations follow the current language, interpolate values and leave unk
   assert.equal(t('偏好设置'), 'Preferences');
   locale = 'ja'; assert.equal(t('偏好设置'), catalogs.ja['偏好设置']);
   locale = 'zh-CN'; assert.equal(t('偏好设置'), '偏好设置');
-  locale = 'unsupported'; assert.equal(t('偏好设置'), '偏好设置');
+  locale = 'unsupported'; assert.equal(t('偏好设置'), 'Preferences');
   assert.equal(t('Unknown {name} / {count} / {missing}', { name: '<b>Tokyo</b>', count: 0 }), 'Unknown <b>Tokyo</b> / 0 / {missing}');
   assert.equal(t('Unknown {flag}', { flag: false }), 'Unknown false');
   assert.equal(t('constructor'), 'constructor');
@@ -99,7 +99,8 @@ test('translations follow the current language, interpolate values and leave unk
 test('the same offline catalogs and localizer load as browser scripts without CommonJS', () => {
   const context = vm.createContext({});
   for (const file of ['locales.js', 'i18n.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8'), context, { filename: file });
-  assert.equal(context.TokyoI18n.getLanguage(), 'zh-CN');
+  assert.equal(context.TokyoI18n.getLanguage(), 'en');
+  assert.equal(context.TokyoI18n.t('偏好设置'), 'Preferences');
   for (const locale of codes) {
     context.TokyoI18n.setLanguage(locale);
     assert.equal(context.TokyoI18n.getLanguage(), locale);

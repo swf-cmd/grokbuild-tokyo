@@ -23,10 +23,12 @@ jobs:
       - run: npm run test:accounts
       - run: npm run test:attachments
       - run: npm run test:i18n
+      - run: npm run test:time
       - run: npm run build
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
       - run: node tests/ui-attachments.cjs --packaged
+      - run: node tests/time-ui.cjs --packaged
       - name: Keep UI failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v7

@@ -53,7 +53,7 @@ function flattenChoices(options) {
 }
 
 class GrokAdapter extends EventEmitter {
-  constructor({ executable = 'grok', cwd = process.cwd(), subagentsEnabled = true, env = process.env, spawnProcess = spawn, getLanguage = () => 'zh-CN' } = {}) {
+  constructor({ executable = 'grok', cwd = process.cwd(), subagentsEnabled = true, env = process.env, spawnProcess = spawn, getLanguage = () => 'en' } = {}) {
     super();
     this.t = createI18n(getLanguage);
     this.safeMessage = value => safeMessage(value, this.t('Grok 连接出错'));
@@ -463,7 +463,8 @@ class GrokAdapter extends EventEmitter {
         if (Object.hasOwn(update, key)) event[key] = update[key];
       }
       this._event(event);
-      for (const image of imagesFromContent(update.content)) this._event({ ...common, type: 'image', image, role: 'assistant' });
+      // The controller merges partial tool updates and decides which tool media
+      // are output. A read_file image is input context, not an assistant reply.
       for (const attachment of attachmentsFromContent(update.content)) this._event({ ...common, type: 'attachment', attachment, role: 'assistant' });
     } else if (sessionUpdate === 'plan') {
       this._event({ ...common, type: 'status', status: 'plan', entries: update.entries || [] });

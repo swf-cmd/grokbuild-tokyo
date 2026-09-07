@@ -22,7 +22,7 @@ function signIn(controller, account) {
   fs.writeFileSync(path.join(home, 'auth.json'), JSON.stringify({ scope: { key: 'fixture-credential', auth_mode: 'oidc', email: 'fixture@example.test' } }));
 }
 
-function fixture(t, saved) {
+function fixture(t, saved, { useAppLanguage = false } = {}) {
   const base = path.resolve(__dirname, '..', 'work', 'controller-tests');
   fs.mkdirSync(base, { recursive: true });
   const root = fs.mkdtempSync(path.join(base, 'run-'));
@@ -89,6 +89,8 @@ function fixture(t, saved) {
     async close() { this.closeCount++; if (this.closeGate) await this.closeGate.promise; for (const p of this.prompts) p.gate.resolve({ stopReason: 'cancelled' }); }
   }
   const controller = new AppController({ root, home: path.join(root, 'home'), Adapter: FakeAdapter });
+  // Diagnostic assertions use an explicit locale; language tests exercise the app default.
+  if (!useAppLanguage) controller.settings.language = 'zh-CN';
   controller.accountManager.defaultHome = path.join(root, 'home', '.grok');
   t.after(async () => {
     for (const adapter of instances) for (const gate of ['startGate', 'newGate', 'loadGate', 'modelGate', 'modeGate', 'closeGate']) adapter[gate]?.resolve();
@@ -100,8 +102,8 @@ function fixture(t, saved) {
   return { root, controller, instances };
 }
 
-async function started(t) {
-  const result = fixture(t);
+async function started(t, options) {
+  const result = fixture(t, undefined, options);
   result.session = await result.controller.createSession();
   result.adapter = result.instances[0];
   return result;
@@ -344,7 +346,7 @@ test('restart marks an interrupted reply cancelled and leaves completed history 
 
 test('invalid history is backed up and recovery starts with a usable empty conversation list', t => {
   const { controller } = fixture(t, { settings: {}, sessions: [null] });
-  assert.match(controller.loadError, /备份/);
+  assert.match(controller.loadError, /backup/);
   assert.deepEqual(controller.sessions, []);
   const backups = fs.readdirSync(controller.dir).filter(name => name.includes('.unreadable-'));
   assert.equal(backups.length, 1);
@@ -558,9 +560,16 @@ test('older or malformed atmosphere settings recover defaults without losing sav
   }
 });
 
+test('fresh installations start in English before any settings are saved', t => {
+  const { controller } = fixture(t, undefined, { useAppLanguage: true });
+  assert.equal(fs.existsSync(controller.file), false);
+  assert.equal(controller.settings.language, 'en');
+  assert.equal(controller.t('偏好设置'), 'Preferences');
+});
+
 test('supported interface languages persist across restarts without reconnecting the engine', async t => {
-  const { controller, adapter, root } = await started(t);
-  assert.equal(controller.settings.language, 'zh-CN');
+  const { controller, adapter, root } = await started(t, { useAppLanguage: true });
+  assert.equal(controller.settings.language, 'en');
   for (const language of ['ja', 'en', 'ko', 'es', 'de', 'fr', 'zh-CN']) {
     await controller.saveSettings({ language });
     assert.equal(adapter.options.getLanguage(), language);
@@ -573,10 +582,10 @@ test('supported interface languages persist across restarts without reconnecting
   assert.equal(controller.connected, true);
 });
 
-test('malformed saved languages recover the Chinese default without losing user content', t => {
+test('missing or malformed saved languages recover English without losing user content', t => {
   for (const language of [undefined, null, false, 7, {}, ['en'], 'invalid', 'toString', '__proto__']) {
-    const { controller } = fixture(t, { settings: { language }, sessions: [{ id: 'kept', title: 'User title', cwd: 'unused', messages: [{ role: 'user', text: 'Do not translate this' }] }] });
-    assert.equal(controller.settings.language, 'zh-CN');
+    const { controller } = fixture(t, { settings: { language }, sessions: [{ id: 'kept', title: 'User title', cwd: 'unused', messages: [{ role: 'user', text: 'Do not translate this' }] }] }, { useAppLanguage: true });
+    assert.equal(controller.settings.language, 'en');
     assert.equal(controller.loadError, null);
     assert.equal(controller.sessions[0].title, 'User title');
     assert.equal(controller.sessions[0].messages[0].text, 'Do not translate this');
@@ -986,9 +995,48 @@ test('image chunks and tool images persist once, survive reload and appear in Ma
   adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'image-tool', content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: png } }] });
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
   const stored = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages.at(-1);
-  assert.equal(stored.images.length, 1); assert.deepEqual(stored.images[0], image);
+  assert.equal(stored.images.length, 1); assert.deepEqual(stored.images[0], { ...image, origin: 'assistant' });
   assert.ok(controller.exportMarkdown(session.id).includes('![Preview](<data:image/png;base64,'));
   assert.equal((await controller.readImage({ sessionId: session.id, src: image.src })).src, image.src);
+});
+
+test('reading an uploaded image never echoes it into the streamed or saved reply', async t => {
+  const { controller, session, adapter } = await started(t);
+  const bytes = fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png'));
+  const [attachment] = await controller.importAttachments({ files: [{ name: 'input.png', data: bytes.toString('base64') }] });
+  const events = []; controller.on('event', event => events.push(event));
+  await controller.send({ sessionId: session.id, text: 'Describe the image', attachments: [attachment.id] });
+  const content = [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: bytes.toString('base64') } }];
+  const emit = update => adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'read-input', ...update });
+  emit({ title: 'read_file', kind: 'other', status: 'pending', rawInput: { target_file: attachment.src } });
+  emit({ title: `Read \`${attachment.src}\``, kind: 'read', status: 'in_progress', rawInput: { variant: 'ReadFile', target_file: attachment.src } });
+  emit({ status: 'completed', content });
+  emit({ status: 'completed' });
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: 'An illustrated city.' });
+  assert.equal(events.filter(event => event.type === 'image').length, 0);
+  assert.equal(session.messages[0].images.length, 1);
+  assert.deepEqual(session.messages[1].images, []);
+  assert.equal(session.messages[1].tools[0].content[0].content.type, 'image');
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
+  const restored = new AppController({ root: controller.root, home: controller.root });
+  t.after(() => clearTimeout(restored.saveTimer));
+  assert.deepEqual(restored.sessions[0].messages[1].images, []);
+  assert.equal((restored.exportMarkdown(session.id).match(/!\[/g) || []).length, 1, 'only the user upload is exported');
+});
+
+test('generated tool images stream once even when partial status updates follow', async t => {
+  const { controller, session, adapter } = await started(t);
+  const data = fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png')).toString('base64');
+  const events = []; controller.on('event', event => events.push(event));
+  await controller.send({ sessionId: session.id, text: 'Generate an image' });
+  for (const update of [
+    { title: 'Generate image', kind: 'execute', status: 'in_progress' },
+    { status: 'completed', content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data } }] },
+    { status: 'completed' },
+  ]) adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'generate', ...update });
+  assert.equal(events.filter(event => event.type === 'image').length, 1);
+  assert.equal(session.messages[1].images.length, 1);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
 });
 
 test('legacy saved tool images become visible and historical records migrate to the local account', t => {
@@ -1171,7 +1219,7 @@ test('unreadable history permanently quarantines staged credentials across close
   fs.writeFileSync(controller.file, '{broken');
   const next = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
   try {
-    assert.match(next.loadError, /备份/);
+    assert.match(next.loadError, /backup/);
     assert.equal(fs.existsSync(next.accountManager.profileDirectory(account.id, true)), false);
     assert.equal(fs.existsSync(next.accountManager.recoveryDirectory(account.id)), true);
   } finally { await next.close(); }
@@ -1191,9 +1239,9 @@ test('failed quarantine blocks saving reset history until staged credentials can
     preserveUnverifiedDeletes() { throw new Error('directory locked'); }
   }
   const locked = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter, Accounts: LockedAccounts });
-  assert.match(locked.loadError, /未能隔离/);
-  assert.throws(() => locked.save(), /暂未覆盖历史文件/);
-  await assert.rejects(locked.close(), /暂未覆盖历史文件/);
+  assert.match(locked.loadError, /Could not isolate/);
+  assert.throws(() => locked.save(), /history file was not overwritten/);
+  await assert.rejects(locked.close(), /history file was not overwritten/);
   assert.equal(fs.readFileSync(controller.file, 'utf8'), '{broken');
   assert.equal(fs.existsSync(locked.accountManager.profileDirectory(account.id, true)), true);
   const recovered = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });

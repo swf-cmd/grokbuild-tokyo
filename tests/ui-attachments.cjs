@@ -17,7 +17,7 @@ const png = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 const imageFile = path.join(workspace, '东京 photo.png');
 const documentFile = path.join(workspace, 'notes.txt');
 fs.writeFileSync(imageFile, png); fs.writeFileSync(documentFile, 'Attachment test 日本語 中文\n');
-fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false }, sessions: [] }));
+fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false, language: 'zh-CN' }, sessions: [] }));
 const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/conversations.json'), 'utf8'));
 
 (async () => {
@@ -59,6 +59,31 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await page.waitForFunction(() => document.querySelector('.message.user .chat-image img')?.naturalWidth > 0);
       assert.equal(await page.locator('.message.user .attachment-card').count(), 2);
       assert.equal(await page.locator('#send-button').isDisabled(), true);
+    });
+    await stage('reading an upload does not flash or leave the original image in the answer', async () => {
+      await choose([imageFile], 1);
+      await page.locator('#prompt').fill('WAIT describe uploaded picture');
+      await page.locator('#send-button').click();
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden);
+      await desktop.evaluate((_electron, data) => {
+        const fixture = globalThis.__tokyoUITest;
+        const sessionId = fixture.calls.filter(item => item.method === 'prompt').at(-1).sessionId;
+        const emit = update => fixture.adapter.emit('event', { type: 'tool', sessionId, toolCallId: 'read-upload', ...update });
+        emit({ title: 'read_file', kind: 'other', status: 'pending' });
+        emit({ title: 'Read `uploaded picture.png`', kind: 'read', status: 'in_progress', rawInput: { variant: 'ReadFile' } });
+        emit({ status: 'completed', content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data } }] });
+        fixture.adapter.emit('event', { type: 'text', sessionId, text: 'The picture shows a city.' });
+      }, png.toString('base64'));
+      await page.locator('.message.assistant').last().filter({ hasText: 'The picture shows a city.' }).waitFor();
+      assert.equal(await page.locator('.message.assistant').last().locator('.chat-image').count(), 0);
+      await page.waitForFunction(() => [...document.querySelectorAll('.message.user')].at(-1)?.querySelector('.chat-image img')?.naturalWidth > 0);
+      await desktop.evaluate(() => {
+        const adapter = globalThis.__tokyoUITest.adapter;
+        for (const [sessionId, resolve] of adapter.pending) { resolve({ stopReason: 'end_turn' }); adapter.pending.delete(sessionId); }
+      });
+      await idle();
+      assert.equal(await page.locator('.message.assistant').last().locator('.chat-image').count(), 0);
+      assert.deepEqual(readState().sessions.find(item => item.id === firstSession).messages.at(-1).images, []);
     });
     await stage('draft attachments stay with their conversation and survive IPC send rejection', async () => {
       await choose([documentFile], 1); await page.locator('#prompt').fill('First draft');

@@ -33,7 +33,7 @@ test('selected image and document bytes are copied, names sanitized and MIME sni
 test('invalid, oversized and excessive imports fail and leave no partial staged files', async t => {
   const root = await fixture(t);
   await assert.rejects(stageAttachments(Array(11).fill({ name: 'x', data: '' }), root), /10/);
-  await assert.rejects(stageAttachments([{ name: 'first.txt', data: 'YWJj' }, { name: 'bad.txt', data: '<invalid>' }], root), /无效/);
+  await assert.rejects(stageAttachments([{ name: 'first.txt', data: 'YWJj' }, { name: 'bad.txt', data: '<invalid>' }], root), /invalid/);
   assert.deepEqual(await fs.readdir(root), []);
   const file = path.join(root, 'large.dat'); const handle = await fs.open(file, 'w'); await handle.truncate(20 * 1024 * 1024 + 1); await handle.close();
   await assert.rejects(stageAttachments([file], root, { fromPaths: true }), /20 MB/);
@@ -87,8 +87,8 @@ test('remote downloads validate redirects, status and actual streamed size', asy
   const urls = [];
   assert.equal((await resolveAttachment('https://example.test/start', [], undefined, async url => { urls.push(url); return replies.shift(); })).toString(), 'pdf bytes');
   assert.deepEqual(urls, ['https://example.test/start', 'https://example.test/file.pdf']);
-  await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response(null, { status: 302, headers: { location: 'file:///private' } })), /地址/);
-  await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response('missing', { status: 404 })), /下载失败/);
+  await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response(null, { status: 302, headers: { location: 'file:///private' } })), /address/);
+  await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response('missing', { status: 404 })), /download failed/);
   await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response('too big', { headers: { 'content-length': String(21 * 1024 * 1024) } })), /20 MB/);
   await assert.rejects(resolveAttachment('https://example.test/file', [], undefined, async () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(20 * 1024 * 1024 + 1)); controller.close(); } }))), /20 MB/);
 });

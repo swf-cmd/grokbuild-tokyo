@@ -32,14 +32,15 @@ test('ACP image, embedded resource and tool content retain image payloads', () =
   assert.equal(imagesFromContent({ type: 'resource', resource: { mimeType: 'text/plain', blob: encoded } }).length, 0);
 });
 
-test('adapter streams image-only responses, marks replay and forwards tool images', () => {
+test('adapter streams assistant images and keeps tool images inside tool updates', () => {
   const adapter = new GrokAdapter(); const events = []; adapter.on('event', event => events.push(event));
   adapter._sessionUpdate({ sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: imageBlock } });
   adapter.loading.add('s');
   adapter._sessionUpdate({ sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: imageBlock } });
   adapter.loading.clear();
   adapter._sessionUpdate({ sessionId: 's', update: { sessionUpdate: 'tool_call_update', toolCallId: 't', content: [{ type: 'content', content: imageBlock }] } });
-  assert.deepEqual(events.filter(e => e.type === 'image').map(e => e.replay), [false, true, false]);
+  assert.deepEqual(events.filter(e => e.type === 'image').map(e => e.replay), [false, true]);
+  assert.deepEqual(imagesFromContent(events.find(e => e.type === 'tool').content), imagesFromContent(imageBlock));
   assert.equal(events.find(e => e.type === 'image').image.src, `data:image/png;base64,${encoded}`);
 });
 
@@ -64,7 +65,7 @@ test('literal percent sequences keep their filename while encoded Markdown paths
   assert.equal((await resolveImage(encodeURIComponent('变化 chart.png'), root)).src, `data:image/png;base64,${otherPng.toString('base64')}`);
   const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
   fs.writeFileSync(path.join(root, 'private.png'), png);
-  await assert.rejects(resolveImage('%2e%2e/private.png', workspace), /工作目录/);
+  await assert.rejects(resolveImage('%2e%2e/private.png', workspace), /working directory/);
 });
 
 test('image URLs and inline images are validated without arbitrary file or scheme access', async t => {
@@ -75,14 +76,14 @@ test('image URLs and inline images are validated without arbitrary file or schem
     await assert.rejects(resolveImage(src, path.join(root, 'workspace')));
   }
   fs.writeFileSync(path.join(root, 'fake.png'), '<script>alert(1)</script>');
-  await assert.rejects(resolveImage('fake.png', root), /图片格式/);
+  await assert.rejects(resolveImage('fake.png', root), /image format/);
 });
 
 test('symlink escape, missing images and oversize files report recoverable errors', async t => {
   const root = fixture(t); const cwd = path.join(root, 'cwd'); const outside = path.join(root, 'outside');
   fs.mkdirSync(cwd); fs.mkdirSync(outside); fs.writeFileSync(path.join(outside, 'a.png'), png);
   fs.symlinkSync(outside, path.join(cwd, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
-  await assert.rejects(resolveImage('linked/a.png', cwd), /工作目录/);
+  await assert.rejects(resolveImage('linked/a.png', cwd), /working directory/);
   await assert.rejects(resolveImage('missing.png', cwd), { code: 'ENOENT' });
   fs.writeFileSync(path.join(cwd, 'huge.png'), Buffer.alloc(20 * 1024 * 1024 + 1));
   await assert.rejects(resolveImage('huge.png', cwd), /20 MB/);
@@ -94,8 +95,8 @@ test('Grok session images resolve relative to their cache without exposing other
   for (const folder of [cwd, path.join(cache, 'images'), other]) fs.mkdirSync(folder, { recursive: true });
   fs.writeFileSync(path.join(cache, 'images', '1.png'), png); fs.writeFileSync(path.join(other, 'private.png'), png);
   for (const src of ['images/1.png', path.join(cache, 'images', '1.png')]) assert.equal((await resolveImage(src, cwd, cache)).src, `data:image/png;base64,${encoded}`);
-  await assert.rejects(resolveImage(path.join(other, 'private.png'), cwd, cache), /工作目录或图片缓存/);
-  await assert.rejects(resolveImage('../other/private.png', cwd, cache), /工作目录或图片缓存/);
+  await assert.rejects(resolveImage(path.join(other, 'private.png'), cwd, cache), /working directory and image cache/);
+  await assert.rejects(resolveImage('../other/private.png', cwd, cache), /working directory and image cache/);
 });
 
 test('Grok cache discovery follows RFC 3986 workspace encoding, including punctuation', async t => {
@@ -160,7 +161,7 @@ test('cache discovery ignores junctions, malformed metadata and missing caches w
 function accountFixture(t, customSpawn) {
   const root = fixture(t); let child, options;
   const account = { id: randomUUID(), name: '工作账户' };
-  const manager = new AccountManager({ dir: root, home: root, spawnProcess: customSpawn || ((_executable, args, supplied) => {
+  const manager = new AccountManager({ dir: root, home: root, getLanguage: () => 'zh-CN', spawnProcess: customSpawn || ((_executable, args, supplied) => {
     assert.deepEqual(args, ['login', '--device-auth']); options = supplied;
     child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
     child.kill = () => { setImmediate(() => child.emit('close', 1)); return true; }; return child;
