@@ -2,6 +2,7 @@
 
 // Grok's native ACP transport. Authentication and tool execution stay in the CLI.
 // Reference: ~/.grok/docs/user-guide/15-agent-mode.md and agentclientprotocol.com.
+const { createI18n } = require('./i18n.js');
 const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
@@ -18,8 +19,8 @@ function failure(message, code) {
   return error;
 }
 
-function safeMessage(value) {
-  return String(value || 'Grok 连接出错')
+function safeMessage(value, fallback) {
+  return String(value || fallback)
     .replace(/\b(?:xai|sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/g, '[redacted]')
     .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, '$1[redacted]')
     .replace(/((?:access_token|refresh_token|api_key|authorization)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[redacted]')
@@ -41,8 +42,10 @@ function flattenChoices(options) {
 }
 
 class GrokAdapter extends EventEmitter {
-  constructor({ executable = 'grok', cwd = process.cwd(), subagentsEnabled = true, env = process.env, spawnProcess = spawn } = {}) {
+  constructor({ executable = 'grok', cwd = process.cwd(), subagentsEnabled = true, env = process.env, spawnProcess = spawn, getLanguage = () => 'zh-CN' } = {}) {
     super();
+    this.t = createI18n(getLanguage);
+    this.safeMessage = value => safeMessage(value, this.t('Grok 连接出错'));
     this.executable = executable;
     this.spawnProcess = spawnProcess;
     this.env = { ...env };
@@ -72,7 +75,7 @@ class GrokAdapter extends EventEmitter {
   }
 
   async start() {
-    if (this.closed) throw failure('Grok 连接已关闭，请重新连接。', 'CLOSED');
+    if (this.closed) throw failure(this.t('Grok 连接已关闭，请重新连接。'), 'CLOSED');
     if (this.ready) return this.getInfo();
     if (this.startPromise) return this.startPromise;
     this.startPromise = this._start();
@@ -117,11 +120,11 @@ class GrokAdapter extends EventEmitter {
       }
     };
     child.on('error', error => disconnect(failure(
-      error.code === 'ENOENT' ? '找不到 Grok CLI，请在设置中选择 grok.exe。' : safeMessage(error.message), error.code)));
+      error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 grok.exe。') : this.safeMessage(error.message), error.code)));
     child.on('exit', (code, signal) => disconnect(failure(
-      this.closed ? 'Grok 连接已关闭。' : `Grok 进程已退出 (${signal || code}).${stderr ? ` ${safeMessage(stderr.trim())}` : ''}`,
+      this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
       'PROCESS_EXIT')));
-    child.stdin.on('error', error => disconnect(failure(safeMessage(error.message), error.code)));
+    child.stdin.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
       buffer += decoder.write(data);
@@ -131,18 +134,18 @@ class GrokAdapter extends EventEmitter {
         buffer = buffer.slice(newline + 1);
         if (!line) continue;
         if (line.length > MAX_LINE) {
-          disconnect(failure('Grok 返回的数据超过了客户端支持的大小。', 'PROTOCOL_LIMIT'));
+          disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), 'PROTOCOL_LIMIT'));
           this._kill(child);
           return;
         }
         try { this._message(JSON.parse(line)); }
         catch (error) {
           // A non-JSON startup notice is not a protocol response. Never echo it.
-          if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: safeMessage(error.message) });
+          if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: this.safeMessage(error.message) });
         }
       }
       if (buffer.length > MAX_LINE) {
-        disconnect(failure('Grok 返回的数据超过了客户端支持的大小。', 'PROTOCOL_LIMIT'));
+        disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), 'PROTOCOL_LIMIT'));
         this._kill(child);
       }
     });
@@ -173,14 +176,14 @@ class GrokAdapter extends EventEmitter {
     const resolved = path.resolve(cwd);
     let stat;
     try { stat = await fs.stat(resolved); }
-    catch { throw failure(`工作目录不存在：${resolved}`, 'INVALID_CWD'); }
-    if (!stat.isDirectory()) throw failure(`请选择一个文件夹：${resolved}`, 'INVALID_CWD');
+    catch { throw failure(this.t('工作目录不存在：{path}', { path: resolved }), 'INVALID_CWD'); }
+    if (!stat.isDirectory()) throw failure(this.t('请选择一个文件夹：{path}', { path: resolved }), 'INVALID_CWD');
     return resolved;
   }
 
   _write(message) {
     const child = this.process;
-    if (!child || child.stdin.destroyed || child.stdin.writableEnded) throw failure('Grok 尚未连接，请重新连接。', 'NOT_CONNECTED');
+    if (!child || child.stdin.destroyed || child.stdin.writableEnded) throw failure(this.t('Grok 尚未连接，请重新连接。'), 'NOT_CONNECTED');
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -191,7 +194,7 @@ class GrokAdapter extends EventEmitter {
       if (timeout > 0) {
         entry.timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(failure(`Grok 请求超时：${method}`, 'TIMEOUT'));
+          reject(failure(this.t('Grok 请求超时：{method}', { method }), 'TIMEOUT'));
         }, timeout);
         entry.timer.unref?.();
       }
@@ -208,7 +211,7 @@ class GrokAdapter extends EventEmitter {
       if (!request) return;
       this.pending.delete(message.id);
       clearTimeout(request.timer);
-      if (message.error) request.reject(failure(safeMessage(message.error.message), message.error.code));
+      if (message.error) request.reject(failure(this.safeMessage(message.error.message), message.error.code));
       else request.resolve(message.result ?? {});
       return;
     }
@@ -305,7 +308,7 @@ class GrokAdapter extends EventEmitter {
     await this.start();
     cwd = await this._validateCwd(cwd);
     const result = await this._request('session/new', { cwd, mcpServers: [] });
-    if (!result.sessionId) throw failure('Grok 没有返回会话 ID。', 'INVALID_RESPONSE');
+    if (!result.sessionId) throw failure(this.t('Grok 没有返回会话 ID。'), 'INVALID_RESPONSE');
     const session = this._rememberSession(result, result.sessionId, cwd);
     if (model && model !== session.model) await this.setModel({ sessionId: session.sessionId, model });
     if (mode && mode !== this.sessions.get(session.sessionId).mode) await this.setMode({ sessionId: session.sessionId, mode });
@@ -314,7 +317,7 @@ class GrokAdapter extends EventEmitter {
   }
 
   async loadSession({ sessionId, cwd = this.cwd, force = false } = {}) {
-    if (!sessionId || typeof sessionId !== 'string') throw failure('缺少会话 ID。', 'INVALID_SESSION');
+    if (!sessionId || typeof sessionId !== 'string') throw failure(this.t('缺少会话 ID。'), 'INVALID_SESSION');
     await this.start();
     if (!force && this.sessions.get(sessionId)?.loaded) return this.getSession(sessionId);
     cwd = await this._validateCwd(cwd);
@@ -327,25 +330,25 @@ class GrokAdapter extends EventEmitter {
 
   async setModel({ sessionId, model, modelId } = {}) {
     model = model || modelId;
-    if (!model || typeof model !== 'string') throw failure('请选择模型。', 'INVALID_MODEL');
+    if (!model || typeof model !== 'string') throw failure(this.t('请选择模型。'), 'INVALID_MODEL');
     await this.start();
-    if (!(this.sessions.get(sessionId)?.models || this.info.models).some(item => item.id === model)) throw failure('当前 Grok 未提供这个模型。', 'INVALID_MODEL');
+    if (!(this.sessions.get(sessionId)?.models || this.info.models).some(item => item.id === model)) throw failure(this.t('当前 Grok 未提供这个模型。'), 'INVALID_MODEL');
     return this._setSelection(sessionId, 'model', model);
   }
 
   async setMode({ sessionId, mode, modeId } = {}) {
     mode = mode || modeId;
-    if (!mode || typeof mode !== 'string') throw failure('请选择推理强度。', 'INVALID_MODE');
+    if (!mode || typeof mode !== 'string') throw failure(this.t('请选择推理强度。'), 'INVALID_MODE');
     await this.start();
     const modes = this.sessions.get(sessionId)?.modes || [];
-    if (!modes.some(item => item.id === mode)) throw failure(`当前模型不支持推理强度：${mode}`, 'INVALID_MODE');
+    if (!modes.some(item => item.id === mode)) throw failure(this.t('当前模型不支持推理强度：{mode}', { mode }), 'INVALID_MODE');
     return this._setSelection(sessionId, 'reasoning_effort', mode);
   }
 
   async _setSelection(sessionId, configId, value) {
     const session = this.sessions.get(sessionId);
-    if (!session?.loaded) throw failure('请先恢复会话后再修改配置。', 'INVALID_SESSION');
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure('请等待当前会话操作完成后修改配置。', 'SESSION_BUSY');
+    if (!session?.loaded) throw failure(this.t('请先恢复会话后再修改配置。'), 'INVALID_SESSION');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('请等待当前会话操作完成后修改配置。'), 'SESSION_BUSY');
     this.configuring.add(sessionId);
     let sent = false;
     let verified = false;
@@ -369,14 +372,14 @@ class GrokAdapter extends EventEmitter {
         sent = true;
         result = await this._request('session/set_model', params);
       }
-      if (result._meta?.model?.Err) throw failure(safeMessage(result._meta.model.Err), 'INVALID_MODEL');
+      if (result._meta?.model?.Err) throw failure(this.safeMessage(result._meta.model.Err), 'INVALID_MODEL');
       // Always read the engine's current selection back, also on legacy builds.
       const current = result.configOptions
         ? this._rememberSession(result, sessionId, session.cwd)
         : await this.loadSession({ sessionId, cwd: session.cwd, force: true });
       verified = current.modelSelectionVerified;
       const actual = configId === 'model' ? current.model : current.mode;
-      if (!verified || actual !== value) throw failure(`Grok 未应用所选配置（请求：${value}，实际：${actual || '未确认'}）。`, 'CONFIG_NOT_APPLIED');
+      if (!verified || actual !== value) throw failure(this.t('Grok 未应用所选配置（请求：{requested}，实际：{actual}）。', { requested: value, actual: actual || this.t('未确认') }), 'CONFIG_NOT_APPLIED');
       this._event({ type: 'status', status: configId === 'model' ? 'model_changed' : 'mode_changed', sessionId, model: current.model, mode: current.mode });
       return current;
     } catch (error) {
@@ -422,12 +425,12 @@ class GrokAdapter extends EventEmitter {
   }
 
   async prompt({ sessionId, text } = {}) {
-    if (typeof text !== 'string' || !text.trim()) throw failure('请输入消息。', 'EMPTY_PROMPT');
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure('这个会话正在处理请求，请先停止或等待完成。', 'SESSION_BUSY');
+    if (typeof text !== 'string' || !text.trim()) throw failure(this.t('请输入消息。'), 'EMPTY_PROMPT');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
     await this.start();
     if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
     // Check again after the asynchronous connection/load to reject double sends.
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure('这个会话正在处理请求，请先停止或等待完成。', 'SESSION_BUSY');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
     const turn = { text: '', cancelled: false, cancelTimer: null };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });
@@ -441,7 +444,7 @@ class GrokAdapter extends EventEmitter {
         this._event({ type: 'status', status: 'cancelled', sessionId });
         return { stopReason: 'cancelled', text: turn.text, cancelled: true };
       }
-      this._event({ type: 'error', sessionId, message: safeMessage(error.message), code: error.code });
+      this._event({ type: 'error', sessionId, message: this.safeMessage(error.message), code: error.code });
       this._event({ type: 'status', status: 'idle', sessionId, failed: true });
       throw error;
     } finally {
@@ -464,8 +467,8 @@ class GrokAdapter extends EventEmitter {
   async respondPermission({ requestId, optionId } = {}) {
     requestId = String(requestId);
     const permission = this.permissions.get(requestId);
-    if (!permission) throw failure('这条授权请求已经结束。', 'PERMISSION_EXPIRED');
-    if (!permission.options.some(option => option.optionId === optionId)) throw failure('无效的授权选项。', 'INVALID_PERMISSION');
+    if (!permission) throw failure(this.t('这条授权请求已经结束。'), 'PERMISSION_EXPIRED');
+    if (!permission.options.some(option => option.optionId === optionId)) throw failure(this.t('无效的授权选项。'), 'INVALID_PERMISSION');
     this._write({ jsonrpc: '2.0', id: permission.id, result: { outcome: { outcome: 'selected', optionId } } });
     this.permissions.delete(requestId);
     this._event({ type: 'status', status: 'permission_resolved', sessionId: permission.sessionId, requestId, optionId });

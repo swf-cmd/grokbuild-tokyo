@@ -128,7 +128,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click(); await page.locator('#settings-feedback').filter({ hasText: '请选择' }).waitFor();
       await page.locator('#executable-input').fill(alternateExecutable); await page.locator('#workspace-input').fill(alternateWorkspace); await page.locator('#rain-input').uncheck(); await page.locator('#subagents-input').uncheck();
       await page.locator('#save-settings-button').click(); await page.locator('#settings-dialog').waitFor({ state: 'hidden' }); await ready();
-      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, musicEnabled: true, musicVolume: 90 });
+      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, musicEnabled: true, musicVolume: 90, language: 'zh-CN' });
       assert.equal(await page.locator('#rain-layer').isHidden(), true);
       assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.options.subagentsEnabled), false);
       assert.equal(await page.locator('#session-path').textContent(), workspace, 'existing chat keeps its own directory');

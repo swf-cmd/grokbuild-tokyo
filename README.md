@@ -53,6 +53,8 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图�
 
 ## 模型、配置与外观
 
+在“偏好设置 → 界面语言”中切换 **中文、日本語、English、한국어、Español、Deutsch、Français**。选择后立即预览，点击“保存设置”后记住，下次启动继续使用；关闭设置或按 Esc 则恢复之前的语言。语言设置在账户之间共享，生成回复期间也能保存，不会重连引擎。切换仅影响界面和新选用的快捷提示，不修改已有聊天、账户名称或未发送的草稿。
+
 模型和思考强度显示 CLI 返回的名称、顺序和支持范围。客户端在引擎确认并回读后显示切换结果，恢复历史时重新同步。无法确认的选择显示“待确认”。
 
 兼容的旧版 CLI 使用 `session/set_model` 的 `_meta.reasoningEffort` 切换推理档位并载入会话回读；支持 `session/set_config_option` 的 CLI 使用该接口。`session/set_mode` 不作为推理档位切换接口。
@@ -82,11 +84,13 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图�
 npm test
 npm run test:ui
 npm run test:accounts
+npm run test:i18n
 npm run build
 node scripts/images-accounts-smoke.cjs --packaged
+node tests/i18n-ui.cjs --packaged
 ```
 
-单元测试覆盖 ACP、模型与配置、会话持久化、图片路径、账户隔离、登录生命周期、名称校验、账户删除及失败恢复。界面测试使用真实 Electron 主进程、IPC 和界面，替换 CLI 和登录为隔离的模拟引擎；不会调用真实模型或修改日常账户。账户界面测试覆盖添加、登录、重命名、删除确认、自动切换、重启恢复及 980 × 680 布局。GitHub Actions 在 Windows 上运行上述检查。
+单元测试覆盖 ACP、模型与配置、会话持久化、图片路径、账户隔离、登录生命周期、名称校验、账户删除及失败恢复，以及七种语言的词条完整性、参数插值与默认语言处理。界面测试使用真实 Electron 主进程、IPC 和界面，替换 CLI 和登录为隔离的模拟引擎；不会调用真实模型或修改日常账户。账户界面测试覆盖添加、登录、重命名、删除确认、自动切换、重启恢复及 980 × 680 布局。语言界面测试检查七种语言的即时预览、保存与取消、重启恢复、辅助标签、动态状态、对话和草稿保留、生成期间切换及紧凑窗口布局。GitHub Actions 在 Windows 上运行上述检查，并验证打包后的语言功能。
 
 额外检查：`node scripts/packaged-smoke.cjs` 验证打包后的通用界面，`node scripts/ambience-smoke.cjs` 验证音乐与雨景，后者也支持 `--packaged`。
 

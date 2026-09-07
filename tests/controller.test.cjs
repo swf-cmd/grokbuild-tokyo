@@ -456,6 +456,114 @@ test('older or malformed atmosphere settings recover defaults without losing sav
   }
 });
 
+test('supported interface languages persist across restarts without reconnecting the engine', async t => {
+  const { controller, adapter, root } = await started(t);
+  assert.equal(controller.settings.language, 'zh-CN');
+  for (const language of ['ja', 'en', 'ko', 'es', 'de', 'fr', 'zh-CN']) {
+    await controller.saveSettings({ language });
+    assert.equal(adapter.options.getLanguage(), language);
+    assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings.language, language);
+    const reloaded = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+    try { assert.equal(reloaded.settings.language, language); assert.equal(reloaded.loadError, null); }
+    finally { await reloaded.close(); }
+  }
+  assert.equal(adapter.closeCount, 0);
+  assert.equal(controller.connected, true);
+});
+
+test('malformed saved languages recover the Chinese default without losing user content', t => {
+  for (const language of [undefined, null, false, 7, {}, ['en'], 'invalid', 'toString', '__proto__']) {
+    const { controller } = fixture(t, { settings: { language }, sessions: [{ id: 'kept', title: 'User title', cwd: 'unused', messages: [{ role: 'user', text: 'Do not translate this' }] }] });
+    assert.equal(controller.settings.language, 'zh-CN');
+    assert.equal(controller.loadError, null);
+    assert.equal(controller.sessions[0].title, 'User title');
+    assert.equal(controller.sessions[0].messages[0].text, 'Do not translate this');
+  }
+});
+
+test('invalid language patches are atomic and a failed language save restores the active locale', async t => {
+  const { controller, adapter } = await started(t);
+  const before = structuredClone(controller.settings);
+  const saved = fs.readFileSync(controller.file, 'utf8');
+  for (const language of [null, false, 7, {}, ['en'], 'invalid', 'toString', '__proto__']) {
+    await assert.rejects(controller.saveSettings({ rainEnabled: false, language }), /界面语言/);
+  }
+  const save = controller.save;
+  controller.save = () => { throw new Error('fixture disk unavailable'); };
+  try { await assert.rejects(controller.saveSettings({ language: 'de' }), /fixture disk unavailable/); }
+  finally { controller.save = save; }
+  assert.deepEqual(controller.settings, before);
+  assert.equal(adapter.options.getLanguage(), 'zh-CN');
+  assert.equal(fs.readFileSync(controller.file, 'utf8'), saved);
+  assert.equal(adapter.closeCount, 0);
+});
+
+test('switching interface language mid-reply keeps the active turn, stream and model unchanged', async t => {
+  const { controller, adapter, session, instances } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'Keep this user message' });
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: 'Stream before ' });
+  const active = controller.active;
+  for (const language of ['ja', 'en', 'ko', 'es', 'de', 'fr', 'zh-CN']) {
+    const saved = await controller.saveSettings({ language });
+    assert.equal(saved.language, language);
+    assert.equal(controller.active, active);
+    assert.equal(active.message.status, 'working');
+    assert.equal(controller.connected, true);
+    assert.equal(session.modelSelectionVerified, true);
+    assert.equal(adapter.closeCount, 0);
+  }
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: 'and after' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  assert.equal(instances.length, 1);
+  assert.equal(session.messages[0].text, 'Keep this user message');
+  assert.equal(session.messages[1].text, 'Stream before and after');
+});
+
+test('default labels are marked for translation while explicitly renamed defaults remain user content', async t => {
+  const { controller, session, adapter, root } = await started(t);
+  assert.equal(session.titleIsDefault, true);
+  assert.equal(controller.accountState().accounts[0].nameIsDefault, true);
+  controller.renameSession({ sessionId: session.id, title: '新会话' });
+  await controller.renameAccount('local', '本机 Grok 账户');
+  assert.equal(session.titleIsDefault, false);
+  assert.equal(controller.accountState().accounts[0].nameIsDefault, false);
+  await controller.saveSettings({ language: 'en' });
+  await controller.send({ sessionId: session.id, text: 'Keep the explicitly chosen title' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  assert.equal(controller.sessionTitle(session), '新会话');
+  const reloaded = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+  try {
+    assert.equal(reloaded.sessions[0].title, '新会话');
+    assert.equal(reloaded.sessions[0].titleIsDefault, false);
+    assert.equal(reloaded.accountState().accounts[0].nameIsDefault, false);
+  } finally { await reloaded.close(); }
+});
+
+test('Markdown export localizes generated labels while preserving authored text and explicit image descriptions', async t => {
+  const { controller, session } = await started(t);
+  controller.t = (source, params = {}) => ({ '新会话': 'New chat', '你': 'You', '错误：': 'Error: ', '图片': 'Image', 'Grok 返回的图片': 'Image returned by Grok', '工作目录：{path}': `Working directory: ${params.path}` })[source] || source;
+  session.messages.push({ role: 'user', text: '保留作者原文 {name}', images: [
+    { src: 'https://example.test/generated.png', alt: 'Grok 返回的图片', altIsDefault: true },
+    { src: 'https://example.test/authored.png', alt: 'Grok 返回的图片', altIsDefault: false },
+  ] });
+  const exported = controller.exportMarkdown(session.id);
+  assert.ok(exported.startsWith('# New chat\n\nWorking directory: '));
+  assert.ok(exported.includes('## You\n\n保留作者原文 {name}'));
+  assert.ok(exported.includes('![Image returned by Grok](<https://example.test/generated.png>)'));
+  assert.ok(exported.includes('![Grok 返回的图片](<https://example.test/authored.png>)'));
+  controller.renameSession({ sessionId: session.id, title: '新会话' });
+  assert.ok(controller.exportMarkdown(session.id).startsWith('# 新会话\n'));
+});
+
+test('image validation receives the active controller translator without changing image source content', async t => {
+  const { controller, session } = await started(t);
+  controller.t = source => source === '不支持的图片地址' ? 'Unsupported image address' : source;
+  await assert.rejects(controller.readImage({ sessionId: session.id, src: 'javascript:invalid' }), /Unsupported image address/);
+  assert.deepEqual(await controller.readImage({ sessionId: session.id, src: 'https://example.test/raw-image.png' }), { src: 'https://example.test/raw-image.png' });
+});
+
 test('invalid atmosphere patches reject atomically and leave saved settings and the engine intact', async t => {
   const { controller, adapter } = await started(t);
   const before = structuredClone(controller.settings);

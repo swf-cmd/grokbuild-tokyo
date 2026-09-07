@@ -4,8 +4,10 @@
 (() => {
   const $ = id => document.getElementById(id);
   const api = window.tokyo;
+  const i18n = window.TokyoI18n;
+  const t = i18n.t;
   const state = {
-    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90 },
+    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'zh-CN' },
     info: { models: [], modes: [], version: '' },
     sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true,
     sending: false, configuring: false, selecting: false, savingSettings: false, renaming: false, deleting: false,
@@ -19,10 +21,11 @@
   const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
   const clearPermissions = id => { for (const [key, permission] of state.permissions) if (permission.sessionId === id) state.permissions.delete(key); };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  const safeText = value => typeof value === 'string' ? value : value == null ? '' : Array.isArray(value) ? value.map(safeText).join('\n') : typeof value === 'object' ? value.type === 'image' || value.resource?.blob ? '[图片]' : value.text != null ? safeText(value.text) : value.content != null ? safeText(value.content) : JSON.stringify(value, null, 2) : String(value);
+  const safeText = value => typeof value === 'string' ? value : value == null ? '' : Array.isArray(value) ? value.map(safeText).join('\n') : typeof value === 'object' ? value.type === 'image' || value.resource?.blob ? t('[图片]') : value.text != null ? safeText(value.text) : value.content != null ? safeText(value.content) : JSON.stringify(value, null, 2) : String(value);
   const sessionTime = session => new Date(session.updatedAt || session.createdAt || 0).getTime() || 0;
-  const sessionTitle = session => session.title || '新的对话';
-  const pathName = path => (path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path || '选择工作空间';
+  const sessionTitle = session => session.titleIsDefault === true || (session.titleIsDefault == null && session.title === '新会话' && !session.messages?.some(message => message.role === 'user')) ? t('新会话') : session.title || t('新的对话');
+  const accountName = account => !account || account.nameIsDefault === true || (account.nameIsDefault == null && account.id === 'local' && account.name === '本机 Grok 账户') ? t('本机 Grok 账户') : account.name;
+  const pathName = path => (path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path || t('选择工作空间');
   const uid = () => `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let unsubscribe;
   let ambience;
@@ -40,7 +43,7 @@
   }
 
   async function call(method, ...args) {
-    if (!api || typeof api[method] !== 'function') throw new Error('桌面连接尚未就绪，请重新启动客户端。');
+    if (!api || typeof api[method] !== 'function') throw new Error(t('桌面连接尚未就绪，请重新启动客户端。'));
     const result = await api[method](...args);
     if (result?.error && (result.ok === false || result.success === false)) throw new Error(safeText(result.error));
     return result;
@@ -48,7 +51,7 @@
 
   async function guarded(work) {
     try { return await work(); }
-    catch (error) { toast(error.message || '操作失败，请稍后重试。', true, 6500); return null; }
+    catch (error) { toast(error.message || t('操作失败，请稍后重试。'), true, 6500); return null; }
   }
 
   function normalizeChoices(value) {
@@ -78,7 +81,7 @@
   function fillSelect(element, items, selected, placeholder) {
     element.replaceChildren();
     const choices = [...items];
-    if (selected && !choices.some(item => item.id === selected)) choices.unshift({ id: selected, name: `${selected}（未验证）`, disabled: true });
+    if (selected && !choices.some(item => item.id === selected)) choices.unshift({ id: selected, name: t('{model}（未验证）', { model: selected }), disabled: true });
     if (!selected) choices.unshift({ id: '', name: placeholder, disabled: true });
     for (const item of choices) {
       const option = document.createElement('option');
@@ -123,16 +126,16 @@
   function renderConnection() {
     const pending = state.initializing || state.connectionStatus === 'connecting';
     const online = state.connected && !state.initializing;
-    const label = online ? '引擎已连接' : pending ? '连接中' : '引擎未连接';
+    const label = online ? t('引擎已连接') : pending ? t('连接中') : t('引擎未连接');
     const dotClass = `connection-dot ${online ? 'online' : pending ? 'connecting' : 'offline'}`;
     for (const id of ['sidebar-dot', 'connection-dot', 'settings-dot']) $(id).className = dotClass;
     $('connection-label').textContent = label;
-    $('sidebar-status').textContent = online ? '本地引擎在线' : pending ? '正在连接本地引擎' : '本地引擎离线';
-    $('connection-button').title = state.connected ? 'Grokbuild 已连接，点击重新连接' : '点击重新连接 Grokbuild';
-    $('settings-engine-status').textContent = state.connected ? `Grokbuild ${state.info.version || ''} · 已连接` : state.lastError || 'Grokbuild 未连接，请检查文件路径与登录状态';
+    $('sidebar-status').textContent = online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
+    $('connection-button').title = state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
+    $('settings-engine-status').textContent = state.connected ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : state.lastError || t('Grokbuild 未连接，请检查文件路径与登录状态');
     $('settings-engine-status').title = $('settings-engine-status').textContent;
     $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : 'LOCAL';
-    $('version-label').title = state.info.version || '本地 Grokbuild';
+    $('version-label').title = state.info.version || t('本地 Grokbuild');
     renderSelects();
     renderComposerState();
   }
@@ -140,9 +143,9 @@
   function renderWorkspace() {
     const cwd = activeSession()?.cwd || state.settings.workspace;
     $('workspace-name').textContent = pathName(cwd);
-    $('workspace-subtitle').textContent = cwd || '让想法有个落脚点';
-    $('workspace-button').title = cwd ? `${cwd}\n点击更换默认工作目录` : '选择默认工作目录';
-    $('session-path').textContent = cwd || 'TOKYO / NIGHT SHIFT';
+    $('workspace-subtitle').textContent = cwd || t('让想法有个落脚点');
+    $('workspace-button').title = cwd ? t('{path}\n点击更换默认工作目录', { path: cwd }) : t('选择默认工作目录');
+    $('session-path').textContent = cwd || t('TOKYO / NIGHT SHIFT');
     $('session-path').title = cwd || '';
     applyAmbience();
   }
@@ -158,11 +161,11 @@
   function renderMusicStatus(status) {
     const preferences = ambiencePreferences();
     const labels = {
-      playing: '正在播放 · 东京午夜电台 · 离线循环',
-      starting: '正在准备东京午夜电台…',
-      blocked: '点击窗口或按任意键，开启东京午夜电台。',
-      error: '音乐暂时无法播放，请关闭音乐后重新开启。',
-      paused: preferences.musicEnabled && preferences.musicVolume === 0 ? '音量为 0 · 已静音' : '音乐已关闭',
+      playing: t('正在播放 · 东京午夜电台 · 离线循环'),
+      starting: t('正在准备东京午夜电台…'),
+      blocked: t('点击窗口或按任意键，开启东京午夜电台。'),
+      error: t('音乐暂时无法播放，请关闭音乐后重新开启。'),
+      paused: preferences.musicEnabled && preferences.musicVolume === 0 ? t('音量为 0 · 已静音') : t('音乐已关闭'),
     };
     $('music-status').textContent = labels[status.state] || labels.starting;
     $('music-status').dataset.state = status.state;
@@ -184,23 +187,23 @@
     const model = session ? session.model || session.modelId || '' : state.selectedModel;
     const modes = session ? normalizeChoices(session.modes) : newChatModes();
     const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
-    fillSelect($('model-select'), models, model, session ? '未返回模型' : '请选择模型');
-    fillSelect($('mode-select'), modes, mode, session ? '未返回推理档位' : '请选择推理档位');
+    fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'));
+    fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'));
     const locked = state.initializing || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || state.busy.size > 0;
     for (const element of [$('model-select'), $('mode-select')]) {
       element.disabled = locked;
-      element.title = state.login ? '请先完成或取消账户登录。' : state.configuring ? '正在等待 Grokbuild 确认配置…' : !state.connected ? '离线时仅可查看历史，重新连接后可更改配置。' : state.busy.size ? '任务结束后可更改配置。' : session ? '更改后由 Grokbuild 确认生效，用于后续消息。' : '新对话会明确使用所选模型和推理档位。';
+      element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : state.busy.size ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
     }
     if (!models.length) $('model-select').disabled = true;
     if (!modes.length) {
       $('mode-select').disabled = true;
-      $('mode-select').title = '当前模型不提供可选的推理档位。';
-      if (!mode) $('mode-select').options[0].textContent = model ? '无可选推理档位' : '请先选择模型';
+      $('mode-select').title = t('当前模型不提供可选的推理档位。');
+      if (!mode) $('mode-select').options[0].textContent = model ? t('无可选推理档位') : t('请先选择模型');
     }
     if (session?.modelSelectionVerified === false) {
       for (const element of [$('model-select'), $('mode-select')]) {
-        if (element.value) element.selectedOptions[0].textContent += '（待确认）';
-        element.title += ' 当前显示的是保存的选择，尚未经本次连接确认。';
+        if (element.value) element.selectedOptions[0].textContent += t('（待确认）');
+        element.title += t(' 当前显示的是保存的选择，尚未经本次连接确认。');
       }
     }
   }
@@ -209,7 +212,7 @@
     const date = new Date(sessionTime(session));
     const today = new Date();
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    return date.getTime() >= start ? '今天' : date.getTime() >= start - 86400000 ? '昨天' : '更早';
+    return date.getTime() >= start ? t('今天') : date.getTime() >= start - 86400000 ? t('昨天') : t('更早');
   }
 
   function renderSessions() {
@@ -220,7 +223,7 @@
     if (!sessions.length) {
       const empty = document.createElement('div');
       empty.className = 'history-empty';
-      empty.textContent = query ? '没有找到这段对话。' : '新的故事，从这里开始。';
+      empty.textContent = query ? t('没有找到这段对话。') : t('新的故事，从这里开始。');
       list.append(empty);
       return;
     }
@@ -249,7 +252,7 @@
       select.addEventListener('click', () => guarded(() => selectSession(session.id)));
       const more = document.createElement('button');
       more.disabled = select.disabled;
-      more.className = 'session-more'; more.textContent = '···'; more.setAttribute('aria-label', `${sessionTitle(session)}的更多操作`);
+      more.className = 'session-more'; more.textContent = '···'; more.setAttribute('aria-label', t('{title}的更多操作', { title: sessionTitle(session) }));
       more.addEventListener('click', event => { event.stopPropagation(); openSessionMenu(session.id, more); });
       row.append(select, more);
       list.append(row);
@@ -260,14 +263,14 @@
     if (window.marked && window.DOMPurify) {
       try {
         const renderer = new window.marked.Renderer();
-        const image = ({ href, text }) => `<span data-image-source="${escapeHtml(href)}" data-image-alt="${escapeHtml(text || '图片')}"></span>`;
+        const image = ({ href, text }) => `<span data-image-source="${escapeHtml(href)}" data-image-alt="${escapeHtml(text || '')}"></span>`;
         renderer.image = image;
         renderer.html = ({ text }) => {
           const template = document.createElement('template'); template.innerHTML = text;
           for (const img of template.content.querySelectorAll('img')) {
             const placeholder = document.createElement('span');
             placeholder.dataset.imageSource = img.getAttribute('src') || '';
-            placeholder.dataset.imageAlt = img.getAttribute('alt') || '图片';
+            placeholder.dataset.imageAlt = img.getAttribute('alt') || '';
             img.replaceWith(placeholder);
           }
           return template.innerHTML;
@@ -286,18 +289,19 @@
   const imageCache = new Map();
   function createImage(source, session, messageId, previousImages) {
     const key = `${messageId}:${source.src}`;
-    if (previousImages.has(key)) return previousImages.get(key);
+    if (previousImages.has(key)) { const figure = previousImages.get(key); figure.localize?.(); return figure; }
+    const alt = () => source.altIsDefault === true || (source.altIsDefault == null && source.alt === 'Grok 返回的图片') ? t('Grok 返回的图片') : source.alt || t('图片');
     const figure = document.createElement('figure'); figure.className = 'chat-image'; figure.imageKey = key;
     const button = document.createElement('button'); button.type = 'button'; button.className = 'image-thumbnail'; button.disabled = true;
-    button.setAttribute('aria-label', `放大图片：${source.alt || '图片'}`);
-    const img = document.createElement('img'); img.alt = source.alt || '图片'; img.loading = 'lazy'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
-    const caption = document.createElement('figcaption'); caption.textContent = '正在加载图片…';
-    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'image-retry'; retry.textContent = '重新加载'; retry.hidden = true;
+    button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() }));
+    const img = document.createElement('img'); img.alt = alt(); img.loading = 'lazy'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
+    const caption = document.createElement('figcaption'); caption.textContent = t('正在加载图片…');
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'image-retry'; retry.textContent = t('重新加载'); retry.hidden = true;
     button.append(img); figure.append(button, caption, retry);
     const cacheKey = `${state.activeAccountId}:${session.id}:${source.src}`;
     const load = async () => {
       const follow = nearBottom();
-      caption.textContent = '正在加载图片…'; retry.hidden = true; img.hidden = false; button.disabled = true;
+      caption.textContent = t('正在加载图片…'); retry.hidden = true; img.hidden = false; button.disabled = true;
       try {
         let request = imageCache.get(cacheKey);
         if (!request) {
@@ -307,18 +311,23 @@
         }
         const resolved = await request;
         img.onload = () => {
-          button.disabled = false; caption.textContent = `${source.alt || '图片'} · 点击放大`;
+          button.disabled = false; caption.textContent = t('{alt} · 点击放大', { alt: alt() });
           if (follow && figure.isConnected) $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight;
         };
-        img.onerror = () => failed('图片加载失败，地址可能已失效或需要登录');
+        img.onerror = () => failed(t('图片加载失败，地址可能已失效或需要登录'));
         img.src = resolved.src;
       } catch (error) { failed(error.message); }
+    };
+    figure.localize = () => {
+      button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() })); img.alt = alt(); retry.textContent = t('重新加载');
+      if (!button.disabled) caption.textContent = t('{alt} · 点击放大', { alt: alt() });
+      else if (retry.hidden) caption.textContent = t('正在加载图片…');
     };
     const failed = message => { imageCache.delete(cacheKey); img.hidden = true; button.disabled = true; caption.textContent = message; retry.hidden = false; };
     retry.addEventListener('click', () => { void load(); });
     button.addEventListener('click', () => {
-      $('image-title').textContent = source.alt || '图片预览';
-      $('image-preview').alt = source.alt || '图片'; $('image-preview').referrerPolicy = 'no-referrer'; $('image-preview').src = img.src;
+      $('image-title').textContent = alt();
+      $('image-preview').alt = alt(); $('image-preview').referrerPolicy = 'no-referrer'; $('image-preview').src = img.src;
       $('image-dialog').showModal();
     });
     void load();
@@ -330,7 +339,7 @@
     for (const placeholder of body.querySelectorAll('[data-image-source]')) {
       const src = placeholder.dataset.imageSource;
       seen.add(src);
-      placeholder.replaceWith(createImage({ src, alt: placeholder.dataset.imageAlt }, session, message.id, previousImages));
+      placeholder.replaceWith(createImage({ src, alt: placeholder.dataset.imageAlt, altIsDefault: false }, session, message.id, previousImages));
     }
     for (const image of message.images || []) {
       if (typeof image.src !== 'string' || seen.has(image.src)) continue;
@@ -339,7 +348,7 @@
   }
 
   function toolStatus(status) {
-    return ({ pending: '等待中', running: '执行中', in_progress: '执行中', completed: '已完成', complete: '已完成', success: '已完成', failed: '失败', error: '失败', cancelled: '已取消' })[status] || status || '执行中';
+    return ({ pending: t('等待中'), running: t('执行中'), in_progress: t('执行中'), completed: t('已完成'), complete: t('已完成'), success: t('已完成'), failed: t('失败'), error: t('失败'), cancelled: t('已取消') })[status] || status || t('执行中');
   }
 
   function createTool(tool) {
@@ -352,12 +361,12 @@
     status.className = 'tool-state';
     status.textContent = ['completed', 'complete', 'success'].includes(tool.status) ? '✓' : ['failed', 'error'].includes(tool.status) ? '!' : '↗';
     const title = document.createElement('span');
-    title.className = 'tool-title'; title.textContent = tool.title || tool.name || '工具调用'; title.title = title.textContent;
+    title.className = 'tool-title'; title.textContent = tool.title || tool.name || t('工具调用'); title.title = title.textContent;
     const label = document.createElement('span');
     label.className = 'tool-status'; label.textContent = toolStatus(tool.status);
     summary.append(status, title, label);
     const content = document.createElement('pre');
-    content.textContent = safeText(tool.content ?? tool.output ?? tool.rawInput ?? tool.input) || '等待工具返回结果…';
+    content.textContent = safeText(tool.content ?? tool.output ?? tool.rawInput ?? tool.input) || t('等待工具返回结果…');
     details.append(summary, content);
     return details;
   }
@@ -376,7 +385,7 @@
     $('welcome').hidden = hasMessages;
     $('messages').hidden = !hasMessages;
     document.querySelector('.main-panel').classList.toggle('has-messages', hasMessages);
-    $('breadcrumb-title').textContent = session ? sessionTitle(session) : '新对话';
+    $('breadcrumb-title').textContent = session ? sessionTitle(session) : t('新对话');
     $('export-button').disabled = !session || !messages.length;
     const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId));
     const container = $('messages');
@@ -387,15 +396,15 @@
       article.className = `message ${message.role === 'user' ? 'user' : 'assistant'}`;
       article.dataset.messageId = message.id;
       const heading = document.createElement('div'); heading.className = 'message-heading';
-      const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? '你' : '✳'; avatar.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('strong'); name.textContent = message.role === 'user' ? 'YOU' : 'GROKBUILD';
+      const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? t('你') : '✳'; avatar.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('strong'); name.textContent = message.role === 'user' ? t('YOU') : 'GROKBUILD';
       const time = document.createElement('time');
-      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }); } }
+      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit', hour12: false }); } }
       heading.append(avatar, name, time); article.append(heading);
       if (message.thought) {
         const thought = document.createElement('details'); thought.className = 'thought-details'; thought.dataset.thoughtId = message.id;
         thought.open = openDetails.has(message.id);
-        const summary = document.createElement('summary'); summary.textContent = '思考过程';
+        const summary = document.createElement('summary'); summary.textContent = t('思考过程');
         const body = document.createElement('div'); body.className = 'thought-content'; body.textContent = message.thought;
         thought.append(summary, body); article.append(thought);
       }
@@ -410,17 +419,17 @@
       mountImages(body, message, session, previousImages);
       const last = index === messages.length - 1;
       if (message.role === 'assistant' && last && state.busy.has(session.id)) {
-        const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', '正在生成'); body.append(cursor);
+        const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', t('正在生成')); body.append(cursor);
       }
-      if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = message.error || '本次请求未能完成，请检查引擎连接后重试。'; body.append(error); }
-      if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = '本次生成已停止'; body.append(cancelled); }
+      if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = message.error || t('本次请求未能完成，请检查引擎连接后重试。'); body.append(error); }
+      if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = t('本次生成已停止'); body.append(cancelled); }
       article.append(body); container.append(article);
     });
     container.querySelectorAll('pre > code').forEach(code => {
-      const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = '复制'; button.setAttribute('aria-label', '复制代码');
+      const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = t('复制'); button.setAttribute('aria-label', t('复制代码'));
       button.addEventListener('click', async () => {
-        try { await call('copyText', code.textContent); button.textContent = '已复制'; setTimeout(() => { if (button.isConnected) button.textContent = '复制'; }, 1800); }
-        catch (_) { toast('无法访问剪贴板，请选择代码后复制。', true); }
+        try { await call('copyText', code.textContent); button.textContent = t('已复制'); setTimeout(() => { if (button.isConnected) button.textContent = t('复制'); }, 1800); }
+        catch (_) { toast(t('无法访问剪贴板，请选择代码后复制。'), true); }
       });
       code.parentElement.append(button);
     });
@@ -450,7 +459,7 @@
     for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
     for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
     $('prompt').disabled = state.sending;
-    $('prompt').placeholder = state.login ? '请先完成或取消账户登录，可以先写好草稿…' : state.configuring ? '正在等待引擎确认配置，可以先写好下一条消息…' : state.selecting ? '正在恢复这段对话…' : !state.connected ? '当前离线；连接引擎后可继续对话…' : busy ? '可以先写好下一条消息，等待当前任务完成…' : state.busy.size ? '另一段对话正在运行，可以先写下你的想法…' : '在雨声中，开始你的下一个想法…';
+    $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : state.busy.size ? t('另一段对话正在运行，可以先写下你的想法…') : t('在雨声中，开始你的下一个想法…');
     $('activity-strip').hidden = !busy;
     if (busy) updateActivity();
   }
@@ -459,7 +468,7 @@
     if (!state.busy.has(state.activeId)) return;
     const message = activeSession()?.messages.filter(item => item.role === 'assistant').at(-1);
     const tool = message?.tools?.filter(item => ['running', 'pending', 'in_progress'].includes(item.status)).at(-1);
-    $('activity-text').textContent = sessionPermissions(state.activeId).length ? '等待你的授权' : tool ? tool.title || '正在执行工具' : message?.text ? 'Grokbuild 正在回答' : 'Grokbuild 正在思考';
+    $('activity-text').textContent = sessionPermissions(state.activeId).length ? t('等待你的授权') : tool ? tool.title || t('正在执行工具') : message?.text ? t('Grokbuild 正在回答') : t('Grokbuild 正在思考');
     const start = state.started.get(state.activeId) || Date.now();
     const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
     $('activity-duration').textContent = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
@@ -471,13 +480,13 @@
     const permission = sessionPermissions(permissionSessionId)[0];
     panel.replaceChildren(); panel.hidden = !permission;
     if (!permission) return;
-    const heading = document.createElement('div'); heading.className = 'permission-heading'; heading.textContent = permission.title || permission.toolCall?.title || 'Grokbuild 请求执行操作';
+    const heading = document.createElement('div'); heading.className = 'permission-heading'; heading.textContent = permission.title || permission.toolCall?.title || t('Grokbuild 请求执行操作');
     const description = document.createElement('p'); description.className = 'permission-description';
-    description.textContent = safeText(permission.toolCall?.rawInput ?? permission.toolCall?.content ?? permission.description) || '请确认是否允许此操作。你的选择会发送给本地引擎。';
+    description.textContent = safeText(permission.toolCall?.rawInput ?? permission.toolCall?.content ?? permission.description) || t('请确认是否允许此操作。你的选择会发送给本地引擎。');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
     for (const option of permission.options || []) {
       const button = document.createElement('button');
-      button.textContent = option.name || option.optionId;
+      button.textContent = ({ allow_once: t('允许一次'), allow_always: t('始终允许'), reject_once: t('拒绝一次'), reject_always: t('始终拒绝') })[option.kind] || option.name || option.optionId;
       if ((option.kind || '').startsWith('allow')) button.className = 'allow';
       button.addEventListener('click', () => guarded(async () => {
         for (const other of actions.children) other.disabled = true;
@@ -507,7 +516,7 @@
     state.selecting = true; renderSelects(); renderComposerState();
     try {
       const session = await call('selectSession', id);
-      if (!session?.id) throw new Error('无法读取这段对话。');
+      if (!session?.id) throw new Error(t('无法读取这段对话。'));
       upsertSession(session);
       state.activeId = id;
       restoreDraft(); renderSessions(); renderWorkspace(); renderMessages(true);
@@ -521,9 +530,9 @@
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       const updated = await call('configureSession', { sessionId: session.id, ...patch });
-      if (updated?.id !== session.id) throw new Error('引擎未确认这段对话的新配置，请重新连接后重试。');
+      if (updated?.id !== session.id) throw new Error(t('引擎未确认这段对话的新配置，请重新连接后重试。'));
       upsertSession(updated);
-      toast('对话配置已由 Grokbuild 确认。');
+      toast(t('对话配置已由 Grokbuild 确认。'));
     } finally {
       state.configuring = false;
       renderSelects(); renderComposerState();
@@ -536,7 +545,7 @@
     try {
       // A model without a published effort menu needs an actual session readback.
       const session = await call('createSession', { cwd: state.settings.workspace || undefined, model });
-      if (!session?.id) throw new Error('引擎未返回该模型的配置，请重试。');
+      if (!session?.id) throw new Error(t('引擎未返回该模型的配置，请重试。'));
       upsertSession(session); state.activeId = session.id;
       state.drafts.delete('__new__'); rememberDraft();
       renderSessions(); renderWorkspace(); renderMessages();
@@ -552,8 +561,8 @@
   async function sendMessage() {
     const text = $('prompt').value.trim();
     if (!text || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
-    if (!state.connected) { toast('请先连接本地 Grokbuild。点击右上角的连接状态可重试。', true); return; }
-    if (!newChatConfigReady()) { toast('请先选择具体的模型和推理档位。', true); return; }
+    if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
+    if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
     state.sending = true;
     renderComposerState(); renderSelects();
     let session;
@@ -561,7 +570,7 @@
       session = activeSession();
       if (!session) {
         session = await call('createSession', { cwd: state.settings.workspace || undefined, model: state.selectedModel || undefined, mode: state.selectedMode || undefined });
-        if (!session?.id) throw new Error('引擎未能创建对话，请重试。');
+        if (!session?.id) throw new Error(t('引擎未能创建对话，请重试。'));
         upsertSession(session); state.activeId = session.id;
         state.drafts.delete('__new__');
       }
@@ -572,12 +581,12 @@
       if (result?.accepted === false) {
         state.busy.delete(session.id); state.started.delete(session.id);
         $('prompt').value = text; resizePrompt();
-        if (!result.cancelled) throw new Error('引擎未接受这条消息，请重试。');
+        if (!result.cancelled) throw new Error(t('引擎未接受这条消息，请重试。'));
       }
     } catch (error) {
       if (session?.id) { state.busy.delete(session.id); state.started.delete(session.id); }
       if (!$('prompt').value) { $('prompt').value = text; resizePrompt(); }
-      toast(error.message || '消息发送失败。', true, 6500);
+      toast(error.message || t('消息发送失败。'), true, 6500);
     } finally {
       state.sending = false; renderComposerState(); renderSelects(); renderSessions(); $('prompt').focus();
     }
@@ -604,11 +613,11 @@
       if (login && ['succeeded', 'failed', 'cancelled'].includes(login.status)) state.loginTerminal = login.status;
       renderAccounts(); renderComposerState(); renderSelects();
       if (login?.status === 'succeeded') {
-        $('account-feedback').textContent = '登录成功，正在连接…';
+        $('account-feedback').textContent = t('登录成功，正在连接…');
         if (state.accountAction) state.loginCompletedAccount = login.accountId;
         else void accountWork(() => changeAccount(login.accountId));
-      } else if (login?.status === 'failed') $('account-feedback').textContent = login.error || '登录未完成，请重试并在浏览器中完成授权。';
-      else if (login?.status === 'cancelled') $('account-feedback').textContent = '登录已取消，可重新登录或切换账户。';
+      } else if (login?.status === 'failed') $('account-feedback').textContent = login.error || t('登录未完成，请重试并在浏览器中完成授权。');
+      else if (login?.status === 'cancelled') $('account-feedback').textContent = t('登录已取消，可重新登录或切换账户。');
       else if (login?.error) $('account-feedback').textContent = login.error;
       return;
     }
@@ -643,19 +652,19 @@
         const session = state.sessions.find(item => item.id === sessionId);
         const last = session?.messages.at(-1);
         if (last?.role === 'assistant' && last.status === 'working') last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete';
-        if (event.stopReason === 'max_tokens') toast('已达到本次回复的长度限制，可以继续追问。');
+        if (event.stopReason === 'max_tokens') toast(t('已达到本次回复的长度限制，可以继续追问。'));
       }
       renderSessions(); if (sessionId === state.activeId) queueMessages();
       renderComposerState(); renderSelects(); return;
     }
     if (event.type === 'error') {
-      state.lastError = safeText(event.message || event.error || '本地引擎出现错误。');
+      state.lastError = safeText(event.message || event.error || t('本地引擎出现错误。'));
       toast(state.lastError, true, 9000); renderConnection(); renderSessions(); queueMessages(); return;
     }
     if (event.type === 'permission') {
       state.permissions.set(String(event.requestId), { ...event, sessionId });
       if (sessionId === state.activeId) { renderPermissions(); updateActivity(); }
-      else toast(`对话“${sessionTitle(state.sessions.find(item => item.id === sessionId) || {})}”需要你的授权。`, false, 8000);
+      else toast(t('对话“{title}”需要你的授权。', { title: sessionTitle(state.sessions.find(item => item.id === sessionId) || {}) }), false, 8000);
       return;
     }
     if (['text', 'thought', 'tool', 'image'].includes(event.type)) {
@@ -692,37 +701,37 @@
 
   function renderAccounts() {
     const current = state.accounts.find(a => a.id === state.activeAccountId);
-    $('account-name').textContent = current?.name || '本机 Grok 账户';
-    $('account-button').title = current?.email || current?.name || '账户切换';
+    $('account-name').textContent = accountName(current);
+    $('account-button').title = current?.email || accountName(current);
     $('account-list').replaceChildren();
     const locked = accountsLocked();
     for (const account of state.accounts) {
       const row = document.createElement('div'); row.className = 'account-row'; row.dataset.accountId = account.id;
       const selected = account.id === state.activeAccountId; row.classList.toggle('selected', selected);
-      const info = document.createElement('div'); info.className = 'account-info'; const name = document.createElement('strong'); name.textContent = account.name;
-      const detail = document.createElement('small'); detail.textContent = account.email || (account.signedIn ? '登录已保存' : account.kind === 'local' ? '沿用本机 Grok 登录与配置' : '尚未登录');
+      const info = document.createElement('div'); info.className = 'account-info'; const name = document.createElement('strong'); name.textContent = accountName(account);
+      const detail = document.createElement('small'); detail.textContent = account.email || (account.signedIn ? t('登录已保存') : account.kind === 'local' ? t('沿用本机 Grok 登录与配置') : t('尚未登录'));
       info.append(name, detail);
       if (account.kind === 'local') {
-        const note = document.createElement('small'); note.className = 'account-local-note'; note.textContent = '默认账户不可移除，保留本机 Grok 登录与配置。'; info.append(note);
+        const note = document.createElement('small'); note.className = 'account-local-note'; note.textContent = t('默认账户不可移除，保留本机 Grok 登录与配置。'); info.append(note);
       }
       const actions = document.createElement('div'); actions.className = 'account-row-actions';
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary-button'; button.dataset.accountAction = 'switch'; button.textContent = selected ? '当前账户 ✓' : '切换'; button.disabled = selected || locked;
-      button.setAttribute('aria-label', selected ? `${account.name}，当前账户` : `切换到${account.name}`);
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary-button'; button.dataset.accountAction = 'switch'; button.textContent = selected ? t('当前账户 ✓') : t('切换'); button.disabled = selected || locked;
+      button.setAttribute('aria-label', selected ? t('{name}，当前账户', { name: accountName(account) }) : t('切换到{name}', { name: accountName(account) }));
       button.addEventListener('click', () => { void accountWork(() => changeAccount(account.id)); });
-      const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'secondary-button'; rename.dataset.accountAction = 'rename'; rename.textContent = '重命名'; rename.disabled = locked; rename.setAttribute('aria-label', `重命名${account.name}`);
+      const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'secondary-button'; rename.dataset.accountAction = 'rename'; rename.textContent = t('重命名'); rename.disabled = locked; rename.setAttribute('aria-label', t('重命名{name}', { name: accountName(account) }));
       rename.addEventListener('click', () => openAccountRename(account));
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger-button'; remove.dataset.accountAction = 'delete'; remove.textContent = '删除'; remove.disabled = locked || account.kind !== 'profile'; remove.setAttribute('aria-label', `删除${account.name}`);
-      remove.title = account.kind === 'local' ? '默认账户不可移除，保留本机 Grok 登录与配置。' : '删除此客户端的账户及其本地登录与聊天记录';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger-button'; remove.dataset.accountAction = 'delete'; remove.textContent = t('删除'); remove.disabled = locked || account.kind !== 'profile'; remove.setAttribute('aria-label', t('删除{name}', { name: accountName(account) }));
+      remove.title = account.kind === 'local' ? t('默认账户不可移除，保留本机 Grok 登录与配置。') : t('删除此客户端的账户及其本地登录与聊天记录');
       remove.addEventListener('click', () => openAccountDelete(account));
       actions.append(button, rename, remove); row.append(info, actions); $('account-list').append(row);
     }
-    $('account-login').textContent = current?.signedIn ? '重新登录当前账户' : '登录当前账户';
+    $('account-login').textContent = current?.signedIn ? t('重新登录当前账户') : t('登录当前账户');
     $('account-login').disabled = locked;
     $('accounts-dialog').querySelector('[data-close-dialog]').disabled = state.accountAction;
     $('account-name-input').disabled = locked; $('add-account-button').disabled = locked;
     $('account-login-panel').hidden = !state.login;
     if (state.login) {
-      $('account-login-status').textContent = state.login.status === 'cancelling' ? '正在取消登录，等待本地登录进程退出…' : state.login.status === 'waiting' ? '等待浏览器确认登录…' : '正在准备 Grok 登录页面…';
+      $('account-login-status').textContent = state.login.status === 'cancelling' ? t('正在取消登录，等待本地登录进程退出…') : state.login.status === 'waiting' ? t('等待浏览器确认登录…') : t('正在准备 Grok 登录页面…');
       $('account-open-login').hidden = !state.login.url;
       $('account-code-row').hidden = !state.login.code; $('account-login-code').textContent = state.login.code || '';
     } else {
@@ -730,9 +739,9 @@
       $('account-open-login').hidden = true; $('account-code-row').hidden = true;
     }
     $('account-cancel-login').disabled = state.accountCancelPending;
-    $('account-cancel-login').textContent = state.accountCancelPending ? '正在取消…' : state.login?.status === 'cancelling' ? '重试取消登录' : '取消登录';
+    $('account-cancel-login').textContent = state.accountCancelPending ? t('正在取消…') : state.login?.status === 'cancelling' ? t('重试取消登录') : t('取消登录');
     $('account-open-login').disabled = state.accountCancelPending || state.login?.status === 'cancelling'; $('account-copy-code').disabled = state.accountCancelPending || state.login?.status === 'cancelling';
-    if (state.busy.size) $('account-feedback').textContent = '请先停止生成或等待回复完成，再切换账户。';
+    if (state.busy.size) $('account-feedback').textContent = t('请先停止生成或等待回复完成，再切换账户。');
   }
 
   function accountsLocked() {
@@ -741,7 +750,7 @@
 
   function validateAccountName(input, feedback) {
     const name = input.value.trim();
-    const error = !name ? '请输入账户名称。' : Array.from(name).length > 60 ? '账户名称不能超过 60 个字符。' : '';
+    const error = !name ? t('请输入账户名称。') : Array.from(name).length > 60 ? t('账户名称不能超过 60 个字符。') : '';
     input.setCustomValidity(error); input.setAttribute('aria-invalid', String(!!error));
     if (error) { $(feedback).textContent = error; input.reportValidity(); return null; }
     return name;
@@ -750,7 +759,7 @@
   function openAccountRename(account) {
     if (accountsLocked()) return;
     state.accountRenameId = account.id; $('account-rename-feedback').textContent = '';
-    const input = $('account-rename-input'); input.value = account.name; input.setCustomValidity(''); input.removeAttribute('aria-invalid');
+    const input = $('account-rename-input'); input.value = accountName(account); input.setCustomValidity(''); input.removeAttribute('aria-invalid');
     $('account-rename-dialog').showModal(); input.select();
   }
 
@@ -768,7 +777,7 @@
       for (const element of dialog.querySelectorAll('button, input')) element.disabled = true;
       $(feedbackId).textContent = '';
       try { await action(); dialog.close(); }
-      catch (error) { $(feedbackId).textContent = error.message || '操作失败，请重试。'; }
+      catch (error) { $(feedbackId).textContent = error.message || t('操作失败，请重试。'); }
       finally { for (const element of dialog.querySelectorAll('button, input')) element.disabled = false; }
     });
   }
@@ -815,7 +824,7 @@
 
   async function changeAccount(id) {
     applyAccountSnapshot(await call('switchAccount', id));
-    $('account-feedback').textContent = state.lastError || '账户已切换。';
+    $('account-feedback').textContent = state.lastError || t('账户已切换。');
   }
 
   async function startAccountLogin() {
@@ -826,7 +835,7 @@
   }
 
   function showSettings() {
-    if (state.initializing) { toast('正在读取本地配置，请稍候。'); return; }
+    if (state.initializing) { toast(t('正在读取本地配置，请稍候。')); return; }
     if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || document.querySelector('dialog[open]')) return;
     $('executable-input').value = state.settings.executable || '';
     $('workspace-input').value = state.settings.workspace || '';
@@ -834,6 +843,7 @@
     $('music-input').checked = state.settings.musicEnabled !== false;
     $('music-volume').value = state.settings.musicVolume;
     $('subagents-input').checked = state.settings.subagentsEnabled !== false;
+    $('language-select').value = i18n.normalizeLanguage(state.settings.language);
     $('settings-feedback').textContent = '';
     renderConnection(); updateSettingsReconnect();
     if (!$('settings-dialog').open) $('settings-dialog').showModal();
@@ -841,13 +851,13 @@
   }
 
   function settingsPatch() {
-    return { executable: $('executable-input').value.trim(), workspace: $('workspace-input').value.trim(), rainEnabled: $('rain-input').checked, subagentsEnabled: $('subagents-input').checked, musicEnabled: $('music-input').checked, musicVolume: Number($('music-volume').value) };
+    return { language: $('language-select').value, executable: $('executable-input').value.trim(), workspace: $('workspace-input').value.trim(), rainEnabled: $('rain-input').checked, subagentsEnabled: $('subagents-input').checked, musicEnabled: $('music-input').checked, musicVolume: Number($('music-volume').value) };
   }
 
   function updateSettingsReconnect() {
     const dirty = Object.entries(settingsPatch()).some(([key, value]) => value !== state.settings[key]);
-    $('settings-reconnect').textContent = dirty ? '保存并重连 ↗' : '重新连接 ↗';
-    $('settings-reconnect').title = dirty ? '保存当前设置后重新连接引擎' : '使用已保存的设置重新连接引擎';
+    $('settings-reconnect').textContent = dirty ? t('保存并重连 ↗') : t('重新连接 ↗');
+    $('settings-reconnect').title = dirty ? t('保存当前设置后重新连接引擎') : t('使用已保存的设置重新连接引擎');
   }
 
   async function savePreferences(forceReconnect = false) {
@@ -856,30 +866,30 @@
     $('save-settings-button').disabled = true; $('settings-feedback').textContent = '';
     try {
       const patch = settingsPatch();
-      if (!patch.executable) throw new Error('请选择 Grokbuild 的 grok.exe 文件。');
-      if (!patch.workspace) throw new Error('请选择默认工作目录。');
+      if (!patch.executable) throw new Error(t('请选择 Grokbuild 的 grok.exe 文件。'));
+      if (!patch.workspace) throw new Error(t('请选择默认工作目录。'));
       const reconnectRequired = forceReconnect || ['executable', 'workspace', 'subagentsEnabled'].some(key => patch[key] !== state.settings[key]);
-      if (reconnectRequired && state.busy.size) throw new Error('此设置需要重新连接引擎，请先停止正在执行的任务，再保存。');
-      for (const element of $('settings-form').querySelectorAll('input, button')) element.disabled = true;
+      if (reconnectRequired && state.busy.size) throw new Error(t('此设置需要重新连接引擎，请先停止正在执行的任务，再保存。'));
+      for (const element of $('settings-form').querySelectorAll('input, select, button')) element.disabled = true;
       const changes = Object.fromEntries(Object.entries(patch).filter(([key, value]) => value !== state.settings[key]));
       const result = await call('saveSettings', changes);
       state.settings = { ...state.settings, ...patch, ...(result?.settings || result || {}) };
       renderWorkspace();
-      if (reconnectRequired) { $('settings-feedback').textContent = '设置已保存，正在重新连接…'; await reconnect(); }
-      else toast('设置已保存。');
+      if (reconnectRequired) { $('settings-feedback').textContent = t('设置已保存，正在重新连接…'); await reconnect(); }
+      else toast(t('设置已保存。'));
       $('settings-dialog').close();
     } catch (error) { $('settings-feedback').textContent = error.message; if (!$('settings-dialog').open) toast(error.message, true, 7000); }
     finally {
       state.savingSettings = false;
-      for (const element of $('settings-form').querySelectorAll('input, button')) element.disabled = false;
+      for (const element of $('settings-form').querySelectorAll('input, select, button')) element.disabled = false;
       updateSettingsReconnect(); renderSelects(); renderComposerState();
     }
   }
 
   async function reconnect() {
     if (state.connectionStatus === 'connecting') return;
-    if (state.sending || state.configuring || state.selecting) { toast('请等待当前操作完成，再重新连接引擎。'); return; }
-    if (state.busy.size) { toast('请先停止正在执行的任务，再重新连接引擎。'); return; }
+    if (state.sending || state.configuring || state.selecting) { toast(t('请等待当前操作完成，再重新连接引擎。')); return; }
+    if (state.busy.size) { toast(t('请先停止正在执行的任务，再重新连接引擎。')); return; }
     state.selecting = true;
     state.connectionStatus = 'connecting'; state.connected = false; state.lastError = ''; renderConnection();
     try {
@@ -887,12 +897,12 @@
       state.info = normalizeInfo(result?.info || result || {});
       state.connected = result?.connected !== false;
       state.connectionStatus = state.connected ? 'ready' : 'disconnected';
-      if (!state.connected) throw new Error(result?.error || '引擎尚未连接，请检查设置。');
+      if (!state.connected) throw new Error(result?.error || t('引擎尚未连接，请检查设置。'));
       if (state.activeId) {
         const session = await call('selectSession', state.activeId);
         if (session?.id) upsertSession(session);
       }
-      renderSelects(); renderWorkspace(); queueMessages(); toast('Grokbuild 已重新连接。');
+      renderSelects(); renderWorkspace(); queueMessages(); toast(t('Grokbuild 已重新连接。'));
     } catch (error) { state.connected = false; state.connectionStatus = 'disconnected'; state.lastError = error.message; throw error; }
     finally { state.selecting = false; renderConnection(); }
   }
@@ -900,7 +910,7 @@
   async function exportSession(id) {
     if (!id) return;
     const result = await call('exportSession', id);
-    if (result) toast(`对话已导出：${typeof result === 'string' ? result : result.filePath || result.path || '保存完成'}`, false, 6000);
+    if (result) toast(t('对话已导出：{path}', { path: typeof result === 'string' ? result : result.filePath || result.path || t('保存完成') }), false, 6000);
   }
 
   function installListeners() {
@@ -927,7 +937,7 @@
       const id = state.accountRenameId; if (!id) return;
       void accountDialogWork('account-rename-dialog', 'account-rename-feedback', async () => {
         applyAccountSnapshot(await call('renameAccount', id, name));
-        $('account-feedback').textContent = '账户名称已保存。';
+        $('account-feedback').textContent = t('账户名称已保存。');
       });
     });
     $('account-delete-confirm').addEventListener('click', () => {
@@ -935,7 +945,7 @@
       const wasCurrent = id === state.activeAccountId;
       void accountDialogWork('account-delete-dialog', 'account-delete-feedback', async () => {
         applyAccountSnapshot(await call('deleteAccount', id));
-        $('account-feedback').textContent = `账户及其本地聊天记录已删除。${wasCurrent ? '已返回默认账户。' : ''}${state.lastError ? ` ${state.lastError}` : ''}`;
+        $('account-feedback').textContent = t('账户及其本地聊天记录已删除。') + (wasCurrent ? t('已返回默认账户。') : '') + (state.lastError ? ` ${state.lastError}` : '');
       });
     });
     for (const [dialogId, action, getId] of [
@@ -950,11 +960,11 @@
       if (!state.login || state.accountCancelPending) return;
       state.accountCancelPending = true; renderAccounts();
       try { await call('cancelAccountLogin'); }
-      catch (error) { $('account-feedback').textContent = error.message || '取消登录失败，请重试。'; }
+      catch (error) { $('account-feedback').textContent = error.message || t('取消登录失败，请重试。'); }
       finally { state.accountCancelPending = false; renderAccounts(); }
     }));
     $('account-open-login').addEventListener('click', () => { if (state.login?.url) void guarded(() => call('openExternal', state.login.url)); });
-    $('account-copy-code').addEventListener('click', () => guarded(async () => { if (state.login?.code) { await call('copyText', state.login.code); toast('验证码已复制。'); } }));
+    $('account-copy-code').addEventListener('click', () => guarded(async () => { if (state.login?.code) { await call('copyText', state.login.code); toast(t('验证码已复制。')); } }));
     $('image-dialog').addEventListener('close', () => $('image-preview').removeAttribute('src'));
     $('new-session').addEventListener('click', newChat);
     $('composer-form').addEventListener('submit', event => { event.preventDefault(); void sendMessage(); });
@@ -988,7 +998,8 @@
     $('settings-reconnect').addEventListener('click', () => { void savePreferences(true); });
     $('settings-form').addEventListener('input', updateSettingsReconnect);
     for (const id of ['rain-input', 'music-input', 'music-volume']) $(id).addEventListener('input', applyAmbience);
-    $('settings-dialog').addEventListener('close', applyAmbience);
+    $('language-select').addEventListener('change', () => { applyLanguage($('language-select').value); updateSettingsReconnect(); });
+    $('settings-dialog').addEventListener('close', () => { applyLanguage(state.settings.language); applyAmbience(); });
     const unlockMusic = () => { void ambience?.unlock(); };
     document.addEventListener('pointerdown', unlockMusic, { capture: true });
     document.addEventListener('keydown', unlockMusic, { capture: true });
@@ -1002,7 +1013,7 @@
         const result = await call('saveSettings', { workspace });
         state.settings = { ...state.settings, workspace, ...(result?.settings || result || {}) };
         renderWorkspace();
-        toast(activeSession() ? '默认工作目录已更新，将用于新对话。' : '工作空间已更新。');
+        toast(activeSession() ? t('默认工作目录已更新，将用于新对话。') : t('工作空间已更新。'));
         await reconnect();
       } finally { state.savingSettings = false; renderSelects(); renderComposerState(); }
     }));
@@ -1049,7 +1060,7 @@
     $('menu-delete').addEventListener('click', () => {
       state.deleteId = state.menuId; const session = state.sessions.find(item => item.id === state.deleteId); closeSessionMenu();
       if (!session) return;
-      if (state.busy.has(session.id)) { toast('请先停止这段对话中的任务，再删除记录。'); return; }
+      if (state.busy.has(session.id)) { toast(t('请先停止这段对话中的任务，再删除记录。')); return; }
       $('delete-title').textContent = sessionTitle(session); $('delete-dialog').showModal();
     });
     $('confirm-delete').addEventListener('click', () => guarded(async () => {
@@ -1059,13 +1070,13 @@
       try {
         await call('deleteSession', id);
         state.sessions = state.sessions.filter(session => session.id !== id); state.drafts.delete(id); clearPermissions(id); state.busy.delete(id);
-        $('delete-dialog').close(); if (state.activeId === id) { newChat(); state.drafts.delete(id); } else renderSessions(); toast('对话已删除。');
+        $('delete-dialog').close(); if (state.activeId === id) { newChat(); state.drafts.delete(id); } else renderSessions(); toast(t('对话已删除。'));
       } finally { state.deleting = false; for (const element of $('delete-dialog').querySelectorAll('button')) element.disabled = false; }
     }));
     document.addEventListener('click', event => {
       if (!$('session-menu').hidden && !$('session-menu').contains(event.target) && !event.target.closest('.session-more')) closeSessionMenu();
       const anchor = event.target.closest('.message-body a');
-      if (anchor) { event.preventDefault(); const url = anchor.getAttribute('href'); if (url && /^https?:\/\//i.test(url)) void guarded(() => call('openExternal', url)); else toast('此链接不是网页地址，请在项目中查看对应文件。'); }
+      if (anchor) { event.preventDefault(); const url = anchor.getAttribute('href'); if (url && /^https?:\/\//i.test(url)) void guarded(() => call('openExternal', url)); else toast(t('此链接不是网页地址，请在项目中查看对应文件。')); }
     });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') closeSessionMenu();
@@ -1078,8 +1089,16 @@
     window.addEventListener('beforeunload', () => { if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
   }
 
+  function applyLanguage(language) {
+    const scrollTop = $('conversation-scroll').scrollTop;
+    i18n.setLanguage(language); i18n.apply(document);
+    renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts();
+    updateSettingsReconnect(); updateClock();
+    $('conversation-scroll').scrollTop = scrollTop;
+  }
+
   function updateClock() {
-    $('tokyo-time').textContent = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false }) + ' JST';
+    $('tokyo-time').textContent = new Date().toLocaleTimeString(i18n.getLanguage(), { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false }) + ' JST';
   }
 
   async function bootstrap() {
@@ -1090,6 +1109,7 @@
       if (api?.onEvent) unsubscribe = api.onEvent(onEvent);
       const result = await call('bootstrap');
       state.settings = { ...state.settings, ...(result?.settings || {}) };
+      i18n.setLanguage(state.settings.language); i18n.apply(document);
       state.info = normalizeInfo(result?.info || {});
       state.sessions = (result?.sessions || []).map(normalizeSession);
       state.accounts = result?.accounts || []; state.activeAccountId = result?.activeAccountId || 'local'; state.login = result?.login || null;

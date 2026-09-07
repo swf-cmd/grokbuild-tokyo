@@ -1,5 +1,6 @@
 'use strict';
 
+const { createI18n } = require('./i18n.js');
 const { EventEmitter } = require('node:events');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
@@ -8,9 +9,10 @@ const path = require('node:path');
 const ACCOUNT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 class AccountManager extends EventEmitter {
-  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000 }) {
+  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'zh-CN' }) {
     super();
     this.dir = dir;
+    this.t = createI18n(getLanguage);
     this.defaultHome = path.resolve(process.env.GROK_HOME || path.join(home, '.grok'));
     this.spawnProcess = spawnProcess;
     this.cancelTimeoutMs = cancelTimeoutMs;
@@ -19,7 +21,7 @@ class AccountManager extends EventEmitter {
   homeFor(id) {
     if (id === 'local') return this.defaultHome;
     const profile = this.profileDirectory(id);
-    if (fs.existsSync(this.profileDirectory(id, true)) || fs.existsSync(this.recoveryDirectory(id))) throw new Error('账户有尚未恢复的删除操作，请检查 data/accounts 的恢复数据');
+    if (fs.existsSync(this.profileDirectory(id, true)) || fs.existsSync(this.recoveryDirectory(id))) throw new Error(this.t('账户有尚未恢复的删除操作，请检查 data/accounts 的恢复数据'));
     const home = path.join(profile, 'grok');
     this.assertOwnedDirectory(home);
     return home;
@@ -27,9 +29,9 @@ class AccountManager extends EventEmitter {
   assertOwnedDirectory(directory) {
     const base = path.resolve(this.dir);
     const relative = path.relative(base, path.resolve(directory));
-    if (!relative || relative.startsWith('..' + path.sep) || relative === '..' || path.isAbsolute(relative) || relative.split(path.sep)[0] !== 'accounts') throw new Error('账户目录必须位于 data/accounts 内');
+    if (!relative || relative.startsWith('..' + path.sep) || relative === '..' || path.isAbsolute(relative) || relative.split(path.sep)[0] !== 'accounts') throw new Error(this.t('账户目录必须位于 data/accounts 内'));
     const baseStat = fs.lstatSync(base);
-    if (baseStat.isSymbolicLink() || !baseStat.isDirectory()) throw new Error('账户数据目录包含链接或不是文件夹，无法安全操作');
+    if (baseStat.isSymbolicLink() || !baseStat.isDirectory()) throw new Error(this.t('账户数据目录包含链接或不是文件夹，无法安全操作'));
     // Reject junctions/symlinks in every existing component before reading, moving,
     // or recursively deleting a profile. Missing profiles are safe to remove too.
     let current = base;
@@ -37,17 +39,17 @@ class AccountManager extends EventEmitter {
       current = path.join(current, part);
       let stat;
       try { stat = fs.lstatSync(current); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
-      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('账户目录包含链接或不是文件夹，无法安全操作');
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(this.t('账户目录包含链接或不是文件夹，无法安全操作'));
     }
   }
   profileDirectory(id, deleting = false) {
-    if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) throw new Error(id === 'local' ? '本机 Grok 账户不能删除' : '无效的账户');
+    if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) throw new Error(id === 'local' ? this.t('本机 Grok 账户不能删除') : this.t('无效的账户'));
     const directory = path.resolve(this.dir, 'accounts', deleting ? `.deleting-${id}` : id);
     this.assertOwnedDirectory(directory);
     return directory;
   }
   recoveryDirectory(id) {
-    if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) throw new Error('无效的账户');
+    if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) throw new Error(this.t('无效的账户'));
     const directory = path.resolve(this.dir, 'accounts', `.recovery-${id}`);
     this.assertOwnedDirectory(directory);
     return directory;
@@ -62,7 +64,7 @@ class AccountManager extends EventEmitter {
       if (!ACCOUNT_ID.test(id)) continue;
       const staged = this.profileDirectory(id, true);
       const recovery = this.recoveryDirectory(id);
-      if (fs.existsSync(recovery)) throw new Error('账户恢复目录已存在，无法隔离未确认的删除操作');
+      if (fs.existsSync(recovery)) throw new Error(this.t('账户恢复目录已存在，无法隔离未确认的删除操作'));
       // Corrupt history cannot prove a deletion committed. Preserve these files
       // under a separate name that no subsequent startup automatically removes.
       fs.renameSync(staged, recovery);
@@ -74,9 +76,9 @@ class AccountManager extends EventEmitter {
     const directory = this.profileDirectory(id);
     const canonical = value => { try { return fs.realpathSync(value); } catch (error) { if (error.code === 'ENOENT') return path.resolve(value); throw error; } };
     const relativeHome = path.relative(canonical(directory), canonical(this.defaultHome));
-    if (!relativeHome || (relativeHome !== '..' && !relativeHome.startsWith('..' + path.sep) && !path.isAbsolute(relativeHome))) throw new Error('账户目录包含本机 Grok 数据，无法删除');
+    if (!relativeHome || (relativeHome !== '..' && !relativeHome.startsWith('..' + path.sep) && !path.isAbsolute(relativeHome))) throw new Error(this.t('账户目录包含本机 Grok 数据，无法删除'));
     const staged = this.profileDirectory(id, true);
-    if (fs.existsSync(staged)) throw new Error('账户有尚未恢复的删除操作，请重启应用后重试');
+    if (fs.existsSync(staged)) throw new Error(this.t('账户有尚未恢复的删除操作，请重启应用后重试'));
     if (!fs.existsSync(directory)) return false;
     fs.renameSync(directory, staged);
     return true;
@@ -85,7 +87,7 @@ class AccountManager extends EventEmitter {
     const directory = this.profileDirectory(id);
     const staged = this.profileDirectory(id, true);
     if (!fs.existsSync(staged)) return;
-    if (fs.existsSync(directory)) throw new Error('账户原目录已存在，删除暂存数据需要恢复');
+    if (fs.existsSync(directory)) throw new Error(this.t('账户原目录已存在，删除暂存数据需要恢复'));
     fs.renameSync(staged, directory);
   }
   completeDelete(id) {
@@ -104,9 +106,9 @@ class AccountManager extends EventEmitter {
         try {
           if (accountIds.includes(id)) this.restoreDelete(id);
           else this.completeDelete(id);
-        } catch { errors.push('上次账户删除的本地数据未能恢复或清理，请检查 data/accounts 文件夹权限后重启。'); }
+        } catch { errors.push(this.t('上次账户删除的本地数据未能恢复或清理，请检查 data/accounts 文件夹权限后重启。')); }
       }
-    } catch { errors.push('账户目录不可用，请检查 data/accounts 文件夹及其权限。'); }
+    } catch { errors.push(this.t('账户目录不可用，请检查 data/accounts 文件夹及其权限。')); }
     return errors;
   }
   environment(id) {
@@ -120,7 +122,7 @@ class AccountManager extends EventEmitter {
     return env;
   }
   summary(account) {
-    const result = { id: account.id, name: account.name, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };
+    const result = { id: account.id, name: account.name, nameIsDefault: account.nameIsDefault === true, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };
     try {
       const file = path.join(this.homeFor(account.id), 'auth.json');
       if (fs.statSync(file).size > 2 * 1024 * 1024) return result;
@@ -139,13 +141,13 @@ class AccountManager extends EventEmitter {
     return { accountId, url, code, status };
   }
   startLogin(account, executable, cwd) {
-    if (this.pending) throw new Error('已有账户正在登录，请先完成或取消');
+    if (this.pending) throw new Error(this.t('已有账户正在登录，请先完成或取消'));
     fs.mkdirSync(this.homeFor(account.id), { recursive: true, mode: 0o700 });
     const pending = { accountId: account.id, url: '', code: '', status: 'starting', cancelled: false };
     this.pending = pending;
     let child;
     try { child = this.spawnProcess(executable, ['login', '--device-auth'], { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: this.environment(account.id) }); }
-    catch { this.pending = null; throw new Error('无法启动 Grok 登录，请检查可执行文件。'); }
+    catch { this.pending = null; throw new Error(this.t('无法启动 Grok 登录，请检查可执行文件。')); }
     pending.child = child;
     let finish;
     pending.finished = new Promise(resolve => { finish = resolve; });
@@ -156,7 +158,7 @@ class AccountManager extends EventEmitter {
       clearTimeout(pending.timer);
       if (this.pending === pending) this.pending = null;
       const status = pending.cancelled ? 'cancelled' : !failed && code === 0 && this.summary(account).signedIn ? 'succeeded' : 'failed';
-      this.emit('login', { accountId: account.id, status, error: status === 'failed' ? '登录未完成，请重试并在浏览器中完成授权。' : '' });
+      this.emit('login', { accountId: account.id, status, error: status === 'failed' ? this.t('登录未完成，请重试并在浏览器中完成授权。') : '' });
       finish();
     };
     pending.complete = complete;
@@ -185,11 +187,11 @@ class AccountManager extends EventEmitter {
       // ChildProcess also emits error when kill fails; that is not evidence that
       // a running login process exited and must never release its account lock.
       if ((!pending.cancelled && child.pid == null) || child.exitCode != null || child.signalCode != null) complete(null, true);
-      else this.emit('login', { ...this.loginState(), error: '登录进程发生错误，请取消后重试。' });
+      else this.emit('login', { ...this.loginState(), error: this.t('登录进程发生错误，请取消后重试。') });
     });
     child.once('close', code => complete(code));
     pending.timer = setTimeout(() => { void this.cancelLogin().catch(() => {
-      if (this.pending === pending) this.emit('login', { ...this.loginState(), error: '登录已超时，无法确认登录进程已停止，请重试取消。' });
+      if (this.pending === pending) this.emit('login', { ...this.loginState(), error: this.t('登录已超时，无法确认登录进程已停止，请重试取消。') });
     }); }, 10 * 60 * 1000);
     pending.timer.unref?.();
     this.emit('login', this.loginState());
@@ -216,7 +218,7 @@ class AccountManager extends EventEmitter {
         if (pending.child.exitCode != null || pending.child.signalCode != null) pending.complete(null);
         if (await waitForExit()) return;
       }
-      throw new Error('无法确认登录进程已停止，请重试取消或关闭应用。');
+      throw new Error(this.t('无法确认登录进程已停止，请重试取消或关闭应用。'));
     })();
     try { await pending.cancelling; }
     finally { pending.cancelling = null; }
