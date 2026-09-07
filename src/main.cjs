@@ -3,7 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
-const { createI18n } = require('./i18n.js');
+const { createI18n, languages } = require('./i18n.js');
 const { AppController } = require('./app-controller.cjs');
 const root = process.env.TOKYO_TEST_ROOT || (app.isPackaged ? path.resolve(path.dirname(process.execPath), '..') : path.resolve(__dirname, '..'));
 app.setPath('userData', path.join(root, 'data', 'browser'));
@@ -30,8 +30,10 @@ else {
       return fn(...args);
     });
     for (const name of ['bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'saveSettings', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
-    handle('chooseFolder', async () => { const r = await dialog.showOpenDialog(win, { title: t('选择 Grok 工作目录'), defaultPath: controller.settings.workspace, properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
-    handle('chooseExecutable', async () => { const r = await dialog.showOpenDialog(win, { title: t('选择 grok.exe'), defaultPath: controller.settings.executable, filters: [{ name: 'Grok executable', extensions: ['exe'] }], properties: ['openFile'] }); return r.canceled ? null : r.filePaths[0]; });
+    // Dialogs opened from settings follow its language preview without saving it.
+    const dialogTranslator = language => typeof language === 'string' && Object.hasOwn(languages, language) ? createI18n(language) : t;
+    handle('chooseFolder', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 Grok 工作目录'), defaultPath: controller.settings.workspace, properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
+    handle('chooseExecutable', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 grok.exe'), defaultPath: controller.settings.executable, filters: [{ name: translate('Grok 可执行文件'), extensions: ['exe'] }], properties: ['openFile'] }); return r.canceled ? null : r.filePaths[0]; });
     handle('exportSession', async id => {
       const s = controller.getSession(id);
       const title = controller.sessionTitle(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80);

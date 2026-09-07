@@ -1,4 +1,7 @@
 'use strict';
+
+// The test process only uses the credentials its fixtures create.
+for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,7 +11,7 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const { randomUUID } = require('node:crypto');
 const { AccountManager } = require('../src/account-manager.cjs');
-const { imagesFromContent, resolveImage } = require('../src/media.cjs');
+const { imagesFromContent, resolveImage, findSessionImageDirectory } = require('../src/media.cjs');
 const { GrokAdapter } = require('../src/grok-adapter.cjs');
 const png = fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png'));
 const encoded = png.toString('base64');
@@ -47,6 +50,23 @@ test('relative, absolute, encoded and file URL images load inside the conversati
   }
 });
 
+test('literal percent sequences keep their filename while encoded Markdown paths still resolve', async t => {
+  const root = fixture(t);
+  const literal = path.join(root, 'change%20chart.png');
+  const decoded = path.join(root, 'change chart.png');
+  const otherPng = Buffer.concat([png, Buffer.from('different fixture image')]);
+  fs.writeFileSync(literal, png);
+  fs.writeFileSync(decoded, otherPng);
+  for (const src of ['change%20chart.png', literal, pathToFileURL(literal).href]) {
+    assert.equal((await resolveImage(src, root)).src, `data:image/png;base64,${encoded}`);
+  }
+  fs.writeFileSync(path.join(root, '变化 chart.png'), otherPng);
+  assert.equal((await resolveImage(encodeURIComponent('变化 chart.png'), root)).src, `data:image/png;base64,${otherPng.toString('base64')}`);
+  const workspace = path.join(root, 'workspace'); fs.mkdirSync(workspace);
+  fs.writeFileSync(path.join(root, 'private.png'), png);
+  await assert.rejects(resolveImage('%2e%2e/private.png', workspace), /工作目录/);
+});
+
 test('image URLs and inline images are validated without arbitrary file or scheme access', async t => {
   const root = fixture(t); fs.mkdirSync(path.join(root, 'workspace')); fs.writeFileSync(path.join(root, 'private.png'), png);
   assert.equal((await resolveImage('https://images.example.test/a.png', root)).src, 'https://images.example.test/a.png');
@@ -78,6 +98,65 @@ test('Grok session images resolve relative to their cache without exposing other
   await assert.rejects(resolveImage('../other/private.png', cwd, cache), /工作目录或图片缓存/);
 });
 
+test('Grok cache discovery follows RFC 3986 workspace encoding, including punctuation', async t => {
+  const root = fixture(t); const home = path.join(root, 'grok'); const cwd = path.join(root, "Tokyo (night)!'");
+  fs.mkdirSync(cwd);
+  const encodedCwd = encodeURIComponent(cwd).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+  const cache = path.join(home, 'sessions', encodedCwd, 'current');
+  fs.mkdirSync(path.join(cache, 'images'), { recursive: true }); fs.writeFileSync(path.join(cache, 'images', '1.png'), png);
+  const found = await findSessionImageDirectory(home, cwd, 'current');
+  assert.equal(found, fs.realpathSync(cache));
+  assert.equal((await resolveImage('images/1.png', cwd, found)).src, `data:image/png;base64,${encoded}`);
+  assert.equal(await findSessionImageDirectory(home, cwd, '../current'), undefined);
+  assert.equal(await findSessionImageDirectory(home, 'relative-workspace', 'current'), undefined);
+});
+
+test('long multilingual workspace caches use .cwd metadata and keep other workspaces and sessions isolated', async t => {
+  const root = fixture(t); const home = path.join(root, 'grok'); const cwd = path.join(root, '东京项目'.repeat(12));
+  fs.mkdirSync(cwd);
+  assert.ok(encodeURIComponent(cwd).length > 255);
+  const otherWorkspace = path.join(home, 'sessions', 'other-1111111111111111');
+  const ownWorkspace = path.join(home, 'sessions', 'workspace-2222222222222222');
+  for (const [directory, storedCwd] of [[otherWorkspace, path.join(root, 'other')], [ownWorkspace, cwd]]) {
+    fs.mkdirSync(path.join(directory, 'current'), { recursive: true });
+    fs.writeFileSync(path.join(directory, '.cwd'), storedCwd);
+  }
+  assert.equal(await findSessionImageDirectory(home, cwd, 'current'), fs.realpathSync(path.join(ownWorkspace, 'current')));
+  assert.equal(await findSessionImageDirectory(home, cwd, 'missing'), undefined);
+  fs.writeFileSync(path.join(ownWorkspace, '.cwd'), path.join(root, 'unrelated'));
+  assert.equal(await findSessionImageDirectory(home, cwd, 'current'), undefined);
+});
+
+test('Windows cache discovery tolerates canonical path prefixes and case differences', { skip: process.platform !== 'win32' }, async t => {
+  const root = fixture(t); const home = path.join(root, 'grok'); const cwd = path.join(root, 'Case Workspace');
+  fs.mkdirSync(cwd);
+  const canonicalCwd = '\\\\?\\' + cwd.toUpperCase();
+  const encodedCwd = encodeURIComponent(canonicalCwd).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+  const cache = path.join(home, 'sessions', encodedCwd, 'current');
+  fs.mkdirSync(cache, { recursive: true });
+  assert.equal(await findSessionImageDirectory(home, cwd, 'current'), fs.realpathSync(cache));
+});
+
+test('cache discovery ignores junctions, malformed metadata and missing caches without blocking workspace images', async t => {
+  const root = fixture(t); const home = path.join(root, 'grok'); const cwd = path.join(root, 'workspace');
+  const outside = path.join(root, 'outside'); fs.mkdirSync(cwd); fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(cwd, 'local.png'), png);
+  const encodedCwd = encodeURIComponent(cwd).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+  fs.mkdirSync(path.join(home, 'sessions'), { recursive: true });
+  fs.mkdirSync(path.join(outside, 'current'));
+  fs.symlinkSync(outside, path.join(home, 'sessions', encodedCwd), process.platform === 'win32' ? 'junction' : 'dir');
+  const fake = path.join(home, 'sessions', 'fake-1111111111111111');
+  fs.mkdirSync(path.join(fake, 'current'), { recursive: true }); fs.writeFileSync(path.join(fake, '.cwd'), 'x'.repeat(32769));
+  const linkedSession = path.join(home, 'sessions', 'linked-2222222222222222');
+  fs.mkdirSync(linkedSession); fs.writeFileSync(path.join(linkedSession, '.cwd'), cwd);
+  fs.symlinkSync(path.join(outside, 'current'), path.join(linkedSession, 'current'), process.platform === 'win32' ? 'junction' : 'dir');
+  for (const candidateHome of [home, path.join(root, 'missing-home')]) {
+    const found = await findSessionImageDirectory(candidateHome, cwd, 'current');
+    assert.equal(found, undefined);
+    assert.equal((await resolveImage('local.png', cwd, found)).src, `data:image/png;base64,${encoded}`);
+  }
+});
+
 function accountFixture(t, customSpawn) {
   const root = fixture(t); let child, options;
   const account = { id: randomUUID(), name: '工作账户' };
@@ -94,6 +173,70 @@ function accountFixture(t, customSpawn) {
   return { manager, account, events, login, authenticate, child: () => child, options: () => options };
 }
 
+function withLocalAuthEnv(overrides, action) {
+  const keys = ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try {
+    for (const key of keys) {
+      if (overrides[key] === undefined) delete process.env[key];
+      else process.env[key] = overrides[key];
+    }
+    return action();
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+}
+
+test('local account summaries honor inline and custom-store precedence without exposing credentials', t => {
+  const f = accountFixture(t); const local = { id: 'local', name: 'Local' };
+  const root = f.manager.dir; const custom = path.join(root, 'custom-auth.json');
+  const credential = { key: 'secret-fixture-token', auth_mode: 'oidc', email: 'custom@example.test' };
+  fs.mkdirSync(f.manager.homeFor('local'), { recursive: true });
+  fs.writeFileSync(path.join(f.manager.homeFor('local'), 'auth.json'), JSON.stringify({ scope: { ...credential, email: 'default@example.test' } }));
+  fs.writeFileSync(custom, JSON.stringify({ scope: credential }));
+  f.manager.getWorkingDirectory = () => root;
+  for (const override of [custom, 'custom-auth.json']) withLocalAuthEnv({ GROK_AUTH_PATH: override }, () => {
+    assert.equal(f.manager.summary(local).email, 'custom@example.test');
+    assert.equal(f.manager.summary(f.account).signedIn, false);
+  });
+  withLocalAuthEnv({ GROK_AUTH_PATH: custom, GROK_AUTH: JSON.stringify({ ...credential, email: 'inline@example.test' }) }, () => {
+    const summary = f.manager.summary(local);
+    assert.equal(summary.email, 'inline@example.test');
+    assert.equal(summary.signedIn, true);
+    assert.ok(!JSON.stringify(summary).includes('secret-fixture-token'));
+  });
+  withLocalAuthEnv({ GROK_AUTH_PATH: custom, GROK_AUTH: 'invalid-json' }, () => assert.equal(f.manager.summary(local).email, 'custom@example.test'));
+  for (const override of [path.join(root, 'missing.json'), '']) withLocalAuthEnv({ GROK_AUTH_PATH: override }, () => assert.equal(f.manager.summary(local).signedIn, false));
+  fs.writeFileSync(custom, 'invalid-json');
+  withLocalAuthEnv({ GROK_AUTH_PATH: custom }, () => assert.equal(f.manager.summary(local).signedIn, false));
+});
+
+test('local API key status follows primary and legacy precedence without authenticating isolated profiles', t => {
+  const f = accountFixture(t); const local = { id: 'local', name: 'Local' };
+  for (const key of ['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) withLocalAuthEnv({ [key]: 'secret-fixture-key' }, () => {
+    const summary = f.manager.summary(local);
+    assert.equal(summary.signedIn, true); assert.equal(summary.email, '');
+    assert.equal(f.manager.summary(f.account).signedIn, false);
+    assert.ok(!JSON.stringify(summary).includes('secret-fixture-key'));
+  });
+  withLocalAuthEnv({ XAI_API_KEY: '', GROK_CODE_XAI_API_KEY: 'legacy-fixture-key' }, () => assert.equal(f.manager.summary(local).signedIn, false));
+});
+
+test('successful local login reads a relative custom auth store using the actual CLI working directory', t => {
+  const f = accountFixture(t); const local = { id: 'local', name: 'Local' };
+  f.manager.getWorkingDirectory = () => path.join(f.manager.dir, 'different-workspace');
+  withLocalAuthEnv({ GROK_AUTH_PATH: 'custom-auth.json' }, () => {
+    f.manager.startLogin(local, 'grok.exe', f.manager.dir);
+    fs.writeFileSync(path.join(f.manager.dir, 'custom-auth.json'), JSON.stringify({ scope: { key: 'secret-fixture-token', auth_mode: 'oidc', email: 'signed-in@example.test' } }));
+    f.child().emit('close', 0);
+    assert.equal(f.events.at(-1).status, 'succeeded');
+    assert.ok(!JSON.stringify(f.events).includes('secret-fixture-token'));
+  });
+});
+
 test('account profiles use separate Grok homes and expose only safe display metadata', t => {
   const f = accountFixture(t); f.login(); f.authenticate();
   const summary = f.manager.summary(f.account);
@@ -104,6 +247,28 @@ test('account profiles use separate Grok homes and expose only safe display meta
   for (const key of ['XAI_API_KEY', 'GROK_AUTH_PROVIDER_COMMAND', 'GROK_CONFIG', 'GROK_CONFIG_PATH']) assert.equal(f.options().env[key], undefined);
   assert.throws(() => f.manager.homeFor('../outside'), /无效/);
   f.child().emit('close', 0);
+});
+
+test('profile environments remove both API key names and login overrides while local accounts retain them', t => {
+  const f = accountFixture(t);
+  const loginOverrides = ['XAI_API_KEY', 'GROK_CODE_XAI_API_KEY', 'GROK_AUTH', 'GROK_AUTH_PATH', 'GROK_DEPLOYMENT_KEY', 'GROK_EXTRA_AUTH_KEY', 'GROK_TRACE_UPLOAD_CREDENTIALS_FILE', 'OTEL_EXPORTER_OTLP_HEADERS', 'GROK_INTERNAL_OTLP_HEADERS', 'GROK_CONFIG', 'GROK_CONFIG_PATH', 'GROK_AUTH_PROVIDER_COMMAND', 'GROK_AUTH_TOKEN_TTL', 'GROK_OIDC_ISSUER', 'GROK_OAUTH2_CLIENT_ID', 'GROK_FORCE_LOGIN_TEAM_UUID'];
+  const values = Object.fromEntries(loginOverrides.map(key => [key, process.env[key]]));
+  try {
+    for (const key of loginOverrides) process.env[key] = 'fixture-login-override';
+    const isolated = f.manager.environment(f.account.id);
+    const local = f.manager.environment('local');
+    for (const key of loginOverrides) {
+      assert.equal(isolated[key], undefined, `${key} must not authenticate a different profile`);
+      assert.equal(local[key], 'fixture-login-override', `${key} must remain available to the local CLI account`);
+    }
+    const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH');
+    assert.ok(pathKey && isolated[pathKey] === process.env[pathKey]);
+  } finally {
+    for (const key of loginOverrides) {
+      if (values[key] === undefined) delete process.env[key];
+      else process.env[key] = values[key];
+    }
+  }
 });
 
 test('device login parses split output, never publishes raw tokens, and requires saved credentials', t => {

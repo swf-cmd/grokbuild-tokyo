@@ -10,6 +10,7 @@ const { app, dialog, shell } = require('electron');
 const root = process.env.TOKYO_TEST_ROOT;
 if (!root || !path.isAbsolute(root)) throw new Error('An isolated TOKYO_TEST_ROOT is required');
 process.env.GROK_HOME = path.join(root, 'default-grok');
+for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
 const sourceRoot = process.env.TOKYO_UI_SOURCE_ROOT || path.resolve(__dirname, '../..');
 const test = globalThis.__tokyoUITest = { calls: [], dialogs: [], external: [], saved: [], adapters: [], records: new Map(), nextSession: 0 };
 const copy = value => structuredClone(value);

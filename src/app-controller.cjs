@@ -5,12 +5,18 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
-const { imagesFromContent, resolveImage } = require('./media.cjs');
+const { imagesFromContent, resolveImage, findSessionImageDirectory } = require('./media.cjs');
 
 function isPathType(value, type) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
   try { return fs.statSync(value)[type](); } catch { return false; }
 }
+
+const STOP_NOTICES = {
+  max_tokens: '回复达到输出长度上限，可发送消息让 Grok 继续。',
+  max_turn_requests: '本轮已达到请求次数上限，可发送消息让 Grok 继续。',
+  refusal: 'Grok 拒绝了这次请求。',
+};
 
 class AppController extends EventEmitter {
   constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager }) {
@@ -25,7 +31,7 @@ class AppController extends EventEmitter {
     this.sessions = [];
     this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
     this.activeAccountId = 'local';
-    this.accountManager = new Accounts({ dir: this.dir, home, getLanguage: () => this.settings.language });
+    this.accountManager = new Accounts({ dir: this.dir, home, getLanguage: () => this.settings.language, getWorkingDirectory: () => this.settings.workspace });
     this.accountManager.on('login', login => this.emitEvent({ type: 'account-login', ...this.accountState(), login }));
     this.loaded = new Set();
     this.permissions = new Map();
@@ -222,8 +228,11 @@ class AppController extends EventEmitter {
   async cancelAccountLogin() { await this.accountManager.cancelLogin(); return this.accountState(); }
   async readImage({ sessionId, src } = {}) {
     const session = this.getSession(sessionId);
-    const cache = /^[a-zA-Z0-9_-]{1,128}$/.test(session.id) ? path.join(this.accountManager.homeFor(this.activeAccountId), 'sessions', encodeURIComponent(session.cwd), session.id) : undefined;
-    try { return await resolveImage(src, session.cwd, cache, this.t); }
+    try {
+      const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
+        : await findSessionImageDirectory(this.accountManager.homeFor(this.activeAccountId), session.cwd, session.id);
+      return await resolveImage(src, session.cwd, cache, this.t);
+    }
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
   async idleOperation(name, action) {
@@ -409,7 +418,7 @@ class AppController extends EventEmitter {
     const now = Date.now();
     const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
     session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), createdAt: now, status: 'complete' });
-    const message = { id: randomUUID(), role: 'assistant', text: '', thought: '', tools: [], images: [], createdAt: now, status: 'working' };
+    const message = { id: randomUUID(), role: 'assistant', text: '', thought: '', tools: [], images: [], plan: [], createdAt: now, status: 'working' };
     session.messages.push(message);
     if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
       session.title = text.trim().replace(/\s+/g, ' ').slice(0, 32);
@@ -432,6 +441,8 @@ class AppController extends EventEmitter {
       try {
         const result = await this.adapter.prompt({ sessionId, text: text.trim() });
         if (message.status === 'working') message.status = result?.cancelled || result?.stopReason === 'cancelled' ? 'cancelled' : 'complete';
+        if (typeof result?.stopReason === 'string') message.stopReason = result.stopReason;
+        if (message.status !== 'cancelled' && Object.hasOwn(STOP_NOTICES, result?.stopReason)) message.noticeKey = STOP_NOTICES[result.stopReason];
       } catch (e) {
         if (message.status !== 'cancelled') {
           message.status = 'error'; message.error = e.message;
@@ -463,8 +474,19 @@ class AppController extends EventEmitter {
     if (event.type === 'status' && event.status === 'permission_resolved') this.permissions.delete(String(event.requestId));
     const current = this.active;
     const message = current?.message;
-    if (['text', 'thought', 'tool', 'image'].includes(event.type) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
+    const isPlan = event.type === 'status' && event.status === 'plan';
+    if ((['text', 'thought', 'tool', 'image'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
     if (message && (!event.sessionId || event.sessionId === current.sessionId)) {
+      if (isPlan) {
+        // ACP plans replace the previous plan, including an explicitly empty one.
+        const entries = (Array.isArray(event.entries) ? event.entries : []).filter(entry => typeof entry?.content === 'string').map(entry => ({
+          content: entry.content,
+          priority: ['high', 'medium', 'low'].includes(entry.priority) ? entry.priority : 'medium',
+          status: ['pending', 'in_progress', 'completed'].includes(entry.status) ? entry.status : 'pending',
+        }));
+        message.plan = entries;
+        event = { ...event, entries };
+      }
       if (event.type === 'text') message.text += event.text || '';
       if (event.type === 'thought') message.thought += event.text || '';
       if (event.type === 'image' && event.image?.src) {
@@ -598,7 +620,12 @@ class AppController extends EventEmitter {
   }
   exportMarkdown(id) {
     const s = this.getSession(id);
-    return `# ${this.sessionTitle(s)}\n\n${this.t('工作目录：{path}', { path: s.cwd })}\n\n` + s.messages.map(m => `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${(m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${image.src.replace(/>/g, '%3E')}>)`).join('')}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`).join('\n');
+    return `# ${this.sessionTitle(s)}\n\n${this.t('工作目录：{path}', { path: s.cwd })}\n\n` + s.messages.map(m => {
+      const plan = Array.isArray(m.plan) && m.plan.length ? `\n\n### ${this.t('执行计划')}\n\n` + m.plan.map(entry => `- [${entry.status === 'completed' ? 'x' : ' '}] ${entry.content}`).join('\n') : '';
+      const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${image.src.replace(/>/g, '%3E')}>)`).join('');
+      const notice = m.noticeKey ? `\n\n${this.t(m.noticeKey)}` : '';
+      return `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${plan}${images}${notice}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`;
+    }).join('\n');
   }
   async close() {
     this.closing = true;

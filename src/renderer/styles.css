@@ -123,6 +123,7 @@ dialog{color:var(--text);background:#121b1e;border:1px solid #a8b29a28;border-ra
 .edition-number { white-space: nowrap; flex-shrink: 0; }
 .composer-footer > span:first-child { min-width: 0; }
 .composer-footer > span:last-child { flex-shrink: 0; }
+.composer-options #mode-select { max-width: 180px; }
 @media (max-width: 1120px) {
   .new-session kbd { display: none; }
   .hero-bottom { gap: 18px; }
@@ -134,6 +135,15 @@ dialog{color:var(--text);background:#121b1e;border:1px solid #a8b29a28;border-ra
   .keyboard-hint { display: none; }
 }
 /* Conversation images and account profiles. */
+.plan-details { margin: 0 0 14px 33px; border: 1px solid #b7d09525; border-radius: 6px; padding: 10px 12px; font-size: 11px; color: #a7bba3; }
+.plan-details summary { cursor: pointer; color: #d0debc; }
+.plan-details ol { margin: 10px 0 0; padding-left: 20px; }
+.plan-details li { padding: 5px 0; line-height: 1.7; overflow-wrap: anywhere; }
+.plan-content { white-space: pre-wrap; }
+.plan-status { margin-left: 10px; color: #849d80; font-size: 10px; }
+.plan-details li[data-status="completed"] .plan-content { color: #8fa389; }
+.plan-details li[data-status="in_progress"] .plan-status { color: var(--lime); }
+.message-notice { margin-top: 12px; padding: 10px 13px; border-left: 2px solid #b7d09555; border-radius: 3px; background: #b7d09509; color: #adbf9f; font-size: 11px; line-height: 1.7; }
 .chat-image{margin:14px 0;max-width:100%;white-space:normal}.image-thumbnail{display:block;padding:0;max-width:100%;min-width:100px;min-height:30px;border-radius:9px;overflow:hidden;background:#091114;border:1px solid #b7d09525;cursor:zoom-in}.image-thumbnail:disabled{cursor:default}.image-thumbnail img{display:block;max-width:100%;width:auto;max-height:440px;object-fit:contain}.chat-image figcaption{font-size:10px;line-height:1.8;color:#93a598;margin-top:7px;overflow-wrap:anywhere}.image-retry{font-size:11px;color:var(--lime);margin-top:5px;padding:5px 0}.image-dialog{max-width:94vw;width:max-content;max-height:94vh;overflow:hidden}.image-toolbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:12px 18px;color:#c5d0ca;font-size:12px}.image-toolbar .dialog-close{align-self:center}.image-dialog>img{display:block;max-width:92vw;max-height:calc(92vh - 60px);object-fit:contain;margin:auto}.account-button{display:flex;align-items:center;gap:10px;width:100%;padding:12px 10px;border:1px solid #9daf8225;border-radius:7px;background:#d4eb8905;text-align:left}.account-button:hover{background:#d4eb8910}.account-avatar{color:var(--lime);font-size:23px}.account-button>span:nth-child(2){min-width:0;flex:1}.account-button strong,.account-button small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.account-button strong{font-weight:500;font-size:11px;color:#c3d3be}.account-button small{font-size:9px;color:#819789;margin-top:4px}.account-button>span:last-child{font-size:17px;color:#b7caa7}.accounts-dialog{width:570px;max-width:calc(100vw - 40px)}.accounts-body{padding:22px 27px 26px}.account-help{font-size:12px;color:#95a99b;line-height:1.8;margin:0 0 17px}.account-list{display:flex;flex-direction:column;gap:9px;max-height:270px;overflow:auto}.account-row{display:flex;align-items:center;gap:14px;border:1px solid #a5b7941c;border-radius:7px;padding:13px}.account-row.selected{border-color:#d4eb8950;background:#d4eb8907}.account-row>div{flex:1;min-width:0}.account-row strong,.account-row small{display:block;overflow-wrap:anywhere}.account-row strong{font-size:12px;font-weight:500;color:#cedcc3}.account-row small{font-size:10px;color:#8aa28e;margin-top:5px;line-height:1.6}.account-row .secondary-button{font-size:10px;padding:7px 11px}.account-login-actions{display:flex;align-items:center;gap:12px;margin-top:15px;flex-wrap:wrap}#account-feedback{font-size:11px;line-height:1.7;color:#c3cda2;flex:1;min-width:160px}.account-login-panel{padding:16px;border:1px solid #d4eb8933;border-radius:8px;margin-top:18px;background:#091513}.account-login-panel>p:first-child{color:#c4d6b9;font-size:12px;margin:0 0 14px}.account-login-panel .field-help{margin:10px 0;font-size:11px;color:#90a48f}.account-code-row{display:flex;align-items:center;gap:14px;font-size:11px;color:#8ca18a}.account-code-row strong{font-family:var(--mono);font-size:21px;letter-spacing:2px;color:var(--lime);flex:1}.add-account-form{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}
 
 /* Keep account actions and the add form reachable in compact windows. */

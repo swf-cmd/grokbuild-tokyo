@@ -9,12 +9,13 @@ const path = require('node:path');
 const ACCOUNT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 class AccountManager extends EventEmitter {
-  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'zh-CN' }) {
+  constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'zh-CN', getWorkingDirectory = () => process.cwd() }) {
     super();
     this.dir = dir;
     this.t = createI18n(getLanguage);
     this.defaultHome = path.resolve(process.env.GROK_HOME || path.join(home, '.grok'));
     this.spawnProcess = spawnProcess;
+    this.getWorkingDirectory = getWorkingDirectory;
     this.cancelTimeoutMs = cancelTimeoutMs;
     this.pending = null;
   }
@@ -116,23 +117,38 @@ class AccountManager extends EventEmitter {
     if (id !== 'local') {
       // New profiles must not silently fall back to the original account's credentials.
       for (const key of Object.keys(env)) {
-        if (/^(?:XAI_API_KEY|GROK_CONFIG(?:_PATH)?|GROK_(?:AUTH_.*|OIDC_.*|OAUTH2_.*|FORCE_LOGIN_TEAM.*))$/i.test(key)) delete env[key];
+        if (/^(?:XAI_API_KEY|GROK_CODE_XAI_API_KEY|OTEL_EXPORTER_OTLP_HEADERS|GROK_CONFIG(?:_PATH)?|GROK_(?:AUTH(?:_.*)?|OIDC_.*|OAUTH2_.*|FORCE_LOGIN_TEAM.*|DEPLOYMENT_KEY|EXTRA_AUTH_KEY|TRACE_UPLOAD_CREDENTIALS_FILE|INTERNAL_OTLP_HEADERS))$/i.test(key)) delete env[key];
       }
     }
     return env;
   }
-  summary(account) {
+  summary(account, cwd = this.getWorkingDirectory()) {
     const result = { id: account.id, name: account.name, nameIsDefault: account.nameIsDefault === true, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };
+    const local = account.id === 'local';
+    const usable = (value, inline = false) => value && typeof value === 'object' && !Array.isArray(value) && typeof value.key === 'string' && value.key.trim() && (['oidc', 'external', 'api_key'].includes(value.auth_mode) || (inline && ['web_login', 'grok'].includes(value.auth_mode)));
+    let current;
+    // The local CLI honors inline credentials first, then its configured store.
+    // Invalid inline JSON falls back to that store, matching AuthManager::new.
+    if (local && process.env.GROK_AUTH) {
+      try { const inline = JSON.parse(process.env.GROK_AUTH); if (usable(inline, true)) current = inline; } catch {}
+    }
     try {
-      const file = path.join(this.homeFor(account.id), 'auth.json');
-      if (fs.statSync(file).size > 2 * 1024 * 1024) return result;
-      const store = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const credentials = Object.values(store).filter(item => item && typeof item === 'object' && typeof item.key === 'string' && item.key && !['web_login', 'grok'].includes(item.auth_mode));
-      const current = credentials.sort((a, b) => (Date.parse(b.create_time) || 0) - (Date.parse(a.create_time) || 0))[0];
-      result.signedIn = !!current;
-      // Never return credential objects or raw CLI output across IPC.
-      if (typeof current?.email === 'string') result.email = current.email.slice(0, 254);
-    } catch { /* Missing or expired login remains recoverable through the login button. */ }
+      if (!current) {
+        const override = local ? process.env.GROK_AUTH_PATH : undefined;
+        const file = override !== undefined ? path.resolve(cwd, override) : path.join(this.homeFor(account.id), 'auth.json');
+        const stat = fs.statSync(file);
+        if (stat.isFile() && stat.size <= 2 * 1024 * 1024) {
+          const store = JSON.parse(fs.readFileSync(file, 'utf8'));
+          const credentials = store && typeof store === 'object' && !Array.isArray(store) ? Object.values(store).filter(item => usable(item)) : [];
+          current = credentials.sort((a, b) => (Date.parse(b.create_time) || 0) - (Date.parse(a.create_time) || 0))[0];
+        }
+      }
+    } catch { /* Missing or invalid configured stores must not fall back to a different account's file. */ }
+    // Presence indicates configured authentication, not a network validity check.
+    const apiKey = local ? process.env.XAI_API_KEY ?? process.env.GROK_CODE_XAI_API_KEY : undefined;
+    result.signedIn = !!current || (typeof apiKey === 'string' && !!apiKey.trim());
+    // Never return credential objects or raw CLI output across IPC.
+    if (typeof current?.email === 'string') result.email = current.email.slice(0, 254);
     return result;
   }
   loginState() {
@@ -157,7 +173,7 @@ class AccountManager extends EventEmitter {
       completed = true;
       clearTimeout(pending.timer);
       if (this.pending === pending) this.pending = null;
-      const status = pending.cancelled ? 'cancelled' : !failed && code === 0 && this.summary(account).signedIn ? 'succeeded' : 'failed';
+      const status = pending.cancelled ? 'cancelled' : !failed && code === 0 && this.summary(account, cwd).signedIn ? 'succeeded' : 'failed';
       this.emit('login', { accountId: account.id, status, error: status === 'failed' ? this.t('登录未完成，请重试并在浏览器中完成授权。') : '' });
       finish();
     };

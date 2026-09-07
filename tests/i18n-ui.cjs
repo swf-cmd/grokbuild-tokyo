@@ -83,6 +83,9 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
         assert.equal(readState().settings.language || 'zh-CN', savedLocale, 'preview is not persisted');
         await assertText('#settings-dialog h2', '偏好设置', locale);
         await assertText('#connection-label', '引擎已连接', locale);
+        await assertText('.titlebar-center', 'A PLACE FOR YOUR NEXT IDEA', locale);
+        await assertText('.brand-name span', 'TOKYO EDITION', locale);
+        await assertText('#mode-select option:checked', '中等推理强度', locale);
         await assertText('.thought-details summary', '思考过程', locale);
         await assertText('.tool-status', '已完成', locale);
         await assertText('.copy-code', '复制', locale);
@@ -140,6 +143,40 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
       }
     });
 
+    await stage('validation and native dialogs follow unsaved language previews', async () => {
+      await openSettings(); await choose('en');
+      await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click();
+      await assertText('#settings-feedback', '请选择 Grokbuild 的 grok.exe 文件。', 'en');
+      await choose('ja'); await assertText('#settings-feedback', '请选择 Grokbuild 的 grok.exe 文件。', 'ja');
+      await page.locator('#executable-input').fill(executable);
+      await page.locator('#workspace-input').fill(path.join(testRoot, 'missing-workspace'));
+      await page.locator('#save-settings-button').click();
+      await page.waitForFunction(label => document.querySelector('#settings-feedback').textContent === label, translated('ja', '请选择有效的工作目录'));
+      await choose('de'); await assertText('#settings-feedback', '请选择有效的工作目录', 'de');
+      for (const [selector, title] of [['#choose-workspace', '选择 Grok 工作目录'], ['#choose-executable', '选择 grok.exe']]) {
+        await page.locator(selector).click();
+        const chooser = await desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(item => item.method === 'showOpenDialog').at(-1));
+        assert.equal(chooser.options.title, translated('de', title));
+        if (selector === '#choose-executable') assert.equal(chooser.options.filters[0].name, translated('de', 'Grok 可执行文件'));
+      }
+      assert.equal(readState().settings.language, 'fr');
+      assert.equal(readState().settings.workspace, workspace);
+      await closeSettings();
+      await page.locator('#account-button').click();
+      await page.locator('#account-name-input').fill(''); await page.locator('#add-account-button').click();
+      assert.equal(await page.locator('#account-name-input').evaluate(input => input.validationMessage), translated('fr', '请输入账户名称。'));
+      await page.locator('[data-close-dialog="accounts-dialog"]').click();
+      const openRename = async () => {
+        await page.locator('.session-item.active').hover(); await page.locator('.session-item.active .session-more').click(); await page.locator('#menu-rename').click();
+      };
+      await openRename(); await page.locator('#rename-input').fill(''); await page.locator('#rename-form button[type="submit"]').click();
+      assert.equal(await page.locator('#rename-input').evaluate(input => input.validationMessage), translated('fr', '请输入对话标题。'));
+      await page.locator('#rename-dialog [data-close-dialog]').first().click(); await openRename();
+      assert.equal(await page.locator('#rename-input').evaluate(input => input.checkValidity()), true, 'reopening a valid title clears prior validation errors');
+      await page.locator('#rename-dialog [data-close-dialog]').first().click();
+      assert.equal(await page.locator('#prompt').inputValue(), draft);
+    });
+
     await stage('starter prompts translate for all languages and long welcome copy fits', async () => {
       await page.locator('#new-session').click();
       const source = '请先查看当前工作目录，帮我理解这个项目的结构、技术栈和运行方式。';
@@ -187,24 +224,83 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
         const original = adapter.prompt;
         adapter.prompt = async function(args) {
           const result = await original.call(this, args);
-          this.emit('event', { type: 'text', sessionId: args.sessionId, text: '\n\n![](locale-image.png)\n\n![Grok 返回的图片](locale-named.png)\n\n<div data-i18n="偏好设置">Authored Markdown</div>' });
+          this.emit('event', { type: 'text', sessionId: args.sessionId, text: '\n\n![](locale-image.png)\n\n![Grok 返回的图片](locale-named.png)\n\n![](locale-missing.png)\n\n<div data-i18n="偏好设置">Authored Markdown</div>' });
           this.prompt = original;
           return result;
         };
       });
       await page.locator('#prompt').fill('Image locale regression'); await page.locator('#send-button').click(); await idle();
-      await page.waitForFunction(() => document.querySelectorAll('.chat-image').length === 2);
+      await page.waitForFunction(() => document.querySelectorAll('.chat-image').length === 3);
       for (const image of await page.locator('.chat-image img').all()) {
         await image.evaluate(element => { element.loading = 'eager'; });
       }
-      await page.waitForFunction(() => [...document.querySelectorAll('.chat-image img')].every(image => image.complete && image.naturalWidth > 0));
+      await page.waitForFunction(() => [...document.querySelectorAll('.chat-image img')].filter(image => !image.hidden).every(image => image.complete && image.naturalWidth > 0));
+      await page.locator('.image-retry').last().waitFor({ state: 'visible' });
       for (const locale of ['en', 'ja', 'fr']) {
         await openSettings(); await choose(locale); await save(locale);
         assert.equal(await page.locator('.chat-image img').first().getAttribute('alt'), translated(locale, '图片'));
-        assert.equal(await page.locator('.chat-image img').last().getAttribute('alt'), 'Grok 返回的图片');
+        assert.equal(await page.locator('.chat-image img').nth(1).getAttribute('alt'), 'Grok 返回的图片');
+        assert.equal(await page.locator('.chat-image figcaption').last().textContent(), translated(locale, '找不到图片文件，文件可能已移动或删除'));
         assert.equal(await page.locator('#messages [data-i18n]').textContent(), 'Authored Markdown');
         assert.equal(await page.locator('.chat-image figcaption').first().textContent(), translated(locale, '{alt} · 点击放大', { alt: translated(locale, '图片') }));
       }
+    });
+
+    await stage('live plans and stop reasons remain visible and relocalize in all seven languages', async () => {
+      await page.locator('#prompt').fill('WAIT plan localization'); await page.locator('#send-button').click();
+      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      const entries = [
+        { content: '偏好设置 — authored plan', priority: 'high', status: 'completed' },
+        { content: 'Fixture implementation', priority: 'medium', status: 'in_progress' },
+        { content: 'Fixture validation', priority: 'low', status: 'pending' },
+      ];
+      await desktop.evaluate((_electron, entries) => {
+        const test = globalThis.__tokyoUITest;
+        test.adapter.emit('event', { type: 'status', status: 'plan', sessionId: test.calls.filter(call => call.method === 'prompt').at(-1).sessionId, entries });
+      }, entries);
+      await page.locator('.plan-details').waitFor({ state: 'visible' });
+      await page.locator('.plan-details summary').click();
+      const before = await starts();
+      for (const locale of codes) {
+        await openSettings(); await choose(locale); await save(locale);
+        await assertText('.plan-details summary', '执行计划', locale);
+        assert.deepEqual(await page.locator('.plan-content').allTextContents(), entries.map(entry => entry.content));
+        assert.deepEqual(await page.locator('.plan-status').allTextContents(), ['已完成', '执行中', '等待中'].map(source => translated(locale, source)));
+        assert.equal(await page.locator('.plan-details').getAttribute('open'), null);
+        assert.equal(await page.locator('#stop-button').isVisible(), true);
+      }
+      assert.equal(await starts(), before);
+      await page.locator('.plan-details summary').click(); await page.locator('.plan-details').scrollIntoViewIfNeeded();
+      await assertFits('.plan-details', true);
+      await page.screenshot({ path: path.join(testRoot, 'plan-fr.png'), animations: 'disabled' });
+      await desktop.evaluate(() => {
+        const adapter = globalThis.__tokyoUITest.adapter;
+        for (const [id, resolve] of adapter.pending) { resolve({ stopReason: 'max_tokens' }); adapter.pending.delete(id); }
+      });
+      await idle();
+      const notices = [
+        ['max_tokens', '回复达到输出长度上限，可发送消息让 Grok 继续。'],
+        ['max_turn_requests', '本轮已达到请求次数上限，可发送消息让 Grok 继续。'],
+        ['refusal', 'Grok 拒绝了这次请求。'],
+      ];
+      for (const [reason, source] of notices) {
+        if (reason !== 'max_tokens') {
+          await desktop.evaluate((_electron, reason) => {
+            const adapter = globalThis.__tokyoUITest.adapter; const original = adapter.prompt;
+            adapter.prompt = async function() { this.prompt = original; return { stopReason: reason }; };
+          }, reason);
+          await page.locator('#prompt').fill(`Stop reason ${reason}`); await page.locator('#send-button').click(); await idle();
+        }
+        await page.waitForFunction(label => [...document.querySelectorAll('.message-notice')].at(-1)?.textContent === label, translated('fr', source));
+      }
+      await openSettings();
+      for (const locale of codes) {
+        await choose(locale);
+        assert.deepEqual(await page.locator('.message-notice').allTextContents(), notices.map(([, source]) => translated(locale, source)));
+      }
+      await closeSettings();
+      assert.deepEqual(readState().sessions[0].messages.find(message => message.plan?.length)?.plan, entries);
+      assert.equal(await page.locator('.message-error').count(), 0);
     });
 
     await stage('saved French language and original conversation survive a full restart', async () => {

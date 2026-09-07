@@ -9,9 +9,11 @@ const { StringDecoder } = require('node:string_decoder');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { imagesFromContent } = require('./media.cjs');
+const { version: clientVersion } = require('../package.json');
 
 const CONTROL_TIMEOUT = 60000;
 const MAX_LINE = 16 * 1024 * 1024;
+const PROTOCOL_VERSION = 1;
 
 function failure(message, code) {
   const error = new Error(message);
@@ -59,6 +61,7 @@ class GrokAdapter extends EventEmitter {
     this.sessions = new Map();
     this.active = new Map();
     this.loading = new Set();
+    this.sessionLoads = new Map();
     this.nextId = 0;
     this.ready = false;
     this.closed = false;
@@ -127,6 +130,7 @@ class GrokAdapter extends EventEmitter {
     child.stdin.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
+      if (this.process !== child) return;
       buffer += decoder.write(data);
       let newline;
       while ((newline = buffer.indexOf('\n')) >= 0) {
@@ -151,11 +155,14 @@ class GrokAdapter extends EventEmitter {
     });
     try {
       const result = await this._request('initialize', {
-        protocolVersion: 1,
-        clientInfo: { name: 'grokbuild-tokyo', title: 'Grokbuild Tokyo', version: '1.1.0' },
+        protocolVersion: PROTOCOL_VERSION,
+        clientInfo: { name: 'grokbuild-tokyo', title: 'Grokbuild Tokyo', version: clientVersion },
         // Grok runs its own tools; do not claim filesystem/terminal delegation.
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
+      if (result.protocolVersion !== PROTOCOL_VERSION) {
+        throw failure(this.t('当前 Grok 使用不兼容的协议版本：{version}。请更新 Grok CLI 或客户端。', { version: result.protocolVersion ?? '?' }), 'UNSUPPORTED_PROTOCOL');
+      }
       this.info.protocolVersion = result.protocolVersion;
       this.info.capabilities = result.agentCapabilities || {};
       this.info.version = result.agentInfo?.version || result._meta?.agentVersion || '';
@@ -167,7 +174,7 @@ class GrokAdapter extends EventEmitter {
       this._event({ type: 'status', status: 'ready', info: this.getInfo() });
       return this.getInfo();
     } catch (error) {
-      this._kill(child);
+      await this._kill(child);
       throw error;
     }
   }
@@ -320,12 +327,23 @@ class GrokAdapter extends EventEmitter {
     if (!sessionId || typeof sessionId !== 'string') throw failure(this.t('缺少会话 ID。'), 'INVALID_SESSION');
     await this.start();
     if (!force && this.sessions.get(sessionId)?.loaded) return this.getSession(sessionId);
-    cwd = await this._validateCwd(cwd);
-    this.loading.add(sessionId);
-    try {
-      const result = await this._request('session/load', { sessionId, cwd, mcpServers: [] });
-      return this._rememberSession(result, sessionId, cwd);
-    } finally { this.loading.delete(sessionId); }
+    if (this.active.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+    if (this.info.capabilities.loadSession !== true) throw failure(this.t('当前 Grok 不支持恢复会话，请新建会话。'), 'SESSION_LOAD_UNSUPPORTED');
+    // Loading replays the whole conversation. Share concurrent restores so one
+    // replay cannot be mistaken for fresh output after the first load finishes.
+    if (this.sessionLoads.has(sessionId)) return this.sessionLoads.get(sessionId);
+    const load = (async () => {
+      cwd = await this._validateCwd(cwd);
+      if (this.active.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+      this.loading.add(sessionId);
+      try {
+        const result = await this._request('session/load', { sessionId, cwd, mcpServers: [] });
+        return this._rememberSession(result, sessionId, cwd);
+      } finally { this.loading.delete(sessionId); }
+    })();
+    this.sessionLoads.set(sessionId, load);
+    try { return await load; }
+    finally { if (this.sessionLoads.get(sessionId) === load) this.sessionLoads.delete(sessionId); }
   }
 
   async setModel({ sessionId, model, modelId } = {}) {
@@ -348,7 +366,7 @@ class GrokAdapter extends EventEmitter {
   async _setSelection(sessionId, configId, value) {
     const session = this.sessions.get(sessionId);
     if (!session?.loaded) throw failure(this.t('请先恢复会话后再修改配置。'), 'INVALID_SESSION');
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('请等待当前会话操作完成后修改配置。'), 'SESSION_BUSY');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('请等待当前会话操作完成后修改配置。'), 'SESSION_BUSY');
     this.configuring.add(sessionId);
     let sent = false;
     let verified = false;
@@ -428,9 +446,10 @@ class GrokAdapter extends EventEmitter {
     if (typeof text !== 'string' || !text.trim()) throw failure(this.t('请输入消息。'), 'EMPTY_PROMPT');
     if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
     await this.start();
+    if (this.sessionLoads.has(sessionId)) await this.sessionLoads.get(sessionId);
     if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
     // Check again after the asynchronous connection/load to reject double sends.
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
     const turn = { text: '', cancelled: false, cancelTimer: null };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });

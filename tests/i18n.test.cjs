@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const catalogs = require('../src/locales.js');
-const { languages, normalizeLanguage, createI18n } = require('../src/i18n.js');
+const { languages, normalizeLanguage, createI18n, setLanguage, localizeDiagnostic } = require('../src/i18n.js');
 const codes = ['zh-CN', 'ja', 'en', 'ko', 'es', 'de', 'fr'];
 const tokens = text => [...new Set(text.match(/\{[A-Za-z][A-Za-z0-9_]*\}/g) || [])].sort();
 
@@ -28,6 +28,33 @@ test('every translated catalog covers the same nonempty strings and preserves pa
       assert.deepEqual(tokens(translated), tokens(source), `${locale}: ${source} parameters`);
     }
   }
+});
+
+test('Chinese localizes the English interface copy as well as all other languages', () => {
+  for (const source of Object.keys(catalogs.en).filter(source => /^[\x00-\x7F]+$/.test(source))) {
+    assert.equal(Object.hasOwn(catalogs['zh-CN'], source), true, `Chinese UI copy: ${source}`);
+    assert.match(createI18n('zh-CN')(source), /[\u4e00-\u9fff]/, `Chinese UI copy: ${source}`);
+  }
+});
+
+test('persisted and IPC diagnostics follow preview language without changing interpolated paths or external errors', () => {
+  const sources = [
+    ['请选择有效的工作目录', {}],
+    ['找不到图片文件，文件可能已移动或删除', {}],
+    ['Grok 请求超时：{method}', { method: 'session/load' }],
+    ['Grok 未应用所选配置（请求：{requested}，实际：{actual}）。', { requested: 'C:\\项目\\[草稿] (v2)\n{name}', actual: '模型（unknown）' }],
+  ];
+  try {
+    for (const from of codes) for (const to of codes) {
+      setLanguage(to);
+      for (const [source, params] of sources) {
+        const original = createI18n(from)(source, params);
+        assert.equal(localizeDiagnostic(original), createI18n(to)(source, params), `${from} to ${to}: ${source}`);
+        assert.equal(localizeDiagnostic(`Error invoking remote method 'tokyo:saveSettings': Error: ${original}`), createI18n(to)(source, params));
+      }
+      assert.equal(localizeDiagnostic('External engine: 任意内容 / keep {path}'), 'External engine: 任意内容 / keep {path}');
+    }
+  } finally { setLanguage('zh-CN'); }
 });
 
 test('all declared static text, placeholders, accessible names and starter prompts have translations', () => {

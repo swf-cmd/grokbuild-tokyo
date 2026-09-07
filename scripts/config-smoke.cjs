@@ -25,7 +25,7 @@ const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
     assert.equal(await page.locator('#model-select').inputValue(), initial.model, 'new chats expose the engine-confirmed model');
     assert.equal(await page.locator('option').filter({ hasText: '官方默认' }).count(), 0);
     await page.locator('.session-select').first().click();
-    for (const [value, label] of [['low', 'Low Effort'], ['medium', 'Medium Effort'], ['high', 'High Effort'], ['xhigh', 'Extra High Effort']]) {
+    for (const [value, label] of [['low', '低推理强度'], ['medium', '中等推理强度'], ['high', '高推理强度'], ['xhigh', '超高推理强度']]) {
       assert.equal(await page.locator(`#mode-select option[value="${value}"]`).textContent(), label);
       await page.locator('#mode-select').selectOption(value);
       await page.waitForFunction(expected => document.querySelector('#mode-select').value === expected && !document.querySelector('#mode-select').disabled, value);

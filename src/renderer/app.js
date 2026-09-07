@@ -6,6 +6,7 @@
   const api = window.tokyo;
   const i18n = window.TokyoI18n;
   const t = i18n.t;
+  const diagnostic = i18n.localizeDiagnostic;
   const state = {
     settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'zh-CN' },
     info: { models: [], modes: [], version: '' },
@@ -32,6 +33,7 @@
   let searchVisible = false;
 
   function toast(message, error = false, duration = 4200) {
+    message = diagnostic(safeText(message));
     for (const previous of $('toast-container').children) {
       if (previous.textContent === safeText(message)) previous.remove();
     }
@@ -44,9 +46,11 @@
 
   async function call(method, ...args) {
     if (!api || typeof api[method] !== 'function') throw new Error(t('桌面连接尚未就绪，请重新启动客户端。'));
-    const result = await api[method](...args);
-    if (result?.error && (result.ok === false || result.success === false)) throw new Error(safeText(result.error));
-    return result;
+    try {
+      const result = await api[method](...args);
+      if (result?.error && (result.ok === false || result.success === false)) throw new Error(safeText(result.error));
+      return result;
+    } catch (error) { throw new Error(diagnostic(error.message || t('操作失败，请稍后重试。'))); }
   }
 
   async function guarded(work) {
@@ -86,12 +90,27 @@
     for (const item of choices) {
       const option = document.createElement('option');
       option.value = item.id;
-      option.textContent = item.name;
-      option.title = item.description || item.name;
+      option.textContent = element.id === 'mode-select' ? reasoningLabel(item.name) : item.name;
+      option.title = item.description ? (element.id === 'mode-select' ? reasoningDescription(item.description) : item.description) : option.textContent;
       option.disabled = Boolean(item.disabled);
       element.append(option);
     }
     element.value = selected || '';
+  }
+
+  function reasoningLabel(label) {
+    const key = String(label || '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+effort$/, '');
+    return ({ none: t('无推理'), minimal: t('最少推理'), low: t('低推理强度'), medium: t('中等推理强度'), high: t('高推理强度'), xhigh: t('超高推理强度'), 'extra high': t('超高推理强度'), max: t('最高推理强度'), maximum: t('最高推理强度') })[key] || label;
+  }
+
+  function reasoningDescription(description) {
+    return ({
+      'quick, fast implementations': t('快速完成实现'),
+      'balanced effort with standard implementation and testing': t('平衡推理投入，完成标准实现与测试'),
+      'higher implementation quality with extensive reasoning': t('通过深入推理提高实现质量'),
+      'highest implementation quality with extensive reasoning': t('通过深入推理达到最高实现质量'),
+      'highest effort and reasoning level': t('最高推理投入与强度'),
+    })[String(description).trim().replace(/\.$/, '').toLowerCase()] || description;
   }
 
   function newChatModes(model = state.selectedModel) {
@@ -132,9 +151,9 @@
     $('connection-label').textContent = label;
     $('sidebar-status').textContent = online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
     $('connection-button').title = state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
-    $('settings-engine-status').textContent = state.connected ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : state.lastError || t('Grokbuild 未连接，请检查文件路径与登录状态');
+    $('settings-engine-status').textContent = state.connected ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : diagnostic(state.lastError) || t('Grokbuild 未连接，请检查文件路径与登录状态');
     $('settings-engine-status').title = $('settings-engine-status').textContent;
-    $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : 'LOCAL';
+    $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : t('本地');
     $('version-label').title = state.info.version || t('本地 Grokbuild');
     renderSelects();
     renderComposerState();
@@ -299,9 +318,10 @@
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'image-retry'; retry.textContent = t('重新加载'); retry.hidden = true;
     button.append(img); figure.append(button, caption, retry);
     const cacheKey = `${state.activeAccountId}:${session.id}:${source.src}`;
+    let failure = '';
     const load = async () => {
       const follow = nearBottom();
-      caption.textContent = t('正在加载图片…'); retry.hidden = true; img.hidden = false; button.disabled = true;
+      failure = ''; caption.textContent = t('正在加载图片…'); retry.hidden = true; img.hidden = false; button.disabled = true;
       try {
         let request = imageCache.get(cacheKey);
         if (!request) {
@@ -322,8 +342,9 @@
       button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() })); img.alt = alt(); retry.textContent = t('重新加载');
       if (!button.disabled) caption.textContent = t('{alt} · 点击放大', { alt: alt() });
       else if (retry.hidden) caption.textContent = t('正在加载图片…');
+      else caption.textContent = diagnostic(failure);
     };
-    const failed = message => { imageCache.delete(cacheKey); img.hidden = true; button.disabled = true; caption.textContent = message; retry.hidden = false; };
+    const failed = message => { failure = message; imageCache.delete(cacheKey); img.hidden = true; button.disabled = true; caption.textContent = diagnostic(message); retry.hidden = false; };
     retry.addEventListener('click', () => { void load(); });
     button.addEventListener('click', () => {
       $('image-title').textContent = alt();
@@ -371,6 +392,21 @@
     return details;
   }
 
+  function createPlan(entries, messageId, openDetails, previousPlans) {
+    const planId = `plan:${messageId}`;
+    const details = document.createElement('details'); details.className = 'plan-details'; details.dataset.planId = planId;
+    details.open = previousPlans.has(planId) ? openDetails.has(planId) : true;
+    const summary = document.createElement('summary'); summary.textContent = t('执行计划');
+    const list = document.createElement('ol');
+    for (const entry of entries) {
+      const item = document.createElement('li'); item.dataset.status = entry.status || 'pending';
+      const content = document.createElement('span'); content.className = 'plan-content'; content.textContent = safeText(entry.content);
+      const status = document.createElement('span'); status.className = 'plan-status'; status.textContent = toolStatus(entry.status || 'pending');
+      item.append(content, status); list.append(item);
+    }
+    details.append(summary, list); return details;
+  }
+
   function nearBottom() {
     const scroller = $('conversation-scroll');
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
@@ -387,7 +423,8 @@
     document.querySelector('.main-panel').classList.toggle('has-messages', hasMessages);
     $('breadcrumb-title').textContent = session ? sessionTitle(session) : t('新对话');
     $('export-button').disabled = !session || !messages.length;
-    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId));
+    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId));
+    const previousPlans = new Set([...$('messages').querySelectorAll('[data-plan-id]')].map(item => item.dataset.planId));
     const container = $('messages');
     const previousImages = new Map([...container.querySelectorAll('.chat-image')].map(figure => [figure.imageKey, figure]));
     container.replaceChildren();
@@ -413,6 +450,7 @@
         for (const tool of message.tools) { const element = createTool(tool); element.open = openDetails.has(element.dataset.toolId); tools.append(element); }
         article.append(tools);
       }
+      if (message.plan?.length) article.append(createPlan(message.plan, message.id, openDetails, previousPlans));
       const body = document.createElement('div'); body.className = 'message-body';
       if (message.role === 'user') body.textContent = message.text;
       else body.innerHTML = markdown(message.text);
@@ -421,7 +459,8 @@
       if (message.role === 'assistant' && last && state.busy.has(session.id)) {
         const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', t('正在生成')); body.append(cursor);
       }
-      if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = message.error || t('本次请求未能完成，请检查引擎连接后重试。'); body.append(error); }
+      if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = diagnostic(message.error) || t('本次请求未能完成，请检查引擎连接后重试。'); body.append(error); }
+      if (message.noticeKey) { const notice = document.createElement('div'); notice.className = 'message-notice'; notice.textContent = t(message.noticeKey); body.append(notice); }
       if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = t('本次生成已停止'); body.append(cancelled); }
       article.append(body); container.append(article);
     });
@@ -634,6 +673,12 @@
     }
     if (event.type === 'status') {
       const status = event.status;
+      if (status === 'plan') {
+        const message = getStreamMessage(sessionId);
+        if (message) message.plan = Array.isArray(event.entries) ? event.entries : [];
+        if (sessionId === state.activeId) queueMessages();
+        return;
+      }
       if (status === 'permission_resolved') {
         state.permissions.delete(String(event.requestId)); renderPermissions(); updateActivity(); return;
       }
@@ -930,7 +975,12 @@
         $('account-name-input').value = ''; await changeAccount(account.id); await startAccountLogin();
       });
     });
-    for (const id of ['account-name-input', 'account-rename-input']) $(id).addEventListener('input', () => { $(id).setCustomValidity(''); $(id).removeAttribute('aria-invalid'); });
+    for (const id of ['account-name-input', 'account-rename-input', 'rename-input']) {
+      $(id).addEventListener('input', () => { $(id).setCustomValidity(''); $(id).removeAttribute('aria-invalid'); });
+      $(id).addEventListener('invalid', () => {
+        if ($(id).validity.valueMissing) { $(id).setCustomValidity(id === 'rename-input' ? t('请输入对话标题。') : t('请输入账户名称。')); $(id).setAttribute('aria-invalid', 'true'); }
+      });
+    }
     $('account-rename-form').addEventListener('submit', event => {
       event.preventDefault();
       const name = validateAccountName($('account-rename-input'), 'account-rename-feedback'); if (!name) return;
@@ -1003,13 +1053,13 @@
     const unlockMusic = () => { void ambience?.unlock(); };
     document.addEventListener('pointerdown', unlockMusic, { capture: true });
     document.addEventListener('keydown', unlockMusic, { capture: true });
-    $('choose-executable').addEventListener('click', () => guarded(async () => { const result = await call('chooseExecutable'); if (result) { $('executable-input').value = result; updateSettingsReconnect(); } }));
-    $('choose-workspace').addEventListener('click', () => guarded(async () => { const result = await call('chooseFolder'); if (result) { $('workspace-input').value = result; updateSettingsReconnect(); } }));
+    $('choose-executable').addEventListener('click', () => guarded(async () => { const result = await call('chooseExecutable', i18n.getLanguage()); if (result) { $('executable-input').value = result; updateSettingsReconnect(); } }));
+    $('choose-workspace').addEventListener('click', () => guarded(async () => { const result = await call('chooseFolder', i18n.getLanguage()); if (result) { $('workspace-input').value = result; updateSettingsReconnect(); } }));
     $('workspace-button').addEventListener('click', () => guarded(async () => {
       if (state.savingSettings || state.sending || state.configuring || state.selecting || state.busy.size) return;
       state.savingSettings = true; renderSelects(); renderComposerState();
       try {
-        const workspace = await call('chooseFolder'); if (!workspace || workspace === state.settings.workspace) return;
+        const workspace = await call('chooseFolder', i18n.getLanguage()); if (!workspace || workspace === state.settings.workspace) return;
         const result = await call('saveSettings', { workspace });
         state.settings = { ...state.settings, workspace, ...(result?.settings || result || {}) };
         renderWorkspace();
@@ -1041,12 +1091,14 @@
     $('menu-rename').addEventListener('click', () => {
       state.renameId = state.menuId; const session = state.sessions.find(item => item.id === state.renameId); closeSessionMenu();
       if (!session) return;
-      $('rename-input').value = sessionTitle(session); $('rename-dialog').showModal(); $('rename-input').select();
+      $('rename-input').value = sessionTitle(session); $('rename-input').setCustomValidity(''); $('rename-input').removeAttribute('aria-invalid');
+      $('rename-dialog').showModal(); $('rename-input').select();
     });
     $('rename-form').addEventListener('submit', event => {
       event.preventDefault(); void guarded(async () => {
         if (state.renaming) return;
-        const title = $('rename-input').value.trim(); if (!title) return;
+        const title = $('rename-input').value.trim();
+        if (!title) { $('rename-input').setCustomValidity(t('请输入对话标题。')); $('rename-input').setAttribute('aria-invalid', 'true'); $('rename-input').reportValidity(); return; }
         const sessionId = state.renameId;
         state.renaming = true;
         for (const element of $('rename-form').querySelectorAll('input, button')) element.disabled = true;
@@ -1093,6 +1145,12 @@
     const scrollTop = $('conversation-scroll').scrollTop;
     i18n.setLanguage(language); i18n.apply(document);
     renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts();
+    for (const element of document.querySelectorAll('#settings-feedback, #account-feedback, #account-rename-feedback, #account-delete-feedback, #toast-container .toast')) {
+      element.textContent = diagnostic(element.textContent);
+    }
+    for (const input of document.querySelectorAll('input[aria-invalid="true"]')) {
+      if (input.validity.customError) input.setCustomValidity(diagnostic(input.validationMessage));
+    }
     updateSettingsReconnect(); updateClock();
     $('conversation-scroll').scrollTop = scrollTop;
   }

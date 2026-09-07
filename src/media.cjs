@@ -33,6 +33,85 @@ function imageMime(bytes, t = defaultT) {
   throw new Error(t('文件不是支持的图片格式'));
 }
 
+function isWithin(root, target) {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+function comparableDirectory(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return '';
+  if (process.platform === 'win32') value = value.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '');
+  value = path.resolve(value);
+  return process.platform === 'win32' ? value.toLowerCase() : value;
+}
+
+async function findSessionImageDirectory(grokHome, cwd, sessionId) {
+  if (!comparableDirectory(grokHome) || !comparableDirectory(cwd) || typeof sessionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) return undefined;
+  // Grok uses RFC 3986 names for short CWDs, and slug/hash names plus a .cwd
+  // metadata file for longer ones. Locate only this workspace and this session.
+  const safeDirectory = async (directory, root) => {
+    try {
+      const stat = await fs.lstat(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return undefined;
+      const resolved = await fs.realpath(directory);
+      return isWithin(root, resolved) ? resolved : undefined;
+    } catch { return undefined; }
+  };
+  try {
+    const home = await fs.realpath(grokHome);
+    const sessions = await safeDirectory(path.join(home, 'sessions'), home);
+    if (!sessions) return undefined;
+    const cwdValues = new Set([cwd]);
+    try { cwdValues.add(await fs.realpath(cwd)); } catch { /* A moved workspace can still have cached images. */ }
+    if (process.platform === 'win32') for (const value of [...cwdValues]) cwdValues.add(value.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, ''));
+    const expected = new Set([...cwdValues].map(comparableDirectory));
+    const checked = new Set();
+    const findIn = async directory => {
+      checked.add(path.basename(directory));
+      const workspace = await safeDirectory(directory, sessions);
+      return workspace ? safeDirectory(path.join(workspace, sessionId), workspace) : undefined;
+    };
+    for (const value of cwdValues) {
+      const encoded = encodeURIComponent(value).replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+      if (encoded.length > 255) continue;
+      const found = await findIn(path.join(sessions, encoded));
+      if (found) return found;
+    }
+    for (const entry of await fs.readdir(sessions, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.isSymbolicLink() || checked.has(entry.name)) continue;
+      const directory = await safeDirectory(path.join(sessions, entry.name), sessions);
+      if (!directory) continue;
+      let storedCwd = '';
+      try { storedCwd = decodeURIComponent(entry.name); } catch {}
+      if (!comparableDirectory(storedCwd)) {
+        // Bound this metadata read and reject links; no conversation or auth file
+        // is consulted to find a cache, and unreadable caches stay optional.
+        const metadata = path.join(directory, '.cwd');
+        try {
+          const stat = await fs.lstat(metadata);
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 32768 || !isWithin(directory, await fs.realpath(metadata))) continue;
+          const handle = await fs.open(metadata, 'r');
+          try {
+            const bytes = Buffer.alloc(32769);
+            const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+            if (bytesRead > 32768) continue;
+            storedCwd = bytes.subarray(0, bytesRead).toString('utf8').trim();
+          } finally { await handle.close(); }
+        } catch { continue; }
+      }
+      let key = comparableDirectory(storedCwd);
+      if (!key) continue;
+      if (!expected.has(key)) {
+        try { key = comparableDirectory(await fs.realpath(storedCwd)); } catch { continue; }
+      }
+      if (!expected.has(key)) continue;
+      const found = await findIn(directory);
+      if (found) return found;
+    }
+  } catch { /* Cache lookup must not prevent loading a workspace image. */ }
+  return undefined;
+}
+
 async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
   if (typeof src !== 'string' || !src.trim() || src.length > MAX_IMAGE_BYTES * 1.4) throw new Error(t('无效的图片地址'));
   src = src.trim();
@@ -51,30 +130,34 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
   }
   // Only local files in this workspace or its Grok session cache are exposed.
   // Resolve symlinks before containment checks and reject network/UNC paths.
-  let file;
+  let files;
   if (/^file:/i.test(src)) {
     const url = new URL(src);
     if (url.hostname) throw new Error(t('不支持网络文件路径'));
-    file = fileURLToPath(url);
+    files = [fileURLToPath(url)];
   } else {
-    try { file = decodeURIComponent(src); } catch { file = src; }
+    // CLI content can contain literal filenames such as "change%20chart.png".
+    // Prefer that exact file, then accept URI-encoded Markdown paths as a fallback.
+    files = [src];
+    try { const decoded = decodeURIComponent(src); if (decoded !== src) files.push(decoded); } catch {}
   }
-  if (/^(?:\\\\|\/\/)/.test(file) || (/:/.test(file) && !/^[a-z]:[\\/][^:]*$/i.test(file))) throw new Error(t('不支持的图片地址'));
-  if (!/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(file)) throw new Error(t('不支持的图片格式'));
+  files = files.filter(file => !/^(?:\\\\|\/\/)/.test(file) && (!/:/.test(file) || /^[a-z]:[\\/][^:]*$/i.test(file)));
+  if (!files.length) throw new Error(t('不支持的图片地址'));
+  files = files.filter(file => /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(file));
+  if (!files.length) throw new Error(t('不支持的图片格式'));
   const roots = [];
   for (const directory of [cwd, sessionDirectory].filter(Boolean)) {
     try { roots.push(await fs.realpath(directory)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   let target;
-  for (const root of roots) {
-    try { target = await fs.realpath(path.resolve(root, file)); break; }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  search: for (const root of roots) {
+    for (const file of files) {
+      try { target = await fs.realpath(path.resolve(root, file)); break search; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
   }
   if (!target) throw Object.assign(new Error(t('找不到图片文件，文件可能已移动或删除')), { code: 'ENOENT' });
-  if (!roots.some(root => {
-    const relative = path.relative(root, target);
-    return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
-  })) throw new Error(t('图片不在这段对话的工作目录或图片缓存内'));
+  if (!roots.some(root => isWithin(root, target))) throw new Error(t('图片不在这段对话的工作目录或图片缓存内'));
   const handle = await fs.open(target, 'r');
   try {
     const stat = await handle.stat();
@@ -85,4 +168,4 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
   } finally { await handle.close(); }
 }
 
-module.exports = { imagesFromContent, resolveImage, imageMime };
+module.exports = { imagesFromContent, resolveImage, imageMime, findSessionImageDirectory };

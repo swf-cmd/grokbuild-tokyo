@@ -7,6 +7,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AppController } = require('../src/app-controller.cjs');
 
+// Fixtures must never resolve the caller's inline or redirected authentication.
+for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
+
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -103,6 +106,72 @@ async function started(t) {
   result.adapter = result.instances[0];
   return result;
 }
+
+test('execution plans replace prior entries, ignore replay and other sessions, and survive restart', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'Plan a change' });
+  const publish = (entries, extra = {}) => adapter.emit('event', { type: 'status', status: 'plan', sessionId: session.id, entries, ...extra });
+  publish([{ content: 'Inspect', status: 'in_progress', priority: 'high' }]);
+  publish([{ content: 'Wrong session' }], { sessionId: 'unrelated' });
+  publish([{ content: 'Old replay' }], { replay: true });
+  assert.deepEqual(session.messages[1].plan, [{ content: 'Inspect', status: 'in_progress', priority: 'high' }]);
+  publish([]);
+  assert.deepEqual(session.messages[1].plan, []);
+  publish([null, { content: 42 }, { content: 'Done', status: 'completed', priority: 'high' }, { content: 'Next', status: 'unexpected' }]);
+  const expected = [{ content: 'Done', status: 'completed', priority: 'high' }, { content: 'Next', status: 'pending', priority: 'medium' }];
+  assert.deepEqual(session.messages[1].plan, expected);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  assert.deepEqual(saved.sessions[0].messages[1].plan, expected);
+  const restored = fixture(t, saved).controller;
+  assert.deepEqual(restored.sessions[0].messages[1].plan, expected);
+  assert.match(restored.exportMarkdown(session.id), /### 执行计划\n\n- \[x\] Done\n- \[ \] Next/);
+  publish([{ content: 'Late event' }]);
+  assert.deepEqual(session.messages[1].plan, expected);
+});
+
+test('Grok turn limits and refusal preserve a translatable notice without blocking the next message', async t => {
+  const { controller, session, adapter } = await started(t);
+  const notices = {
+    max_tokens: '回复达到输出长度上限，可发送消息让 Grok 继续。',
+    max_turn_requests: '本轮已达到请求次数上限，可发送消息让 Grok 继续。',
+    refusal: 'Grok 拒绝了这次请求。',
+  };
+  for (const [stopReason, notice] of Object.entries(notices)) {
+    await controller.send({ sessionId: session.id, text: 'Continue' });
+    adapter.prompts.at(-1).gate.resolve({ stopReason });
+    await controller.turnPromise;
+    const message = session.messages.at(-1);
+    assert.equal(message.status, 'complete');
+    assert.equal(message.stopReason, stopReason);
+    assert.equal(message.noticeKey, notice);
+    assert.equal(controller.active, null);
+    const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+    assert.equal(saved.sessions[0].messages.at(-1).noticeKey, notice);
+    assert.ok(controller.exportMarkdown(session.id).includes(notice));
+  }
+});
+
+test('controller image reads find Grok caches for punctuation and hashed multilingual workspaces', async t => {
+  const { controller, session, root } = await started(t);
+  const grokHome = controller.accountManager.homeFor('local');
+  const image = fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png'));
+  const check = async (cwd, directory, metadata = false) => {
+    fs.mkdirSync(cwd, { recursive: true });
+    const parent = path.join(grokHome, 'sessions', directory);
+    const cache = path.join(parent, session.id, 'images');
+    fs.mkdirSync(cache, { recursive: true });
+    if (metadata) fs.writeFileSync(path.join(parent, '.cwd'), cwd);
+    fs.writeFileSync(path.join(cache, 'result.png'), image);
+    session.cwd = cwd;
+    assert.equal((await controller.readImage({ sessionId: session.id, src: 'images/result.png' })).src, `data:image/png;base64,${image.toString('base64')}`);
+  };
+  const short = path.join(root, "Tokyo (夜)!");
+  await check(short, encodeURIComponent(short).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase()));
+  const long = path.join(root, '東京'.repeat(30));
+  await check(long, 'tokyo-workspace-0123456789abcdef', true);
+});
 
 test('a new conversation remembers the model and mode selected by Grok', async t => {
   const { controller, session } = await started(t);

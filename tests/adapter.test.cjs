@@ -25,9 +25,9 @@ let pendingPrompt;
 readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line); const p=m.params||{};
  fs.appendFileSync('requests.ndjson',line+'\n');
- if(m.method==='initialize') send({id:m.id,result:{protocolVersion:1,agentCapabilities:{loadSession:true},_meta:{agentVersion:'test'}}});
+ if(m.method==='initialize') send({id:m.id,result:{protocolVersion:Number(process.env.TEST_PROTOCOL||1),agentCapabilities:{loadSession:process.env.TEST_NO_LOAD!=='1'},_meta:{agentVersion:'test'}}});
  else if(m.method==='session/new') send({id:m.id,result:session()});
- else if(m.method==='session/load') {if(process.env.TEST_FAIL_READBACK==='1'&&configured){send({id:m.id,error:{code:-32000,message:'Readback failed'}});return;}update(p.sessionId,{sessionUpdate:'user_message_chunk',content:{type:'text',text:'earlier prompt'}});update(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'earlier reply'}});send({id:m.id,result:session()});}
+ else if(m.method==='session/load') {if(process.env.TEST_FAIL_READBACK==='1'&&configured){send({id:m.id,error:{code:-32000,message:'Readback failed'}});return;}setTimeout(()=>{update(p.sessionId,{sessionUpdate:'user_message_chunk',content:{type:'text',text:'earlier prompt'}});update(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'earlier reply'}});send({id:m.id,result:session()});},Number(process.env.TEST_LOAD_DELAY||0));}
  else if(m.method==='session/set_config_option') {
    if(process.env.TEST_MODERN!=='1') send({id:m.id,error:{code:-32601,message:'Method not found'}});
    else {if(p.configId===modelConfigId){model=p.value;mode=model==='grok-test'?'deep':model==='grok-alternate'?'low':'';}else if(p.configId===effortConfigId)mode=p.value;else {send({id:m.id,error:{code:-32602,message:'Unknown config option'}});return;}configured=true;send({id:m.id,result:{configOptions:config()}});}
@@ -71,6 +71,9 @@ async function fixture(t, settings = {}) {
     options.env.TEST_CONFIG_ONLY = settings.configOnly ? '1' : '0';
     options.env.TEST_CUSTOM_IDS = settings.customIds ? '1' : '0';
     options.env.TEST_ALT_MODEL = settings.alternateModel ? '1' : '0';
+    options.env.TEST_PROTOCOL = String(settings.protocol || 1);
+    options.env.TEST_NO_LOAD = settings.noLoad ? '1' : '0';
+    options.env.TEST_LOAD_DELAY = String(settings.loadDelay || 0);
     return spawn(executable, ['agent'], options);
   } });
   t.after(async () => { await adapter.close(); assert(path.resolve(cwd).startsWith(base + path.sep)); await fs.rm(cwd, { recursive: true, force: true }); });
@@ -299,4 +302,66 @@ test('model metadata distinguishes undiscovered reasoning choices from an explic
   assert.deepEqual(session.modes.map(mode => mode.id), ['deep']);
   assert.equal(session.modelSelectionVerified, true);
   assert.equal(Object.hasOwn(session.models[0], 'reasoningEfforts'), false, 'session choices do not imply a model-wide catalog');
+});
+
+test('initialization rejects incompatible protocol versions before any session can start', async t => {
+  const { adapter, requests } = await fixture(t, { protocol: 2 });
+  await assert.rejects(adapter.start(), { code: 'UNSUPPORTED_PROTOCOL' });
+  assert.equal(adapter.getInfo().connected, false);
+  assert.deepEqual((await requests()).map(message => message.method), ['initialize']);
+});
+
+test('initialization reports the packaged client version and only implemented client capabilities', async t => {
+  const { adapter, requests } = await fixture(t);
+  await adapter.start();
+  const { params } = (await requests())[0];
+  assert.equal(params.clientInfo.version, require('../package.json').version);
+  assert.deepEqual(params.clientCapabilities, { fs: { readTextFile: false, writeTextFile: false }, terminal: false });
+});
+
+test('agents without session loading can create and use sessions but cannot restore old ones', async t => {
+  const { adapter, requests } = await fixture(t, { noLoad: true, modern: true });
+  const session = await adapter.newSession({ mode: 'low' });
+  assert.equal((await adapter.prompt({ sessionId: session.sessionId, text: 'hello' })).text, '东京雨夜');
+  await assert.rejects(adapter.loadSession({ sessionId: 'old-session' }), { code: 'SESSION_LOAD_UNSUPPORTED' });
+  assert.equal((await requests()).some(message => message.method === 'session/load'), false);
+});
+
+test('concurrent restores share one replay and prompts wait for a pending forced restore', async t => {
+  const { adapter, events, requests } = await fixture(t, { loadDelay: 40 });
+  const [first, second] = await Promise.all([
+    adapter.loadSession({ sessionId: 'test-session' }),
+    adapter.loadSession({ sessionId: 'test-session' }),
+  ]);
+  assert.equal(first.sessionId, second.sessionId);
+  assert.equal((await requests()).filter(message => message.method === 'session/load').length, 1);
+  const restore = adapter.loadSession({ sessionId: first.sessionId, force: true });
+  await assert.rejects(adapter.setMode({ sessionId: first.sessionId, mode: 'low' }), { code: 'SESSION_BUSY' });
+  const prompt = adapter.prompt({ sessionId: first.sessionId, text: 'hello' });
+  await restore;
+  assert.equal((await prompt).text, '东京雨夜');
+  const replay = events.filter(event => event.text?.startsWith('earlier'));
+  assert.equal(replay.length, 4);
+  assert(replay.every(event => event.replay));
+  assert.equal(adapter.sessionLoads.size, 0);
+});
+
+test('restoring a running session is rejected without contaminating streamed output', async t => {
+  const { adapter, requests } = await fixture(t);
+  const { sessionId } = await adapter.newSession();
+  const started = new Promise(resolve => adapter.on('event', event => { if (event.status === 'busy') resolve(); }));
+  const prompt = adapter.prompt({ sessionId, text: 'hang' });
+  await started;
+  await assert.rejects(adapter.loadSession({ sessionId, force: true }), { code: 'SESSION_BUSY' });
+  await adapter.cancel(sessionId);
+  assert.equal((await prompt).text, '');
+  assert.equal((await requests()).some(message => message.method === 'session/load'), false);
+});
+
+test('failed restores release the replay lock so a later restore can retry', async t => {
+  const { adapter } = await fixture(t);
+  await assert.rejects(adapter.loadSession({ sessionId: 'test-session', cwd: path.join(adapter.cwd, 'missing') }), { code: 'INVALID_CWD' });
+  assert.equal(adapter.sessionLoads.size, 0);
+  assert.equal(adapter.loading.size, 0);
+  assert.equal((await adapter.loadSession({ sessionId: 'test-session' })).loaded, true);
 });

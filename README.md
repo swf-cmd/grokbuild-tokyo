@@ -2,7 +2,7 @@
 
 为 Grok Build CLI 制作的非官方 Windows 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片预览和独立账户管理。
 
-当前版本：**1.2.0**。本仓库先用于私有开发，项目自身仍标记为 `UNLICENSED`；正式开源前再确定许可证。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+当前版本：**1.2.1**。本仓库先用于私有开发，项目自身仍标记为 `UNLICENSED`；正式开源前再确定许可证。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 启动
 
@@ -45,7 +45,7 @@ npm run build
 
 ## 聊天与图片
 
-支持流式回复、Markdown 和代码块、复制、对话搜索、重命名、导出 Markdown、工具进度、逐项授权及停止生成。Enter 发送；Shift+Enter 换行；Ctrl+N 新会话；Ctrl+, 设置。
+支持流式回复、Markdown 和代码块、复制、对话搜索、重命名、导出 Markdown、工具进度、执行计划、逐项授权及停止生成。执行计划随 Grok 更新，并与聊天一起保存和导出；回复长度/请求次数达到上限或被拒绝时保留明确提示。Enter 发送；Shift+Enter 换行；Ctrl+N 新会话；Ctrl+, 设置。
 
 Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图片可直接显示。点击图片放大，Esc 关闭；加载失败可重试。支持网络图片、内嵌图片、当前会话工作目录与 Grok 缓存中的本地图片。相对路径先从工作目录查找，再查当前会话缓存。本地和内嵌图片上限 20 MB。
 
@@ -55,7 +55,7 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图�
 
 在“偏好设置 → 界面语言”中切换 **中文、日本語、English、한국어、Español、Deutsch、Français**。选择后立即预览，点击“保存设置”后记住，下次启动继续使用；关闭设置或按 Esc 则恢复之前的语言。语言设置在账户之间共享，生成回复期间也能保存，不会重连引擎。切换仅影响界面和新选用的快捷提示，不修改已有聊天、账户名称或未发送的草稿。
 
-模型和思考强度显示 CLI 返回的名称、顺序和支持范围。客户端在引擎确认并回读后显示切换结果，恢复历史时重新同步。无法确认的选择显示“待确认”。
+模型和思考强度沿用 CLI 返回的顺序、ID 和支持范围，常见推理档位名称按界面语言显示，未知自定义名称保留原文。客户端在引擎确认并回读后显示切换结果，恢复历史时重新同步。无法确认的选择显示“待确认”。
 
 兼容的旧版 CLI 使用 `session/set_model` 的 `_meta.reasoningEffort` 切换推理档位并载入会话回读；支持 `session/set_config_option` 的 CLI 使用该接口。`session/set_mode` 不作为推理档位切换接口。
 
@@ -94,7 +94,13 @@ node tests/i18n-ui.cjs --packaged
 
 额外检查：`node scripts/packaged-smoke.cjs` 验证打包后的通用界面，`node scripts/ambience-smoke.cjs` 验证音乐与雨景，后者也支持 `--packaged`。
 
-真实 CLI 检查需单独运行 `node scripts/config-smoke.cjs`；真实模型测试包括 `node scripts/ui-smoke.cjs --live`、`node tests/live-smoke.cjs`，以及设置 `GROK_CONFIG_LIVE_TEST=1` 后的 `node tests/live-config-smoke.cjs`。这些不属于默认测试，可能使用本机登录和账户用量。
+真实 CLI 检查需单独运行 `node scripts/config-smoke.cjs`；真实模型测试包括 `node scripts/ui-smoke.cjs --live`、设置 `GROK_LIVE_TEST=1` 后的 `node tests/live-smoke.cjs`（可加 `--permission`），以及设置 `GROK_CONFIG_LIVE_TEST=1` 后的 `node tests/live-config-smoke.cjs`。这些不属于默认测试，会使用本机登录和账户用量。
+
+### Grok 兼容范围
+
+当前核查对象为 Windows 本机 Grok Build **1.0.13 / ACP 1**。聊天、会话恢复、模型/推理切换、工具执行、权限请求和子代理通过官方 CLI；文件读写、终端、MCP、Skills、插件和沙箱由 CLI 按自身配置处理，客户端不宣称接管文件或终端执行。权限提示是否出现取决于官方权限模式、规则和已保存授权。
+
+该版本通过 ACP 宣告 `image: false`、`audio: false`，客户端据此提供文本输入，仍支持回复中的图片预览。客户端没有为所有 `x.ai/*` 扩展或 TUI 专用命令提供独立界面（例如 Git/worktree 管理、会话分叉/回退、交互终端与斜杠菜单），不能等同于官方 TUI 的全部功能。遇到不兼容的协议或不支持历史恢复的引擎，现在会明确提示。
 
 背景为生成的涩谷雨夜图，提示词见 [IMAGE-PROMPT.md](src/renderer/assets/IMAGE-PROMPT.md)。图标由 `scripts/make-icon.py` 绘制（需 Python 与 Pillow）；背景音乐可用 `node scripts/render-ambience.cjs` 从 `scripts/ambient-score.js` 重新生成。
 

@@ -1,13 +1,15 @@
 {
   "name": "grokbuild-tokyo",
   "productName": "Grokbuild Tokyo",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A Tokyo rainy-night desktop client for the locally installed Grok Build CLI",
   "main": "src/main.cjs",
   "private": true,
   "author": "Local desktop project",
   "license": "UNLICENSED",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/*.test.cjs",
