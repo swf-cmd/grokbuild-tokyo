@@ -21,10 +21,12 @@ jobs:
       - run: npm test
       - run: npm run test:ui
       - run: npm run test:accounts
+      - run: npm run test:attachments
       - run: npm run test:i18n
       - run: npm run build
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
+      - run: node tests/ui-attachments.cjs --packaged
       - name: Keep UI failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -37,5 +39,6 @@ jobs:
             work/ui-controls/run-*/failure-*.png
             work/i18n-qa/run-*/*.png
             work/i18n-qa/run-*/results.json
+            work/ui-attachments/run-*/*.png
           retention-days: 7
           if-no-files-found: ignore

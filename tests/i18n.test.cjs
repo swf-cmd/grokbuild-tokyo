@@ -66,7 +66,7 @@ test('all declared static text, placeholders, accessible names and starter promp
 });
 
 test('renderer and backend translation calls are covered by every catalog', () => {
-  for (const file of ['renderer/app.js', 'app-controller.cjs', 'account-manager.cjs', 'grok-adapter.cjs', 'media.cjs', 'main.cjs']) {
+  for (const file of ['renderer/app.js', 'app-controller.cjs', 'account-manager.cjs', 'grok-adapter.cjs', 'media.cjs', 'attachments.cjs', 'main.cjs']) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
     for (const match of source.matchAll(/\bt\(('(?:\\.|[^'\\])*')/g)) {
       const key = vm.runInNewContext(match[1]);

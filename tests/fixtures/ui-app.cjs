@@ -58,8 +58,8 @@ class FakeAdapter extends EventEmitter {
     if (test.failMode) { test.failMode = false; throw new Error('UI fixture: effort update rejected'); }
     this.sessions.get(sessionId).mode = mode; return this.publish(this.sessions.get(sessionId));
   }
-  async prompt({ sessionId, text }) {
-    test.calls.push({ method: 'prompt', sessionId, text });
+  async prompt({ sessionId, text, attachments }) {
+    test.calls.push({ method: 'prompt', sessionId, text, ...(attachments ? { attachments } : {}) });
     if (test.failPrompt) { test.failPrompt = false; throw new Error('UI fixture: request rejected'); }
     if (text.startsWith('WAIT') || text.startsWith('PERMISSION')) {
       const promise = new Promise(resolve => this.pending.set(sessionId, resolve));

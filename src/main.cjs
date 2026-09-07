@@ -5,6 +5,7 @@ const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const { createI18n, languages } = require('./i18n.js');
 const { AppController } = require('./app-controller.cjs');
+const { safeName } = require('./attachments.cjs');
 const root = process.env.TOKYO_TEST_ROOT || (app.isPackaged ? path.resolve(path.dirname(process.execPath), '..') : path.resolve(__dirname, '..'));
 app.setPath('userData', path.join(root, 'data', 'browser'));
 app.setName('Grokbuild Tokyo');
@@ -34,6 +35,24 @@ else {
     const dialogTranslator = language => typeof language === 'string' && Object.hasOwn(languages, language) ? createI18n(language) : t;
     handle('chooseFolder', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 Grok 工作目录'), defaultPath: controller.settings.workspace, properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
     handle('chooseExecutable', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 grok.exe'), defaultPath: controller.settings.executable, filters: [{ name: translate('Grok 可执行文件'), extensions: ['exe'] }], properties: ['openFile'] }); return r.canceled ? null : r.filePaths[0]; });
+    handle('chooseAttachments', async ({ language, accountId = controller.activeAccountId } = {}) => {
+      if (controller.activeAccountId !== accountId) throw new Error(t('附件已失效，请重新添加'));
+      const result = await dialog.showOpenDialog(win, { title: dialogTranslator(language)('选择图片或附件'), properties: ['openFile', 'multiSelections'] });
+      if (result.canceled) return [];
+      if (controller.activeAccountId !== accountId) throw new Error(t('附件已失效，请重新添加'));
+      return controller.importAttachments({ files: result.filePaths, accountId }, true);
+    });
+    handle('importAttachments', payload => controller.importAttachments(payload));
+    handle('saveAttachment', async args => {
+      const { attachment } = controller.getAttachment(args);
+      const accountId = controller.activeAccountId;
+      const result = await dialog.showSaveDialog(win, { title: t('保存附件'), defaultPath: safeName(attachment.fileName || attachment.name) });
+      if (result.canceled || !result.filePath) return { canceled: true };
+      if (controller.activeAccountId !== accountId) throw new Error(t('附件已失效，请重新添加'));
+      const bytes = await controller.attachmentBytes(args);
+      await fs.promises.writeFile(result.filePath, bytes);
+      return { canceled: false, path: result.filePath };
+    });
     handle('exportSession', async id => {
       const s = controller.getSession(id);
       const title = controller.sessionTitle(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80);

@@ -3,6 +3,7 @@ const invoke = name => (...args) => ipcRenderer.invoke(`tokyo:${name}`, ...args)
 contextBridge.exposeInMainWorld('tokyo', {
   bootstrap: invoke('bootstrap'), createSession: invoke('createSession'), selectSession: invoke('selectSession'),
   configureSession: invoke('configureSession'),
+  chooseAttachments: invoke('chooseAttachments'), importAttachments: invoke('importAttachments'), saveAttachment: invoke('saveAttachment'),
   readImage: invoke('readImage'), listAccounts: invoke('listAccounts'), addAccount: invoke('addAccount'), renameAccount: invoke('renameAccount'), deleteAccount: invoke('deleteAccount'), switchAccount: invoke('switchAccount'), loginAccount: invoke('loginAccount'), cancelAccountLogin: invoke('cancelAccountLogin'),
   send: invoke('send'), cancel: invoke('cancel'), permission: invoke('permission'),
   saveSettings: invoke('saveSettings'), chooseFolder: invoke('chooseFolder'), chooseExecutable: invoke('chooseExecutable'),

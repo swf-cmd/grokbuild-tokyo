@@ -1,8 +1,8 @@
 # Grokbuild Tokyo · 东京雨夜
 
-为 Grok Build CLI 制作的非官方 Windows 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片预览和独立账户管理。
+为 Grok Build CLI 制作的非官方 Windows 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片与附件发送、回复文件保存和独立账户管理。
 
-当前版本：**1.2.1**。本仓库先用于私有开发，项目自身仍标记为 `UNLICENSED`；正式开源前再确定许可证。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+当前版本：**1.2.2**。本仓库先用于私有开发，项目自身仍标记为 `UNLICENSED`；正式开源前再确定许可证。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 启动
 
@@ -43,9 +43,15 @@ npm run build
 
 若历史文件损坏，无法确认是否完成删除的目录会保存在 `data/accounts/.recovery-*`，不会自动清理，可结合 `conversations.json.unreadable-*` 备份手工恢复。隔离失败时客户端会阻止覆盖原历史文件，并提示先处理目录权限。
 
-## 聊天与图片
+## 聊天、图片与附件
 
 支持流式回复、Markdown 和代码块、复制、对话搜索、重命名、导出 Markdown、工具进度、执行计划、逐项授权及停止生成。执行计划随 Grok 更新，并与聊天一起保存和导出；回复长度/请求次数达到上限或被拒绝时保留明确提示。Enter 发送；Shift+Enter 换行；Ctrl+N 新会话；Ctrl+, 设置。
+
+点击输入框旁的回形针选择图片或文件，也可拖拽文件、粘贴剪贴板图片。发送前可预览或移除附件，支持只发送附件。每条消息最多 10 个文件，单个不超过 20 MB，合计不超过 50 MB。未发送的附件草稿在本次运行中按会话和账户分别保留。
+
+附件会复制到客户端管理的账户目录，原文件移动后已发送的副本仍可用。当前 CLI 1.0.13 没有 ACP 原生图片输入，客户端发送本地资源引用并让官方 `read_file` 工具读取图片与文件；该方式已通过真实 PNG 与 TXT 读取测试。未来 CLI 宣告支持图片输入时改用 ACP 内嵌图片。其他格式的解析能力取决于 CLI 可用工具与权限。
+
+回复中的 ACP 文件资源、内嵌文本/二进制附件及 Markdown 文件链接显示为可保存的附件卡片。点击“保存附件”选择目标位置，网络文件在此时下载，本地文件仅从这段会话的工作目录、Grok 会话缓存或当前账户附件目录读取。下载同样限制为 20 MB。聊天记录与 Markdown 导出保留附件来源。
 
 Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图片可直接显示。点击图片放大，Esc 关闭；加载失败可重试。支持网络图片、内嵌图片、当前会话工作目录与 Grok 缓存中的本地图片。相对路径先从工作目录查找，再查当前会话缓存。本地和内嵌图片上限 20 MB。
 
@@ -56,6 +62,8 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图�
 在“偏好设置 → 界面语言”中切换 **中文、日本語、English、한국어、Español、Deutsch、Français**。选择后立即预览，点击“保存设置”后记住，下次启动继续使用；关闭设置或按 Esc 则恢复之前的语言。语言设置在账户之间共享，生成回复期间也能保存，不会重连引擎。切换仅影响界面和新选用的快捷提示，不修改已有聊天、账户名称或未发送的草稿。
 
 模型和思考强度沿用 CLI 返回的顺序、ID 和支持范围，常见推理档位名称按界面语言显示，未知自定义名称保留原文。客户端在引擎确认并回读后显示切换结果，恢复历史时重新同步。无法确认的选择显示“待确认”。
+
+旧 CLI 的第三档 `grok-4` 显示为 **Grok 4.3 (grok-4)**：2026-09-07 使用本机 CLI 1.0.13 实测，选择和请求 ID 为 `grok-4`，实际回复的 `usage.modelUsage` 与已保存的 `model_id` 均为 `grok-4.3`。客户端保留原请求 ID；新版 CLI 明确提供的名称优先，当前会话可确认的实际用量模型也会更新显示。[官方旧模型迁移说明](https://docs.x.ai/developers/migration/may-15-retirement)提供了 Grok 4 家族迁移到 4.3 的背景。
 
 兼容的旧版 CLI 使用 `session/set_model` 的 `_meta.reasoningEffort` 切换推理档位并载入会话回读；支持 `session/set_config_option` 的 CLI 使用该接口。`session/set_mode` 不作为推理档位切换接口。
 
@@ -84,10 +92,12 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或工具返回的图�
 npm test
 npm run test:ui
 npm run test:accounts
+npm run test:attachments
 npm run test:i18n
 npm run build
 node scripts/images-accounts-smoke.cjs --packaged
 node tests/i18n-ui.cjs --packaged
+node tests/ui-attachments.cjs --packaged
 ```
 
 单元测试覆盖 ACP、模型与配置、会话持久化、图片路径、账户隔离、登录生命周期、名称校验、账户删除及失败恢复，以及七种语言的词条完整性、参数插值与默认语言处理。界面测试使用真实 Electron 主进程、IPC 和界面，替换 CLI 和登录为隔离的模拟引擎；不会调用真实模型或修改日常账户。账户界面测试覆盖添加、登录、重命名、删除确认、自动切换、重启恢复及 980 × 680 布局。语言界面测试检查七种语言的即时预览、保存与取消、重启恢复、辅助标签、动态状态、对话和草稿保留、生成期间切换及紧凑窗口布局。GitHub Actions 在 Windows 上运行上述检查，并验证打包后的语言功能。
@@ -100,7 +110,7 @@ node tests/i18n-ui.cjs --packaged
 
 当前核查对象为 Windows 本机 Grok Build **1.0.13 / ACP 1**。聊天、会话恢复、模型/推理切换、工具执行、权限请求和子代理通过官方 CLI；文件读写、终端、MCP、Skills、插件和沙箱由 CLI 按自身配置处理，客户端不宣称接管文件或终端执行。权限提示是否出现取决于官方权限模式、规则和已保存授权。
 
-该版本通过 ACP 宣告 `image: false`、`audio: false`，客户端据此提供文本输入，仍支持回复中的图片预览。客户端没有为所有 `x.ai/*` 扩展或 TUI 专用命令提供独立界面（例如 Git/worktree 管理、会话分叉/回退、交互终端与斜杠菜单），不能等同于官方 TUI 的全部功能。遇到不兼容的协议或不支持历史恢复的引擎，现在会明确提示。
+该版本通过 ACP 宣告 `image: false`、`audio: false`；图片和文件通过基线 `resource_link` 与准确的本地路径交给 CLI 工具处理，不把未读取的文件宣称为已经内嵌。回复仍支持图片预览及附件保存。客户端没有为所有 `x.ai/*` 扩展或 TUI 专用命令提供独立界面（例如 Git/worktree 管理、会话分叉/回退、交互终端与斜杠菜单），不能等同于官方 TUI 的全部功能。遇到不兼容的协议或不支持历史恢复的引擎，现在会明确提示。
 
 背景为生成的涩谷雨夜图，提示词见 [IMAGE-PROMPT.md](src/renderer/assets/IMAGE-PROMPT.md)。图标由 `scripts/make-icon.py` 绘制（需 Python 与 Pillow）；背景音乐可用 `node scripts/render-ambience.cjs` 从 `scripts/ambient-score.js` 重新生成。
 

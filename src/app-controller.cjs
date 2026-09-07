@@ -6,6 +6,8 @@ const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
 const { imagesFromContent, resolveImage, findSessionImageDirectory } = require('./media.cjs');
+const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromContent, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
+const { pathToFileURL } = require('node:url');
 
 function isPathType(value, type) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
@@ -35,6 +37,7 @@ class AppController extends EventEmitter {
     this.accountManager.on('login', login => this.emitEvent({ type: 'account-login', ...this.accountState(), login }));
     this.loaded = new Set();
     this.permissions = new Map();
+    this.pendingAttachments = new Map();
     this.active = null;
     this.operation = null;
     this.closing = false;
@@ -69,6 +72,8 @@ class AppController extends EventEmitter {
             // Older clients saved tool payloads but did not display their images.
             const images = [...(Array.isArray(m.images) ? m.images : []), ...imagesFromContent(m.tools)];
             m.images = [...new Map(images.filter(image => typeof image?.src === 'string').map(image => [image.src, image])).values()];
+            const attachments = [...(Array.isArray(m.attachments) ? m.attachments : []), ...attachmentsFromContent(m.tools), ...(m.role === 'assistant' ? attachmentsFromText(m.text) : [])];
+            m.attachments = [...new Map(attachments.filter(item => typeof item?.id === 'string' && typeof item.src === 'string').map(item => [item.id, item])).values()];
           }
         }
       } catch {
@@ -226,9 +231,37 @@ class AppController extends EventEmitter {
     });
   }
   async cancelAccountLogin() { await this.accountManager.cancelLogin(); return this.accountState(); }
+  attachmentDirectory(accountId = this.activeAccountId) {
+    return accountId === 'local' ? path.join(this.dir, 'attachments', 'local') : path.join(this.accountManager.profileDirectory(accountId), 'attachments');
+  }
+  async importAttachments({ files, accountId = this.activeAccountId } = {}, fromPaths = false) {
+    return this.idleOperation(this.t('选择图片或附件'), async () => {
+      if (accountId !== this.activeAccountId) throw new Error(this.t('附件已失效，请重新添加'));
+      const attachments = await stageAttachments(files, this.attachmentDirectory(accountId), { fromPaths, t: this.t });
+      for (const { previewSrc, ...attachment } of attachments) this.pendingAttachments.set(attachment.id, { ...attachment, accountId });
+      return attachments;
+    });
+  }
+  getAttachment({ sessionId, attachmentId } = {}) {
+    const session = this.getSession(sessionId);
+    const attachment = session.messages.flatMap(message => message.attachments || []).find(item => item.id === attachmentId);
+    if (!attachment) throw new Error(this.t('附件已失效，请重新添加'));
+    return { session, attachment };
+  }
+  async attachmentBytes(args) {
+    const { session, attachment } = this.getAttachment(args);
+    const accountId = this.activeAccountId;
+    const cache = /^(?:https?:\/\/|data:)/i.test(attachment.src) ? undefined : await findSessionImageDirectory(this.accountManager.homeFor(accountId), session.cwd, session.id);
+    return resolveAttachment(attachment.src, [session.cwd, cache, this.attachmentDirectory(accountId)], this.t);
+  }
   async readImage({ sessionId, src } = {}) {
     const session = this.getSession(sessionId);
     try {
+      const uploaded = session.messages.flatMap(message => message.attachments || []).find(item => item.src === src && item.mimeType?.startsWith('image/'));
+      if (uploaded) {
+        const bytes = await resolveAttachment(src, [this.attachmentDirectory(), session.cwd], this.t);
+        return resolveImage(`data:${uploaded.mimeType};base64,${bytes.toString('base64')}`, session.cwd, undefined, this.t);
+      }
       const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
         : await findSessionImageDirectory(this.accountManager.homeFor(this.activeAccountId), session.cwd, session.id);
       return await resolveImage(src, session.cwd, cache, this.t);
@@ -403,25 +436,37 @@ class AppController extends EventEmitter {
       }
     });
   }
-  async send({ sessionId, text }) {
+  async send({ sessionId, text = '', attachments = [] }) {
     if (this.active) throw new Error(this.t('已有回复正在生成'));
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再发送。', { name: this.operation.name }));
-    if (typeof text !== 'string' || !text.trim()) throw new Error(this.t('请输入内容'));
+    if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS) throw new Error(this.t('每条消息最多添加 10 个附件'));
+    if (typeof text !== 'string' || (!text.trim() && !attachments.length)) throw new Error(this.t('请输入内容'));
     if (text.length > 200000) throw new Error(this.t('消息过长，请缩短到 200,000 字以内'));
     const session = this.getSession(sessionId);
+    const selected = attachments.map(item => {
+      const stored = this.pendingAttachments.get(typeof item === 'string' ? item : item?.id);
+      if (!stored || stored.accountId !== this.activeAccountId) throw new Error(this.t('附件已失效，请重新添加'));
+      const { accountId, ...attachment } = stored;
+      return attachment;
+    });
+    if (new Set(selected.map(item => item.id)).size !== selected.length) throw new Error(this.t('无效的附件'));
+    if (selected.reduce((total, item) => total + item.size, 0) > MAX_TOTAL_BYTES) throw new Error(this.t('每条消息的附件总大小不能超过 50 MB'));
     // Reserve the turn before awaiting session restore to prevent double sends.
     const turn = { sessionId, message: null, cancelled: false };
     this.active = turn;
-    try { await this._ensureLoaded(session); } catch (e) { this.active = null; throw e; }
+    try {
+      for (const item of selected) await resolveAttachment(item.src, [this.attachmentDirectory()], this.t);
+      await this._ensureLoaded(session);
+    } catch (e) { this.active = null; throw e; }
     if (turn.cancelled) { this.active = null; this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
     const now = Date.now();
     const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
-    session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), createdAt: now, status: 'complete' });
-    const message = { id: randomUUID(), role: 'assistant', text: '', thought: '', tools: [], images: [], plan: [], createdAt: now, status: 'working' };
+    session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
+    const message = { id: randomUUID(), role: 'assistant', text: '', thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
     session.messages.push(message);
     if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
-      session.title = text.trim().replace(/\s+/g, ' ').slice(0, 32);
+      session.title = (text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ').slice(0, 32);
       session.titleIsDefault = false;
     }
     session.updatedAt = now;
@@ -439,7 +484,7 @@ class AppController extends EventEmitter {
     this.emitEvent({ type: 'status', sessionId, status: 'working' });
     this.turnPromise = (async () => {
       try {
-        const result = await this.adapter.prompt({ sessionId, text: text.trim() });
+        const result = await this.adapter.prompt({ sessionId, text: text.trim(), ...(selected.length ? { attachments: selected.map(item => ({ ...item, path: item.src, uri: pathToFileURL(item.src).href })) } : {}) });
         if (message.status === 'working') message.status = result?.cancelled || result?.stopReason === 'cancelled' ? 'cancelled' : 'complete';
         if (typeof result?.stopReason === 'string') message.stopReason = result.stopReason;
         if (message.status !== 'cancelled' && Object.hasOwn(STOP_NOTICES, result?.stopReason)) message.noticeKey = STOP_NOTICES[result.stopReason];
@@ -461,7 +506,7 @@ class AppController extends EventEmitter {
     return { accepted: true };
   }
   handleEvent(event) {
-    if (event.replay || (['text', 'image'].includes(event.type) && event.role === 'user')) return;
+    if (event.replay || (['text', 'image', 'attachment'].includes(event.type) && event.role === 'user')) return;
     if (event.type === 'status' && event.status === 'disconnected') this.invalidateConnection();
     if (event.type === 'status' && ['model_changed', 'mode_changed'].includes(event.status)) {
       const session = this.visibleSessions().find(item => item.id === event.sessionId);
@@ -475,7 +520,7 @@ class AppController extends EventEmitter {
     const current = this.active;
     const message = current?.message;
     const isPlan = event.type === 'status' && event.status === 'plan';
-    if ((['text', 'thought', 'tool', 'image'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
+    if ((['text', 'thought', 'tool', 'image', 'attachment'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
     if (message && (!event.sessionId || event.sessionId === current.sessionId)) {
       if (isPlan) {
         // ACP plans replace the previous plan, including an explicitly empty one.
@@ -487,7 +532,17 @@ class AppController extends EventEmitter {
         message.plan = entries;
         event = { ...event, entries };
       }
-      if (event.type === 'text') message.text += event.text || '';
+      const addAttachment = attachment => {
+        message.attachments ||= [];
+        if (!attachment?.id || !attachment.src || message.attachments.some(item => item.id === attachment.id)) return;
+        message.attachments.push(attachment);
+        if (event.type !== 'attachment') this.emitEvent({ type: 'attachment', sessionId: current.sessionId, attachment });
+      };
+      if (event.type === 'text') {
+        message.text += event.text || '';
+        for (const attachment of attachmentsFromText(message.text)) addAttachment(attachment);
+      }
+      if (event.type === 'attachment') addAttachment(event.attachment);
       if (event.type === 'thought') message.thought += event.text || '';
       if (event.type === 'image' && event.image?.src) {
         message.images ||= [];
@@ -496,6 +551,7 @@ class AppController extends EventEmitter {
       if (event.type === 'tool') {
         const existing = message.tools.find(t => t.toolCallId === event.toolCallId);
         if (existing) Object.assign(existing, event); else message.tools.push({ ...event });
+        for (const attachment of attachmentsFromContent(event.content)) addAttachment(attachment);
         const images = imagesFromContent(event.content);
         for (const image of images) {
           message.images ||= [];
@@ -624,7 +680,8 @@ class AppController extends EventEmitter {
       const plan = Array.isArray(m.plan) && m.plan.length ? `\n\n### ${this.t('执行计划')}\n\n` + m.plan.map(entry => `- [${entry.status === 'completed' ? 'x' : ' '}] ${entry.content}`).join('\n') : '';
       const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${image.src.replace(/>/g, '%3E')}>)`).join('');
       const notice = m.noticeKey ? `\n\n${this.t(m.noticeKey)}` : '';
-      return `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${plan}${images}${notice}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`;
+      const attachments = (m.attachments || []).filter(item => !item.mimeType?.startsWith('image/')).map(item => `\n\n[${String(item.name).replace(/[\[\]\\]/g, '')}](<${item.src.replace(/>/g, '%3E')}>)`).join('');
+      return `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${plan}${images}${attachments}${notice}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`;
     }).join('\n');
   }
   async close() {

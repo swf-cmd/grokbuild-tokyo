@@ -171,3 +171,29 @@ dialog{color:var(--text);background:#121b1e;border:1px solid #a8b29a28;border-ra
   .account-help { margin-bottom: 12px; }
   .add-account-form { margin-top: 17px; padding-top: 16px; }
 }
+
+/* Attachment drafts share the composer surface; received files stay in the chat. */
+.composer.drag-over { border-color: var(--lime); box-shadow: 0 0 0 2px #d4eb8933; }
+.attach-button { width: 29px; height: 29px; flex: none; }
+.attach-button svg { width: 20px; height: 20px; }
+.attachment-drafts { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px 0; max-height: 148px; overflow: auto; }
+.attachment-draft, .attachment-card { display: flex; align-items: center; gap: 9px; min-width: 0; border: 1px solid #d4eb8926; border-radius: 8px; background: #111b20; }
+.attachment-draft { width: 218px; max-width: 100%; padding: 7px; }
+.attachment-draft > img { width: 38px; height: 38px; object-fit: cover; border-radius: 4px; background: #0a1115; flex: none; }
+.attachment-icon { width: 34px; height: 34px; display: grid; place-items: center; color: var(--lime); font-size: 23px; flex: none; }
+.attachment-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d1dcda; font-size: 11px; line-height: 1.3; }
+.attachment-size { color: #86989b; font-family: var(--mono); font-size: 9px; }
+.attachment-remove { width: 25px; height: 29px; flex: none; border-radius: 4px; color: #9cadaa; font-size: 19px; }
+.attachment-remove:hover { background: #ffffff0d; color: #fff; }
+.attachment-pending { padding: 12px 4px; color: var(--lime); font-size: 11px; }
+.message-attachments { display: grid; gap: 8px; margin-top: 12px; max-width: 520px; }
+.attachment-card { padding: 10px 12px; }
+.attachment-save { padding: 8px 10px; border: 1px solid #d4eb8938; border-radius: 5px; color: var(--lime); font-size: 10px; flex: none; }
+.attachment-save:hover { background: #d4eb8910; }
+@media(max-width:1100px) {
+  .composer-options { gap: 6px; min-width: 0; }
+  .composer-toolbar { gap: 8px; }
+  .keyboard-hint { display: none; }
+  .attachment-draft { width: 196px; }
+}

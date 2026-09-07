@@ -368,6 +368,37 @@
     }
   }
 
+  function attachmentSize(size) {
+    if (!Number.isFinite(size) || size < 0) return '';
+    return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function mountAttachments(body, message, session) {
+    if (!message.attachments?.length) return;
+    const list = document.createElement('div'); list.className = 'message-attachments';
+    for (const attachment of message.attachments) {
+      if (!attachment?.id) continue;
+      const card = document.createElement('div'); card.className = 'attachment-card'; card.dataset.attachmentId = attachment.id;
+      const icon = document.createElement('span'); icon.className = 'attachment-icon'; icon.textContent = attachment.mimeType?.startsWith('image/') ? '▧' : '↳'; icon.setAttribute('aria-hidden', 'true');
+      const info = document.createElement('div'); info.className = 'attachment-info';
+      const name = document.createElement('span'); name.className = 'attachment-name'; name.textContent = attachment.name || t('附件'); name.title = name.textContent;
+      const size = document.createElement('span'); size.className = 'attachment-size'; size.textContent = attachmentSize(attachment.size) || attachment.mimeType || t('附件');
+      const save = document.createElement('button'); save.type = 'button'; save.className = 'attachment-save'; save.textContent = t('保存附件'); save.setAttribute('aria-label', t('保存附件：{name}', { name: name.textContent }));
+      const accountId = state.activeAccountId;
+      save.addEventListener('click', () => guarded(async () => {
+        if (state.activeAccountId !== accountId) return;
+        save.disabled = true;
+        try {
+          const result = await call('saveAttachment', { sessionId: session.id, attachmentId: attachment.id });
+          if (state.activeAccountId === accountId && result?.path && !result.canceled) toast(t('附件已保存：{path}', { path: result.path }));
+        } catch (error) { if (state.activeAccountId === accountId) throw error; }
+        finally { save.disabled = false; }
+      }));
+      info.append(name, size); card.append(icon, info, save); list.append(card);
+    }
+    body.append(list);
+  }
+
   function toolStatus(status) {
     return ({ pending: t('等待中'), running: t('执行中'), in_progress: t('执行中'), completed: t('已完成'), complete: t('已完成'), success: t('已完成'), failed: t('失败'), error: t('失败'), cancelled: t('已取消') })[status] || status || t('执行中');
   }
@@ -455,6 +486,7 @@
       if (message.role === 'user') body.textContent = message.text;
       else body.innerHTML = markdown(message.text);
       mountImages(body, message, session, previousImages);
+      mountAttachments(body, message, session);
       const last = index === messages.length - 1;
       if (message.role === 'assistant' && last && state.busy.has(session.id)) {
         const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', t('正在生成')); body.append(cursor);
@@ -486,10 +518,13 @@
 
   function renderComposerState() {
     const busy = state.busy.has(state.activeId);
+    const draft = currentDraft();
     const changing = state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login;
     $('send-button').hidden = busy;
     $('stop-button').hidden = !busy;
-    $('send-button').disabled = state.initializing || state.sending || changing || state.busy.size > 0 || !$('prompt').value.trim() || !state.connected || !newChatConfigReady();
+    $('send-button').disabled = state.initializing || state.sending || changing || draft.pending > 0 || state.busy.size > 0 || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
+    $('attach-button').disabled = state.initializing || state.sending || state.busy.size > 0 || draft.pending > 0 || changing;
+    renderDraftAttachments();
     $('settings-button').disabled = state.initializing || state.sending || changing;
     $('account-button').disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction;
     $('workspace-button').disabled = state.initializing || state.sending || changing || state.busy.size > 0;
@@ -537,8 +572,72 @@
     panel.append(heading, description, actions);
   }
 
-  function rememberDraft() { state.drafts.set(state.activeId || '__new__', $('prompt').value); }
-  function restoreDraft() { $('prompt').value = state.drafts.get(state.activeId || '__new__') || ''; resizePrompt(); }
+  function currentDraft() {
+    const key = state.activeId || '__new__';
+    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', attachments: [], pending: 0 });
+    return state.drafts.get(key);
+  }
+  function rememberDraft() { currentDraft().text = $('prompt').value; }
+  function restoreDraft() { $('prompt').value = currentDraft().text; resizePrompt(); }
+
+  function renderDraftAttachments() {
+    const draft = currentDraft();
+    const list = $('attachment-drafts');
+    list.hidden = !draft.attachments.length && !draft.pending;
+    list.replaceChildren();
+    for (const attachment of draft.attachments) {
+      const card = document.createElement('div'); card.className = 'attachment-draft';
+      if (/^data:image\/(?:png|jpe?g|webp|gif|avif|bmp);base64,/i.test(attachment.previewSrc || '')) {
+        const img = document.createElement('img'); img.src = attachment.previewSrc; img.alt = attachment.name || t('图片'); card.append(img);
+      } else {
+        const icon = document.createElement('span'); icon.className = 'attachment-icon'; icon.textContent = '↳'; icon.setAttribute('aria-hidden', 'true'); card.append(icon);
+      }
+      const info = document.createElement('div'); info.className = 'attachment-info';
+      const name = document.createElement('span'); name.className = 'attachment-name'; name.textContent = attachment.name || t('附件'); name.title = name.textContent;
+      const size = document.createElement('span'); size.className = 'attachment-size'; size.textContent = attachmentSize(attachment.size);
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'attachment-remove'; remove.textContent = '×'; remove.disabled = state.sending;
+      remove.setAttribute('aria-label', t('移除附件：{name}', { name: name.textContent }));
+      remove.addEventListener('click', () => { draft.attachments = draft.attachments.filter(item => item.id !== attachment.id); renderComposerState(); });
+      info.append(name, size); card.append(info, remove); list.append(card);
+    }
+    if (draft.pending) {
+      const pending = document.createElement('span'); pending.className = 'attachment-pending'; pending.textContent = t('正在添加附件…'); list.append(pending);
+    }
+  }
+
+  async function addAttachments(files) {
+    if (state.initializing || state.sending || state.busy.size > 0 || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    const draft = currentDraft();
+    if (draft.pending) return;
+    const accountId = state.activeAccountId;
+    draft.pending++; renderComposerState();
+    try {
+      let attachments;
+      if (files) {
+        if (files.length + draft.attachments.length > 10) throw new Error(t('每条消息最多添加 10 个附件。'));
+        if (files.some(file => file.size > 20 * 1024 * 1024)) throw new Error(t('单个附件不能超过 20 MB。'));
+        if ([...files, ...draft.attachments].reduce((sum, file) => sum + (file.size || 0), 0) > 50 * 1024 * 1024) throw new Error(t('每条消息的附件总大小不能超过 50 MB。'));
+        const encoded = [];
+        for (const file of files) {
+          const data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+            reader.onerror = () => reject(new Error(t('无法读取附件：{name}', { name: file.name })));
+            reader.readAsDataURL(file);
+          });
+          encoded.push({ name: file.name, mimeType: file.type, data });
+        }
+        if (state.activeAccountId !== accountId) return;
+        attachments = await call('importAttachments', { files: encoded, accountId });
+      } else attachments = await call('chooseAttachments', { language: i18n.getLanguage(), accountId });
+      if (state.activeAccountId !== accountId || !Array.isArray(attachments)) return;
+      const combined = [...draft.attachments, ...attachments.filter(item => item?.id && !draft.attachments.some(previous => previous.id === item.id))];
+      if (combined.length > 10) throw new Error(t('每条消息最多添加 10 个附件。'));
+      if (combined.reduce((sum, file) => sum + (file.size || 0), 0) > 50 * 1024 * 1024) throw new Error(t('每条消息的附件总大小不能超过 50 MB。'));
+      draft.attachments = combined;
+    } catch (error) { if (state.activeAccountId === accountId) toast(error.message || t('添加附件失败，请重试。'), true, 6500); }
+    finally { draft.pending--; renderComposerState(); }
+  }
 
   function newChat() {
     if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
@@ -585,8 +684,9 @@
       // A model without a published effort menu needs an actual session readback.
       const session = await call('createSession', { cwd: state.settings.workspace || undefined, model });
       if (!session?.id) throw new Error(t('引擎未返回该模型的配置，请重试。'));
+      const draft = currentDraft(); rememberDraft();
       upsertSession(session); state.activeId = session.id;
-      state.drafts.delete('__new__'); rememberDraft();
+      state.drafts.set(session.id, draft); state.drafts.delete('__new__');
       renderSessions(); renderWorkspace(); renderMessages();
     } finally { state.configuring = false; renderSelects(); renderComposerState(); }
   }
@@ -599,7 +699,9 @@
 
   async function sendMessage() {
     const text = $('prompt').value.trim();
-    if (!text || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
+    const draft = currentDraft();
+    const attachments = [...draft.attachments];
+    if ((!text && !attachments.length) || draft.pending || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
     if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
     if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
     state.sending = true;
@@ -611,20 +713,21 @@
         session = await call('createSession', { cwd: state.settings.workspace || undefined, model: state.selectedModel || undefined, mode: state.selectedMode || undefined });
         if (!session?.id) throw new Error(t('引擎未能创建对话，请重试。'));
         upsertSession(session); state.activeId = session.id;
-        state.drafts.delete('__new__');
+        state.drafts.set(session.id, draft); state.drafts.delete('__new__');
       }
       state.busy.add(session.id); state.started.set(session.id, Date.now());
-      $('prompt').value = ''; state.drafts.delete(session.id); resizePrompt();
+      $('prompt').value = ''; draft.text = ''; draft.attachments = []; resizePrompt();
       renderSessions(); renderSelects(); renderWorkspace(); renderMessages(true);
-      const result = await call('send', { sessionId: session.id, text });
+      const result = await call('send', { sessionId: session.id, text, attachments: attachments.map(({ id }) => ({ id })) });
       if (result?.accepted === false) {
         state.busy.delete(session.id); state.started.delete(session.id);
-        $('prompt').value = text; resizePrompt();
+        $('prompt').value = text; draft.text = text; draft.attachments = attachments; resizePrompt();
         if (!result.cancelled) throw new Error(t('引擎未接受这条消息，请重试。'));
       }
     } catch (error) {
       if (session?.id) { state.busy.delete(session.id); state.started.delete(session.id); }
-      if (!$('prompt').value) { $('prompt').value = text; resizePrompt(); }
+      if (!$('prompt').value) { $('prompt').value = text; draft.text = text; }
+      draft.attachments = attachments; resizePrompt();
       toast(error.message || t('消息发送失败。'), true, 6500);
     } finally {
       state.sending = false; renderComposerState(); renderSelects(); renderSessions(); $('prompt').focus();
@@ -712,7 +815,7 @@
       else toast(t('对话“{title}”需要你的授权。', { title: sessionTitle(state.sessions.find(item => item.id === sessionId) || {}) }), false, 8000);
       return;
     }
-    if (['text', 'thought', 'tool', 'image'].includes(event.type)) {
+    if (['text', 'thought', 'tool', 'image', 'attachment'].includes(event.type)) {
       const message = getStreamMessage(sessionId); if (!message) return;
       const wasBusy = state.busy.has(sessionId);
       state.busy.add(sessionId);
@@ -722,6 +825,10 @@
       if (event.type === 'image' && event.image?.src) {
         message.images ||= [];
         if (!message.images.some(image => image.src === event.image.src)) message.images.push(event.image);
+      }
+      if (event.type === 'attachment' && event.attachment?.id) {
+        message.attachments ||= [];
+        if (!message.attachments.some(attachment => attachment.id === event.attachment.id)) message.attachments.push(event.attachment);
       }
       if (event.type === 'tool') {
         const tool = event.tool || event;
@@ -1018,6 +1125,23 @@
     $('image-dialog').addEventListener('close', () => $('image-preview').removeAttribute('src'));
     $('new-session').addEventListener('click', newChat);
     $('composer-form').addEventListener('submit', event => { event.preventDefault(); void sendMessage(); });
+    $('attach-button').addEventListener('click', () => { void addAttachments(); });
+    $('prompt').addEventListener('paste', event => {
+      const files = [...(event.clipboardData?.files || [])];
+      if (files.length) { event.preventDefault(); void addAttachments(files); }
+    });
+    const composer = $('composer-form');
+    composer.addEventListener('dragover', event => {
+      if ([...(event.dataTransfer?.types || [])].includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; composer.classList.add('drag-over'); }
+    });
+    composer.addEventListener('dragleave', event => { if (!composer.contains(event.relatedTarget)) composer.classList.remove('drag-over'); });
+    composer.addEventListener('drop', event => {
+      composer.classList.remove('drag-over');
+      const files = [...(event.dataTransfer?.files || [])];
+      if (files.length) { event.preventDefault(); void addAttachments(files); }
+    });
+    // Do not let dropping a file outside the composer navigate away from the app.
+    for (const type of ['dragover', 'drop']) document.addEventListener(type, event => { if ([...(event.dataTransfer?.types || [])].includes('Files')) event.preventDefault(); });
     $('prompt').addEventListener('input', () => { resizePrompt(); rememberDraft(); });
     $('prompt').addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); void sendMessage(); }
@@ -1128,7 +1252,18 @@
     document.addEventListener('click', event => {
       if (!$('session-menu').hidden && !$('session-menu').contains(event.target) && !event.target.closest('.session-more')) closeSessionMenu();
       const anchor = event.target.closest('.message-body a');
-      if (anchor) { event.preventDefault(); const url = anchor.getAttribute('href'); if (url && /^https?:\/\//i.test(url)) void guarded(() => call('openExternal', url)); else toast(t('此链接不是网页地址，请在项目中查看对应文件。')); }
+      if (anchor) {
+        event.preventDefault();
+        const url = anchor.getAttribute('href');
+        const article = anchor.closest('.message');
+        const message = activeSession()?.messages.find(item => item.id === article?.dataset.messageId);
+        const attachment = message?.attachments?.find(item => item.src === url);
+        if (attachment) {
+          const card = [...article.querySelectorAll('.attachment-card')].find(item => item.dataset.attachmentId === attachment.id);
+          card?.querySelector('.attachment-save')?.click();
+        } else if (url && /^https?:\/\//i.test(url)) void guarded(() => call('openExternal', url));
+        else toast(t('此链接不是网页地址，请在项目中查看对应文件。'));
+      }
     });
     document.addEventListener('keydown', event => {
       if (event.key === 'Escape') closeSessionMenu();
@@ -1137,8 +1272,11 @@
     });
     $('conversation-scroll').addEventListener('scroll', () => { $('scroll-bottom').hidden = !activeSession()?.messages.length || nearBottom(); });
     $('scroll-bottom').addEventListener('click', () => { $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight; });
+    const composerRegion = document.querySelector('.composer-region');
+    const composerObserver = new ResizeObserver(() => { $('scroll-bottom').style.bottom = `${composerRegion.getBoundingClientRect().height + 8}px`; });
+    composerObserver.observe(composerRegion);
     window.addEventListener('resize', closeSessionMenu);
-    window.addEventListener('beforeunload', () => { if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
+    window.addEventListener('beforeunload', () => { composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
   }
 
   function applyLanguage(language) {

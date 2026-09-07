@@ -107,6 +107,39 @@ async function started(t) {
   return result;
 }
 
+test('attachment-only turns preserve files, validate tokens and survive restart', async t => {
+  const { root, controller, session, adapter } = await started(t);
+  const [file] = await controller.importAttachments({ files: [{ name: 'report.txt', data: Buffer.from('hello file').toString('base64') }] });
+  await assert.rejects(controller.send({ sessionId: session.id, attachments: [{ id: 'forged', src: 'C:\\private' }] }), /失效/);
+  assert.equal(controller.active, null);
+  assert.deepEqual(await controller.send({ sessionId: session.id, attachments: [{ id: file.id, src: 'ignored' }] }), { accepted: true });
+  assert.equal(adapter.prompts[0].text, '');
+  assert.equal(adapter.prompts[0].attachments[0].path, file.src);
+  assert.match(adapter.prompts[0].attachments[0].uri, /^file:/);
+  assert.equal(session.messages[0].attachments[0].name, 'report.txt');
+  assert.equal(session.title, 'report.txt');
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: '[result](result.txt)' });
+  fs.writeFileSync(path.join(session.cwd, 'result.txt'), 'generated file');
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
+  const received = session.messages[1].attachments[0];
+  assert.equal((await controller.attachmentBytes({ sessionId: session.id, attachmentId: received.id })).toString(), 'generated file');
+  assert.match(controller.exportMarkdown(session.id), /report\.txt/);
+  const restored = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+  assert.equal((await restored.attachmentBytes({ sessionId: session.id, attachmentId: file.id })).toString(), 'hello file');
+  await restored.close();
+});
+
+test('attachments cannot cross accounts or escape allowed download directories', async t => {
+  const { controller, session } = await started(t);
+  await assert.rejects(controller.importAttachments({ files: [{ name: 'wrong-account.txt', data: '' }], accountId: 'other-account' }), /失效/);
+  const [file] = await controller.importAttachments({ files: [{ name: 'private.txt', data: 'cHJpdmF0ZQ==' }] });
+  controller.pendingAttachments.get(file.id).accountId = 'other-account';
+  await assert.rejects(controller.send({ sessionId: session.id, text: 'read', attachments: [{ id: file.id }] }), /失效/);
+  await assert.rejects(controller.attachmentBytes({ sessionId: session.id, attachmentId: file.id }), /失效/);
+  session.messages.push({ role: 'assistant', text: '', attachments: [{ id: 'outside', src: controller.file, name: 'private.json' }] });
+  await assert.rejects(controller.attachmentBytes({ sessionId: session.id, attachmentId: 'outside' }), /允许的目录/);
+});
+
 test('execution plans replace prior entries, ignore replay and other sessions, and survive restart', async t => {
   const { controller, session, adapter } = await started(t);
   await controller.send({ sessionId: session.id, text: 'Plan a change' });
