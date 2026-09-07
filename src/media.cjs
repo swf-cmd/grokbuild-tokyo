@@ -3,8 +3,10 @@
 const { createI18n } = require('./i18n.js');
 const defaultT = createI18n('en');
 const fs = require('node:fs/promises');
+const { constants } = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
+const { downloadPublicResource } = require('./resource-download.cjs');
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp', 'image/x-icon']);
 
@@ -60,6 +62,36 @@ function imageMime(bytes, t = defaultT) {
 function isWithin(root, target) {
   const relative = path.relative(root, target);
   return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+async function readLocalBytes(file, roots, t = defaultT, attachment = false) {
+  const invalid = attachment ? '附件必须是文件，且不能超过 20 MB' : '图片不能超过 20 MB';
+  const denied = attachment ? '附件不在这段对话允许的目录内' : '图片不在这段对话的工作目录或图片缓存内';
+  const target = await fs.realpath(file);
+  if (roots && !roots.some(root => isWithin(root, target))) throw new Error(t(denied));
+  const before = await fs.lstat(target);
+  if (!before.isFile() || before.size > MAX_IMAGE_BYTES) throw new Error(t(invalid));
+  // O_NOFOLLOW rejects last-component swaps on platforms that support it;
+  // O_NONBLOCK prevents a substituted FIFO from hanging the main process.
+  const handle = await fs.open(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+  try {
+    const stat = await handle.stat();
+    const current = await fs.realpath(target);
+    if ((roots && !roots.some(root => isWithin(root, current))) || comparableDirectory(current) !== comparableDirectory(target)
+      || stat.dev !== before.dev || stat.ino !== before.ino) throw new Error(t(denied));
+    if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) throw new Error(t(invalid));
+    // readFile() can allocate without a bound if a writer grows the file after
+    // stat. Read only the observed size plus one byte and reject changes.
+    const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_IMAGE_BYTES + 1));
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await handle.read(bytes, length, bytes.length - length, length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    if (length !== stat.size || length > MAX_IMAGE_BYTES) throw new Error(t(attachment ? '附件读取期间发生变化，请重新选择' : '图片不能超过 20 MB'));
+    return bytes.subarray(0, length);
+  } finally { await handle.close(); }
 }
 
 function comparableDirectory(value) {
@@ -136,13 +168,14 @@ async function findSessionImageDirectory(grokHome, cwd, sessionId) {
   return undefined;
 }
 
-async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
+async function resolveImage(src, cwd, sessionDirectory, t = defaultT, fetcher) {
   if (typeof src !== 'string' || !src.trim() || src.length > MAX_IMAGE_BYTES * 1.4) throw new Error(t('无效的图片地址'));
   src = src.trim();
   if (/^https?:\/\//i.test(src)) {
     const url = new URL(src);
     if (url.username || url.password) throw new Error(t('图片地址不能包含登录凭据'));
-    return { src: url.href };
+    const bytes = await downloadPublicResource(url.href, { t, fetcher });
+    return { src: `data:${imageMime(bytes, t)};base64,${bytes.toString('base64')}` };
   }
   if (/^data:/i.test(src)) {
     const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/\r\n]*={0,2})$/i.exec(src);
@@ -177,19 +210,13 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT) {
   search: for (const root of roots) {
     for (const file of files) {
       try { target = await fs.realpath(path.resolve(root, file)); break search; }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error; }
     }
   }
   if (!target) throw Object.assign(new Error(t('找不到图片文件，文件可能已移动或删除')), { code: 'ENOENT' });
   if (!roots.some(root => isWithin(root, target))) throw new Error(t('图片不在这段对话的工作目录或图片缓存内'));
-  const handle = await fs.open(target, 'r');
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) throw new Error(t('图片不能超过 20 MB'));
-    const bytes = await handle.readFile();
-    if (bytes.length > MAX_IMAGE_BYTES) throw new Error(t('图片不能超过 20 MB'));
-    return { src: `data:${imageMime(bytes, t)};base64,${bytes.toString('base64')}` };
-  } finally { await handle.close(); }
+  const bytes = await readLocalBytes(target, roots, t);
+  return { src: `data:${imageMime(bytes, t)};base64,${bytes.toString('base64')}` };
 }
 
-module.exports = { imagesFromContent, imagesFromTools, restoreMessageImages, isReadTool, resolveImage, imageMime, findSessionImageDirectory };
+module.exports = { imagesFromContent, imagesFromTools, restoreMessageImages, isReadTool, resolveImage, imageMime, findSessionImageDirectory, readLocalBytes };

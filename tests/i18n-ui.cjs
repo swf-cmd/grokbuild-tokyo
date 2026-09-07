@@ -241,7 +241,8 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
         assert.equal(await page.locator('.chat-image img').first().getAttribute('alt'), translated(locale, '图片'));
         assert.equal(await page.locator('.chat-image img').nth(1).getAttribute('alt'), 'Grok 返回的图片');
         assert.equal(await page.locator('.chat-image figcaption').last().textContent(), translated(locale, '找不到图片文件，文件可能已移动或删除'));
-        assert.equal(await page.locator('#messages [data-i18n]').textContent(), 'Authored Markdown');
+        assert.equal(await page.locator('#messages [data-i18n]').count(), 0, 'reply HTML cannot create application translation attributes');
+        assert.equal(await page.getByText('Authored Markdown', { exact: true }).textContent(), 'Authored Markdown');
         assert.equal(await page.locator('.chat-image figcaption').first().textContent(), translated(locale, '{alt} · 点击放大', { alt: translated(locale, '图片') }));
       }
     });

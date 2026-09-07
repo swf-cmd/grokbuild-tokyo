@@ -38,7 +38,7 @@ const readSettings = () => JSON.parse(fs.readFileSync(stateFile, 'utf8')).settin
     });
   });
   await page.reload();
-  const ready = () => page.waitForFunction(() => document.querySelector('#connection-label').textContent.includes('已连接'));
+  const ready = () => page.waitForFunction(() => document.querySelector('#connection-label').textContent === window.TokyoI18n.t('引擎已连接'));
   const musicState = state => page.waitForFunction(state => document.querySelector('#music-status').dataset.state === state, state, { timeout: 45000 });
   const openSettings = () => page.locator('#settings-button').click();
   const closeSettings = () => page.locator('[data-close-dialog="settings-dialog"]').click();

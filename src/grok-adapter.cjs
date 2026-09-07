@@ -4,12 +4,13 @@
 // Reference: ~/.grok/docs/user-guide/15-agent-mode.md and agentclientprotocol.com.
 const { createI18n } = require('./i18n.js');
 const { EventEmitter } = require('node:events');
+const { randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
-const { imagesFromContent, imageMime } = require('./media.cjs');
+const { imagesFromContent, imageMime, readLocalBytes } = require('./media.cjs');
 const { attachmentsFromContent } = require('./attachments.cjs');
 const { version: clientVersion } = require('../package.json');
 const { labelModel, isLegacyGrok4Label, servedModelFromUsage } = require('./model-labels.cjs');
@@ -20,6 +21,8 @@ const MAX_LINE = 80 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_ATTACHMENT_BATCH_BYTES = 50 * 1024 * 1024;
 const PROTOCOL_VERSION = 1;
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isRequestId = value => typeof value === 'string' || Number.isSafeInteger(value);
 
 function failure(message, code) {
   const error = new Error(message);
@@ -76,6 +79,7 @@ class GrokAdapter extends EventEmitter {
     this.ready = false;
     this.closed = false;
     this.startPromise = null;
+    this.closePromise = null;
     this.info = { protocol: 'acp', connected: false, permissionMode: 'inherit', subagentsEnabled: this.subagentsEnabled, capabilities: {}, models: [], modes: [] };
   }
 
@@ -98,6 +102,10 @@ class GrokAdapter extends EventEmitter {
 
   async _start() {
     await this._validateCwd(this.cwd);
+    // Closing can win while filesystem validation or a previous teardown waits.
+    if (this.closed) throw failure(this.t('Grok 连接已关闭，请重新连接。'), 'CLOSED');
+    if (this.process) await this._terminateProcess(this.process);
+    if (this.closed) throw failure(this.t('Grok 连接已关闭，请重新连接。'), 'CLOSED');
     this.configOptionSupported = undefined;
     this._event({ type: 'status', status: 'connecting' });
     // Isolate this transport, while retaining the CLI's official configuration.
@@ -114,11 +122,13 @@ class GrokAdapter extends EventEmitter {
     let buffer = '';
     let stderr = '';
     let disconnected = false;
-    const disconnect = error => {
+    const disconnect = (error, exited = false) => {
+      const ownsChild = this.process === child;
+      // A pipe error is not proof that the process (or its tools) has exited.
+      if (ownsChild && exited) this.process = null;
       if (disconnected) return;
       disconnected = true;
-      if (this.process === child) {
-        this.process = null;
+      if (ownsChild) {
         this.ready = false;
         this.info.connected = false;
         for (const session of this.sessions.values()) { session.loaded = false; session.modelSelectionVerified = false; }
@@ -127,20 +137,20 @@ class GrokAdapter extends EventEmitter {
           request.reject(error);
         }
         this.pending.clear();
-        this.permissions.clear();
+        this._cancelPermissions();
         for (const turn of this.active.values()) clearTimeout(turn.cancelTimer);
         this._event({ type: 'status', status: 'disconnected', message: error.message });
       }
     };
     child.on('error', error => disconnect(failure(
-      error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 grok.exe。') : this.safeMessage(error.message), error.code)));
+      error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 grok.exe。') : this.safeMessage(error.message), error.code), child.pid == null));
     child.on('exit', (code, signal) => disconnect(failure(
       this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
-      'PROCESS_EXIT')));
+      'PROCESS_EXIT'), true));
     child.stdin.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
-      if (this.process !== child) return;
+      if (this.process !== child || disconnected) return;
       buffer += decoder.write(data);
       let newline;
       while ((newline = buffer.indexOf('\n')) >= 0) {
@@ -179,12 +189,14 @@ class GrokAdapter extends EventEmitter {
       this.info.agentName = result.agentInfo?.title || result.agentInfo?.name || 'Grok Build';
       this.info.authMethods = (result.authMethods || []).map(({ id, name }) => ({ id, name }));
       this._updateModels(result._meta?.modelState);
+      if (this.closed) throw failure(this.t('Grok 连接已关闭，请重新连接。'), 'CLOSED');
+      if (this.process !== child || disconnected) throw failure(this.t('Grok 尚未连接，请重新连接。'), 'NOT_CONNECTED');
       this.ready = true;
       this.info.connected = true;
       this._event({ type: 'status', status: 'ready', info: this.getInfo() });
       return this.getInfo();
     } catch (error) {
-      await this._kill(child);
+      await this._terminateProcess(child);
       throw error;
     }
   }
@@ -222,7 +234,7 @@ class GrokAdapter extends EventEmitter {
   }
 
   _message(message) {
-    if (!message || typeof message !== 'object') return;
+    if (!isRecord(message)) return;
     if (!message.method && Object.hasOwn(message, 'id')) {
       const request = this.pending.get(message.id);
       if (!request) return;
@@ -235,12 +247,25 @@ class GrokAdapter extends EventEmitter {
     const params = message.params || {};
     if (Object.hasOwn(message, 'id')) {
       if (message.method === 'session/request_permission') {
-        const requestId = String(message.id);
-        const permission = { id: message.id, sessionId: params.sessionId, toolCall: params.toolCall || {}, options: params.options || [] };
-        if (this.closed || this.active.get(params.sessionId)?.cancelled) {
+        if (!isRequestId(message.id)) return;
+        const turn = this.active.get(params.sessionId);
+        const validOptions = Array.isArray(params.options) && params.options.length > 0
+          && params.options.every(option => isRecord(option) && typeof option.optionId === 'string'
+            && ['allow_once', 'allow_always', 'reject_once', 'reject_always'].includes(option.kind))
+          && new Set(params.options.map(option => option.optionId)).size === params.options.length;
+        // Fail closed for stale, malformed, or unsolicited requests. A queued
+        // renderer click must never approve a new request that reuses a wire ID.
+        const duplicate = [...this.permissions.entries()].find(([, permission]) => permission.id === message.id);
+        if (duplicate) {
+          this.permissions.delete(duplicate[0]);
+          this._event({ type: 'status', status: 'permission_resolved', sessionId: duplicate[1].sessionId, requestId: duplicate[0], cancelled: true });
+        }
+        if (this.closed || !turn?.dispatched || turn.cancelled || !validOptions || !isRecord(params.toolCall) || duplicate) {
           this._write({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'cancelled' } } });
           return;
         }
+        const requestId = randomUUID();
+        const permission = { id: message.id, sessionId: params.sessionId, toolCall: params.toolCall, options: params.options };
         this.permissions.set(requestId, permission);
         this._event({ type: 'permission', requestId, sessionId: params.sessionId, toolCall: permission.toolCall, options: permission.options });
       } else {
@@ -499,7 +524,7 @@ class GrokAdapter extends EventEmitter {
       const uri = pathToFileURL(attachment.path).href;
       const inlineImage = attachment.mimeType.startsWith('image/') && this.info.capabilities.promptCapabilities?.image === true;
       if (inlineImage) {
-        const bytes = await fs.readFile(attachment.path);
+        const bytes = await readLocalBytes(attachment.path, [path.dirname(attachment.path)], this.t, true);
         if (bytes.length > MAX_ATTACHMENT_BYTES || bytes.length !== stat.size) throw failure(this.t('附件读取期间发生变化，请重新选择'), 'ATTACHMENT_CHANGED');
         prompt.push({ type: 'image', data: bytes.toString('base64'), mimeType: imageMime(bytes, this.t), uri });
       } else {
@@ -527,7 +552,7 @@ class GrokAdapter extends EventEmitter {
     if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
     // Check again after the asynchronous connection/load to reject double sends.
     if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
-    const turn = { text: '', cancelled: false, cancelTimer: null };
+    const turn = { text: '', cancelled: false, cancelTimer: null, dispatched: false };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });
     try {
@@ -536,6 +561,7 @@ class GrokAdapter extends EventEmitter {
         this._event({ type: 'status', status: 'cancelled', sessionId });
         return { stopReason: 'cancelled', text: turn.text, cancelled: true };
       }
+      turn.dispatched = true;
       const result = await this._request('session/prompt', { sessionId, prompt }, 0);
       const cancelled = turn.cancelled || result.stopReason === 'cancelled';
       this._event({ type: 'status', status: cancelled ? 'cancelled' : 'idle', sessionId, stopReason: result.stopReason });
@@ -597,7 +623,8 @@ class GrokAdapter extends EventEmitter {
     if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
     if (process.platform === 'win32' && Number.isInteger(child.pid)) {
       return new Promise(resolve => {
-        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', shell: false });
+        const taskkill = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
+        const killer = spawn(taskkill, ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', shell: false });
         killer.on('error', () => { try { child.kill(); } catch {} resolve(); });
         killer.on('exit', code => { if (code) { try { child.kill(); } catch {} } resolve(); });
       });
@@ -608,8 +635,30 @@ class GrokAdapter extends EventEmitter {
   }
 
   async close() {
-    if (this.closed) return;
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
+    const closing = this._close();
+    this.closePromise = closing;
+    try { await closing; }
+    finally { if (this.closePromise === closing) this.closePromise = null; }
+  }
+
+  _waitForExit(child, timeout = 2000) {
+    if (child.pid == null || child.exitCode != null || child.signalCode != null) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const done = exited => { clearTimeout(timer); child.removeListener('exit', onExit); resolve(exited); };
+      const onExit = () => done(true);
+      const timer = setTimeout(() => done(false), timeout);
+      child.once('exit', onExit);
+    });
+  }
+
+  async _terminateProcess(child) {
+    await this._kill(child);
+    if (!await this._waitForExit(child)) throw failure(this.t('无法确认 Grok 进程已停止，请重试关闭。'), 'PROCESS_STOP_FAILED');
+  }
+
+  async _close() {
     for (const sessionId of this.active.keys()) {
       try { await this.cancel(sessionId); } catch {}
     }
@@ -619,14 +668,11 @@ class GrokAdapter extends EventEmitter {
     // Windows workers may retain the working directory after their parent exits.
     // Kill this owned tree before ending stdin so taskkill can still find descendants.
     if (process.platform === 'win32') {
-      await this._kill(child);
+      await this._terminateProcess(child);
       return;
     }
-    await new Promise(resolve => {
-      const timer = setTimeout(() => { this._kill(child); resolve(); }, 1000);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
-      try { child.stdin.end(); } catch { this._kill(child); }
-    });
+    try { child.stdin.end(); } catch { /* Escalate below if exit is not observed. */ }
+    if (!await this._waitForExit(child, 1000)) await this._terminateProcess(child);
   }
 }
 

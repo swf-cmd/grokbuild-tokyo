@@ -83,6 +83,13 @@ class FakeAdapter extends EventEmitter {
   async close() { test.calls.push({ method: 'close' }); for (const resolve of this.pending.values()) resolve({ stopReason: 'cancelled' }); this.pending.clear(); }
 }
 const adapterFile = path.join(sourceRoot, 'src', 'grok-adapter.cjs');
+// The production main process fetches remote media before sending data URLs to
+// Chromium. Keep the image smoke fixture entirely offline at that boundary.
+const resources = require(path.join(sourceRoot, 'src', 'resource-download.cjs'));
+const downloadResource = resources.downloadPublicResource;
+resources.downloadPublicResource = (src, ...args) => src === 'https://images.example.test/preview.png'
+  ? Promise.resolve(fs.readFileSync(path.join(sourceRoot, 'src/renderer/assets/icon.png')))
+  : downloadResource(src, ...args);
 require.cache[adapterFile] = { id: adapterFile, filename: adapterFile, loaded: true, exports: { GrokAdapter: FakeAdapter } };
 const accountsFile = path.join(sourceRoot, 'src', 'account-manager.cjs');
 const { AccountManager, ACCOUNT_ID } = require(accountsFile);

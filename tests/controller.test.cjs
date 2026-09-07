@@ -732,7 +732,8 @@ test('image validation receives the active controller translator without changin
   const { controller, session } = await started(t);
   controller.t = source => source === '不支持的图片地址' ? 'Unsupported image address' : source;
   await assert.rejects(controller.readImage({ sessionId: session.id, src: 'javascript:invalid' }), /Unsupported image address/);
-  assert.deepEqual(await controller.readImage({ sessionId: session.id, src: 'https://example.test/raw-image.png' }), { src: 'https://example.test/raw-image.png' });
+  const src = `data:image/png;base64,${fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png')).toString('base64')}`;
+  assert.deepEqual(await controller.readImage({ sessionId: session.id, src }), { src });
 });
 
 test('invalid atmosphere patches reject atomically and leave saved settings and the engine intact', async t => {
@@ -1028,6 +1029,56 @@ test('account switching isolates sessions, credentials and stale engine events a
   } finally { await next.close(); }
 });
 
+test('failed engine shutdown retains ownership and blocks switching or login until exit can be confirmed', async t => {
+  for (const action of ['switch', 'login']) await t.test(action, async t => {
+    const { controller, adapter, instances, session } = await started(t);
+    const account = await controller.addAccount({ name: 'Work' });
+    signIn(controller, account);
+    const originalClose = adapter.close.bind(adapter);
+    let attempts = 0;
+    adapter.close = async () => { attempts++; throw new Error('fixture process exit unconfirmed'); };
+    let loginSpawns = 0;
+    controller.accountManager.spawnProcess = () => { loginSpawns++; throw new Error('must not launch login'); };
+    const events = [];
+    controller.on('event', event => events.push(event));
+    try {
+      const change = action === 'switch' ? controller.switchAccount(account.id) : controller.loginAccount('local');
+      await assert.rejects(change, /process exit unconfirmed/);
+      assert.equal(controller.adapter, adapter, 'the process must remain owned for a later shutdown retry');
+      assert.equal(controller.activeAccountId, 'local');
+      assert.equal(controller.connected, false);
+      assert.equal(loginSpawns, 0);
+      const count = events.length;
+      adapter.emit('event', { type: 'permission', sessionId: session.id, requestId: 'late', options: [{ optionId: 'allow' }] });
+      assert.equal(events.length, count, 'a retiring engine must not publish new permission controls');
+      await assert.rejects(controller.reconnect(), /process exit unconfirmed/);
+      assert.equal(instances.length, 1, 'a second engine must not launch while the first is unconfirmed');
+      assert.equal(attempts, 2);
+    } finally { adapter.close = originalClose; }
+    await controller.reconnect();
+    assert.equal(adapter.closeCount, 1);
+    assert.equal(instances.length, 2);
+    assert.equal(controller.connected, true);
+  });
+});
+
+test('a delayed permission response cannot remove a replacement permission with the same external id', async t => {
+  const { controller, adapter, session } = await started(t);
+  const gate = deferred();
+  adapter.respondPermission = async () => gate.promise;
+  adapter.emit('event', { type: 'permission', sessionId: session.id, requestId: '42', options: [{ optionId: 'allow' }] });
+  const first = controller.permission({ requestId: '42', optionId: 'allow' });
+  adapter.emit('event', { type: 'status', status: 'permission_resolved', sessionId: session.id, requestId: '42' });
+  adapter.emit('event', { type: 'permission', sessionId: session.id, requestId: '42', options: [{ optionId: 'reject' }] });
+  const replacement = controller.permissions.get('42');
+  gate.resolve();
+  await first;
+  assert.equal(controller.permissions.get('42'), replacement);
+  adapter.respondPermission = async args => adapter.responses.push(args);
+  await controller.permission({ requestId: '42', optionId: 'reject' });
+  assert.deepEqual(adapter.responses, [{ requestId: '42', optionId: 'reject' }]);
+});
+
 test('unsigned accounts remain offline, while busy turns and failed saves cannot switch accounts', async t => {
   const { controller, session, adapter } = await started(t);
   const account = await controller.addAccount({ name: 'Unlogged' });
@@ -1288,6 +1339,27 @@ test('unreadable history permanently quarantines staged credentials across close
     assert.equal(restarted.accounts.some(a => a.id === account.id), false);
     assert.equal(fs.existsSync(path.join(restarted.accountManager.recoveryDirectory(account.id), 'grok', 'auth.json')), true);
   } finally { await restarted.close(); }
+});
+
+test('missing account commit markers preserve staged credentials across close and restart', async t => {
+  for (const marker of ['missing-file', 'legacy-file-without-account-list']) await t.test(marker, async t => {
+    const { controller, root } = await started(t);
+    const account = await controller.addAccount({ name: 'Work' });
+    signIn(controller, account);
+    controller.accountManager.stageDelete(account.id);
+    if (marker === 'missing-file') fs.unlinkSync(controller.file);
+    else fs.writeFileSync(controller.file, JSON.stringify({ settings: {}, sessions: [] }));
+    const next = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+    const recoveryAuth = path.join(next.accountManager.recoveryDirectory(account.id), 'grok', 'auth.json');
+    try {
+      assert.match(next.loadError, /recovery/);
+      assert.equal(fs.existsSync(recoveryAuth), true);
+      assert.equal(fs.existsSync(next.accountManager.profileDirectory(account.id, true)), false);
+    } finally { await next.close(); }
+    const restarted = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
+    try { assert.equal(fs.existsSync(recoveryAuth), true); }
+    finally { await restarted.close(); }
+  });
 });
 
 test('failed quarantine blocks saving reset history until staged credentials can be preserved', async t => {

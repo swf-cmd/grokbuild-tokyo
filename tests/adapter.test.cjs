@@ -105,7 +105,8 @@ test('permission options are explicit, validated, and resolved once', async t =>
   const permission = new Promise(resolve => adapter.on('event', event => { if (event.type === 'permission') resolve(event); }));
   const prompt = adapter.prompt({ sessionId, text: 'permission' });
   const request = await permission;
-  assert.equal(request.requestId, 'allow-42');
+  assert.match(request.requestId, /^[a-f0-9-]{36}$/);
+  assert.notEqual(request.requestId, 'allow-42', 'renderer handles are independent of reusable agent IDs');
   await assert.rejects(adapter.respondPermission({ requestId: request.requestId, optionId: 'unknown' }), { code: 'INVALID_PERMISSION' });
   await adapter.respondPermission({ requestId: request.requestId, optionId: 'no' });
   assert.equal((await prompt).text, 'Denied');
@@ -364,4 +365,125 @@ test('failed restores release the replay lock so a later restore can retry', asy
   assert.equal(adapter.sessionLoads.size, 0);
   assert.equal(adapter.loading.size, 0);
   assert.equal((await adapter.loadSession({ sessionId: 'test-session' })).loaded, true);
+});
+
+function permissionFixture() {
+  const adapter = new GrokAdapter();
+  const sent = [], events = [];
+  adapter._write = message => sent.push(message);
+  adapter.on('event', event => events.push(event));
+  adapter.active.set('session', { dispatched: true, cancelled: false });
+  const request = (id, overrides = {}) => adapter._message({ jsonrpc: '2.0', id, method: 'session/request_permission', params: {
+    sessionId: 'session', toolCall: { toolCallId: 'write', title: 'Write file' },
+    options: [{ optionId: 'allow', name: 'Allow once', kind: 'allow_once' }], ...overrides,
+  } });
+  return { adapter, sent, events, request, lastHandle: () => events.filter(event => event.type === 'permission').at(-1)?.requestId };
+}
+
+test('stale permission approvals cannot select a reused wire ID or a different adapter account', async () => {
+  const first = permissionFixture();
+  first.request('reused-id');
+  const oldHandle = first.lastHandle();
+  await first.adapter.respondPermission({ requestId: oldHandle, optionId: 'allow' });
+  first.request('reused-id');
+  assert.notEqual(first.lastHandle(), oldHandle);
+  await assert.rejects(first.adapter.respondPermission({ requestId: oldHandle, optionId: 'allow' }), { code: 'PERMISSION_EXPIRED' });
+  assert.equal(first.sent.length, 1);
+  const second = permissionFixture();
+  second.request('reused-id');
+  assert.notEqual(second.lastHandle(), first.lastHandle());
+  await assert.rejects(second.adapter.respondPermission({ requestId: first.lastHandle(), optionId: 'allow' }), { code: 'PERMISSION_EXPIRED' });
+  assert.equal(second.sent.length, 0);
+});
+
+test('numeric and string protocol IDs stay distinct and duplicate pending IDs fail closed', async () => {
+  const f = permissionFixture();
+  f.request(42);
+  const numeric = f.lastHandle();
+  f.request('42');
+  const string = f.lastHandle();
+  assert.notEqual(numeric, string);
+  await f.adapter.respondPermission({ requestId: numeric, optionId: 'allow' });
+  assert.equal(f.sent[0].id, 42);
+  f.request('42', { toolCall: { toolCallId: 'different-tool', title: 'Different write' } });
+  assert.equal(f.adapter.permissions.size, 0);
+  assert.equal(f.sent[1].id, '42');
+  assert.equal(f.sent[1].result.outcome.outcome, 'cancelled');
+  await assert.rejects(f.adapter.respondPermission({ requestId: string, optionId: 'allow' }), { code: 'PERMISSION_EXPIRED' });
+});
+
+test('unsolicited, cancelled and malformed permission requests cannot reach the approval UI', () => {
+  for (const setup of [
+    f => f.adapter.active.clear(),
+    f => { f.adapter.active.get('session').dispatched = false; },
+    f => { f.adapter.active.get('session').cancelled = true; },
+  ]) {
+    const f = permissionFixture(); setup(f); f.request('unsafe');
+    assert.equal(f.adapter.permissions.size, 0);
+    assert.equal(f.events.length, 0);
+    assert.equal(f.sent[0].result.outcome.outcome, 'cancelled');
+  }
+  for (const overrides of [
+    { options: {} }, { options: [null] }, { options: [] }, { toolCall: null },
+    { options: [{ optionId: 'allow', kind: 'unknown' }] },
+    { options: [{ optionId: 'allow', kind: 'allow_once' }, { optionId: 'allow', kind: 'reject_once' }] },
+  ]) {
+    const f = permissionFixture(); f.request('malformed', overrides);
+    assert.equal(f.adapter.permissions.size, 0);
+    assert.equal(f.events.length, 0);
+    assert.equal(f.sent[0].result.outcome.outcome, 'cancelled');
+  }
+});
+
+test('closing during cwd validation prevents any later CLI spawn', async () => {
+  const adapter = new GrokAdapter({ spawnProcess: () => assert.fail('a closed adapter must never spawn') });
+  let release;
+  adapter._validateCwd = () => new Promise(resolve => { release = resolve; });
+  const starting = adapter.start();
+  const rejected = assert.rejects(starting, { code: 'CLOSED' });
+  await adapter.close();
+  release(adapter.cwd);
+  await rejected;
+  assert.equal(adapter.process, null);
+  assert.equal(adapter.ready, false);
+});
+
+test('failed process termination retains ownership and close can be retried', async t => {
+  const { adapter } = await fixture(t);
+  await adapter.start();
+  const child = adapter.process;
+  const kill = adapter._kill.bind(adapter), wait = adapter._waitForExit.bind(adapter);
+  const end = child.stdin.end.bind(child.stdin);
+  adapter._kill = async () => {};
+  adapter._waitForExit = async () => false;
+  child.stdin.end = () => {};
+  try {
+    await assert.rejects(adapter.close(), { code: 'PROCESS_STOP_FAILED' });
+    assert.equal(adapter.process, child, 'an unconfirmed termination must not lose the owned process');
+    assert.equal(adapter.closePromise, null, 'termination failure must permit a retry');
+    await assert.rejects(adapter.start(), { code: 'CLOSED' });
+  } finally {
+    adapter._kill = kill; adapter._waitForExit = wait; child.stdin.end = end;
+  }
+  await adapter.close();
+  assert.equal(adapter.process, null);
+});
+
+test('a broken transport retains its CLI until shutdown observes process exit', async t => {
+  const { adapter } = await fixture(t);
+  await adapter.start();
+  const child = adapter.process;
+  child.stdin.emit('error', Object.assign(new Error('test pipe failure'), { code: 'EPIPE' }));
+  assert.equal(adapter.ready, false);
+  assert.equal(adapter.process, child);
+  await adapter.close();
+  assert.equal(adapter.process, null);
+});
+
+test('an executable that fails to spawn preserves the original error and releases ownership', async t => {
+  const { adapter, cwd } = await fixture(t);
+  adapter.spawnProcess = spawn;
+  adapter.executable = path.join(cwd, 'nonexistent-grok.exe');
+  await assert.rejects(adapter.start(), { code: 'ENOENT' });
+  assert.equal(adapter.process, null);
 });

@@ -37,6 +37,7 @@ class AppController extends EventEmitter {
     this.accountManager.on('login', login => this.emitEvent({ type: 'account-login', ...this.accountState(), login }));
     this.loaded = new Set();
     this.permissions = new Map();
+    this.retiredAdapters = new WeakSet();
     this.pendingAttachments = new Map();
     this.active = null;
     this.operation = null;
@@ -44,7 +45,9 @@ class AppController extends EventEmitter {
     this.connected = false;
     this.loadError = null;
     this.accountRecoveryError = null;
-    if (fs.existsSync(this.file)) {
+    const hasSavedHistory = fs.existsSync(this.file);
+    let hasAccountCommitMarker = false;
+    if (hasSavedHistory) {
       try {
         const data = JSON.parse(fs.readFileSync(this.file, 'utf8'));
         if (!Array.isArray(data.sessions) || !data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) throw new Error('Invalid saved data');
@@ -60,6 +63,7 @@ class AppController extends EventEmitter {
           if (!Array.isArray(data.accounts) || !data.accounts.some(a => a?.id === 'local') || !data.accounts.every(a => a && typeof a.name === 'string' && (a.id === 'local' || ACCOUNT_ID.test(a.id))) || new Set(data.accounts.map(a => a.id)).size !== data.accounts.length) throw new Error('Invalid accounts');
           this.accounts = data.accounts.map(({ id, name, nameIsDefault }) => ({ id, name, nameIsDefault: id === 'local' && (nameIsDefault === true || (nameIsDefault === undefined && name === '本机 Grok 账户')) }));
           this.activeAccountId = this.accounts.some(a => a.id === data.activeAccountId) ? data.activeAccountId : 'local';
+          hasAccountCommitMarker = true;
         }
         for (const session of this.sessions) {
           session.accountId ||= 'local';
@@ -85,13 +89,15 @@ class AppController extends EventEmitter {
     // A readable saved account list is the commit marker for a staged deletion.
     // Unreadable history must permanently quarantine ambiguous staged data before
     // a new, empty account list can overwrite it and appear to confirm deletion.
-    if (!this.loadError) this.loadError = this.accountManager.recoverDeletes?.(this.accounts.map(a => a.id)).join('\n') || null;
+    if (hasAccountCommitMarker && !this.loadError) this.loadError = this.accountManager.recoverDeletes?.(this.accounts.map(a => a.id)).join('\n') || null;
     else {
       try {
-        if (this.accountManager.preserveUnverifiedDeletes?.()) this.loadError += '\n' + this.t('未确认删除的账户数据已隔离至 data/accounts/.recovery-*，不会自动删除，请结合历史备份恢复。');
+        // A missing file or legacy history without an account list cannot prove
+        // that a staged deletion committed.
+        if (this.accountManager.preserveUnverifiedDeletes?.()) this.loadError = [this.loadError, this.t('未确认删除的账户数据已隔离至 data/accounts/.recovery-*，不会自动删除，请结合历史备份恢复。')].filter(Boolean).join('\n');
       } catch {
         this.accountRecoveryError = this.t('未能隔离未确认删除的账户数据。为保留恢复依据，暂未覆盖历史文件；请检查 data/accounts 文件夹权限后重启。');
-        this.loadError += '\n' + this.accountRecoveryError;
+        this.loadError = [this.loadError, this.accountRecoveryError].filter(Boolean).join('\n');
       }
     }
     fs.mkdirSync(path.join(root, 'Workspace'), { recursive: true });
@@ -155,9 +161,7 @@ class AppController extends EventEmitter {
       const wasActive = this.activeAccountId === id;
       if (wasActive) {
         this.invalidateConnection();
-        const adapter = this.adapter;
-        await adapter?.close();
-        this.adapter = null;
+        await this.closeAdapter();
       }
       const staged = this.accountManager.stageDelete(id);
       const previous = { accounts: this.accounts, sessions: this.sessions, activeAccountId: this.activeAccountId };
@@ -194,9 +198,7 @@ class AppController extends EventEmitter {
       if (!this.accounts.some(a => a.id === id)) throw new Error(this.t('账户不存在'));
       if (this.accountManager.pending) throw new Error(this.t('请先完成或取消账户登录'));
       this.invalidateConnection();
-      const adapter = this.adapter;
-      this.adapter = null;
-      await adapter?.close();
+      await this.closeAdapter();
       const previous = this.activeAccountId;
       this.activeAccountId = id;
       try { this.save(); } catch (error) { this.activeAccountId = previous; throw error; }
@@ -219,9 +221,7 @@ class AppController extends EventEmitter {
       if (!isPathType(this.settings.executable, 'isFile')) throw new Error(this.t('请在设置中选择有效的 grok.exe'));
       if (id === this.activeAccountId) {
         this.invalidateConnection();
-        const adapter = this.adapter;
-        this.adapter = null;
-        await adapter?.close();
+        await this.closeAdapter();
       }
       if (this.closing) throw new Error(this.t('应用正在关闭'));
       return this.accountManager.startLogin(account, this.settings.executable, this.settings.workspace);
@@ -313,6 +313,15 @@ class AppController extends EventEmitter {
   async connect() {
     return this.idleOperation(this.t('连接 Grok'), () => this._connect());
   }
+  async closeAdapter() {
+    const adapter = this.adapter;
+    if (!adapter) return;
+    // Stop accepting events immediately, but retain process ownership until its
+    // exit is confirmed so a failed shutdown remains retryable.
+    this.retiredAdapters.add(adapter);
+    await adapter.close();
+    if (this.adapter === adapter) this.adapter = null;
+  }
   async _connect() {
     if (this.accountManager.pending?.accountId === this.activeAccountId) throw new Error(this.t('请先完成账户登录'));
     if (this.activeAccountId !== 'local' && !this.accountManager.summary(this.accounts.find(a => a.id === this.activeAccountId)).signedIn) throw new Error(this.t('请打开左侧“账户切换”，登录当前账户。'));
@@ -321,15 +330,15 @@ class AppController extends EventEmitter {
     this.connecting = (async () => {
       if (!isPathType(this.settings.executable, 'isFile')) throw new Error(this.t('没有找到 Grok。请在设置中选择 grok.exe。'));
       if (!isPathType(this.settings.workspace, 'isDirectory')) throw new Error(this.t('工作目录不存在，请在设置中重新选择。'));
-      if (this.adapter) await this.adapter.close();
+      await this.closeAdapter();
       this.loaded.clear();
       this.adapter = new this.Adapter({ executable: this.settings.executable, cwd: this.settings.workspace, subagentsEnabled: this.settings.subagentsEnabled, env: this.accountManager.environment(this.activeAccountId), getLanguage: () => this.settings.language });
       const adapter = this.adapter;
-      adapter.on('event', event => { if (this.adapter === adapter) this.handleEvent(event); });
+      adapter.on('event', event => { if (this.adapter === adapter && !this.retiredAdapters.has(adapter)) this.handleEvent(event); });
       try { await adapter.start(); }
       catch (error) {
         this.invalidateConnection();
-        try { await adapter.close(); } catch {}
+        try { await this.closeAdapter(); } catch {}
         throw error;
       }
       this.connected = true;
@@ -589,13 +598,13 @@ class AppController extends EventEmitter {
       throw error;
     }
   }
-  async permission({ requestId, optionId }) {
+  async permission({ requestId, optionId } = {}) {
     const pending = this.permissions.get(String(requestId));
-    if (!pending || pending.responding || !pending.options.some(x => x.optionId === optionId)) throw new Error(this.t('授权请求已失效'));
+    if (this.closing || !pending || pending.responding || !Array.isArray(pending.options) || !pending.options.some(x => x?.optionId === optionId)) throw new Error(this.t('授权请求已失效'));
     pending.responding = true;
     try {
       await this.adapter.respondPermission({ requestId, optionId });
-      this.permissions.delete(String(requestId));
+      if (this.permissions.get(String(requestId)) === pending) this.permissions.delete(String(requestId));
     } catch (error) {
       if (this.permissions.get(String(requestId)) === pending) pending.responding = false;
       throw error;
@@ -637,7 +646,7 @@ class AppController extends EventEmitter {
     const persist = async () => {
       if (changed) {
         this.invalidateConnection();
-        await this.adapter?.close();
+        await this.closeAdapter();
       }
       const previous = this.settings;
       this.settings = next;
@@ -711,7 +720,7 @@ class AppController extends EventEmitter {
     try { this.save(); } catch (error) { failure ||= error; }
     try {
       // A full/unavailable disk must never leave the owned Grok process running.
-      await this.adapter?.close();
+      await this.closeAdapter();
       if (this.turnPromise) await this.turnPromise;
     } catch (error) { failure ||= error; }
     finally { clearTimeout(this.saveTimer); }

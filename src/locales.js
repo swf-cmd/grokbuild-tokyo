@@ -9,6 +9,7 @@
   'use strict';
   return {
   "zh-CN": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "无法确认 Grok 进程已停止，请重试关闭。",
     "附件": "附件",
     "保存附件": "保存附件",
     "保存附件：{name}": "保存附件：{name}",
@@ -53,6 +54,7 @@
     "渋谷 · RAINY NIGHT": "涩谷 · 雨夜"
   },
   "ja": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "Grok プロセスの停止を確認できません。もう一度終了してください。",
     "附件": "添付ファイル",
     "保存附件": "添付ファイルを保存",
     "保存附件：{name}": "添付ファイルを保存：{name}",
@@ -481,6 +483,7 @@
     "（待确认）": "（確認待ち）"
   },
   "en": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "Could not confirm that the Grok process stopped. Please try closing it again.",
     "附件": "Attachment",
     "保存附件": "Save attachment",
     "保存附件：{name}": "Save attachment: {name}",
@@ -909,6 +912,7 @@
     "（待确认）": " (pending confirmation)"
   },
   "ko": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "Grok 프로세스가 중지되었는지 확인할 수 없습니다. 다시 종료해 주세요.",
     "附件": "첨부 파일",
     "保存附件": "첨부 파일 저장",
     "保存附件：{name}": "첨부 파일 저장: {name}",
@@ -1337,6 +1341,7 @@
     "（待确认）": "(확인 대기)"
   },
   "es": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "No se pudo confirmar que el proceso de Grok se haya detenido. Intenta cerrarlo de nuevo.",
     "附件": "Archivo adjunto",
     "保存附件": "Guardar archivo adjunto",
     "保存附件：{name}": "Guardar archivo adjunto: {name}",
@@ -1765,6 +1770,7 @@
     "（待确认）": "(pendiente de confirmar)"
   },
   "de": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "Es konnte nicht bestätigt werden, dass der Grok-Prozess beendet wurde. Versuche erneut, ihn zu schließen.",
     "附件": "Anhang",
     "保存附件": "Anhang speichern",
     "保存附件：{name}": "Anhang speichern: {name}",
@@ -2193,6 +2199,7 @@
     "（待确认）": "(Bestätigung ausstehend)"
   },
   "fr": {
+    "无法确认 Grok 进程已停止，请重试关闭。": "Impossible de confirmer l'arrêt du processus Grok. Réessayez de le fermer.",
     "附件": "Pièce jointe",
     "保存附件": "Enregistrer la pièce jointe",
     "保存附件：{name}": "Enregistrer la pièce jointe : {name}",

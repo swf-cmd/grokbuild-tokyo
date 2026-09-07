@@ -10,7 +10,7 @@ const root = process.env.TOKYO_TEST_ROOT || (app.isPackaged ? path.resolve(path.
 app.setPath('userData', path.join(root, 'data', 'browser'));
 app.setName('Grokbuild Tokyo');
 app.setAppUserModelId('local.grokbuild.tokyo');
-let win, controller, quitting = false;
+let win, controller, quitPending = false, quitAllowed = false;
 const t = createI18n(() => controller?.settings.language);
 const entry = path.join(__dirname, 'renderer', 'index.html');
 const entryURL = pathToFileURL(entry).href;
@@ -27,7 +27,7 @@ else {
     win.webContents.session.setPermissionCheckHandler(() => false);
     controller.on('event', payload => { if (win && !win.isDestroyed()) win.webContents.send('tokyo:event', payload); });
     const handle = (name, fn) => ipcMain.handle(`tokyo:${name}`, (event, ...args) => {
-      if (event.senderFrame?.url !== entryURL) throw new Error('Invalid IPC sender');
+      if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== entryURL) throw new Error('Invalid IPC sender');
       return fn(...args);
     });
     for (const name of ['bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'saveSettings', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
@@ -56,22 +56,26 @@ else {
     handle('exportSession', async id => {
       const s = controller.getSession(id);
       const title = controller.sessionTitle(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80);
+      const markdown = controller.exportMarkdown(id);
       const result = await dialog.showSaveDialog(win, { title: t('导出会话'), defaultPath: path.join(root, `${title}.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] });
       if (result.canceled || !result.filePath) return null;
-      fs.writeFileSync(result.filePath, controller.exportMarkdown(id), 'utf8'); return result.filePath;
+      fs.writeFileSync(result.filePath, markdown, 'utf8'); return result.filePath;
     });
     handle('windowControl', action => { if (action === 'minimize') win.minimize(); else if (action === 'maximize') win.isMaximized() ? win.unmaximize() : win.maximize(); else if (action === 'close') win.close(); });
     handle('openExternal', async url => { const parsed = new URL(url); if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error(t('不支持的链接')); return shell.openExternal(parsed.href); });
     handle('copyText', async text => { if (typeof text !== 'string' || text.length > 2000000) throw new Error(t('无法复制这段内容')); await clipboard.writeText(text); return true; });
     win.once('ready-to-show', () => win.show());
+    win.on('close', event => { if (!quitAllowed) { event.preventDefault(); app.quit(); } });
     win.loadFile(entry);
   }).catch(error => { dialog.showErrorBox(t('Grokbuild Tokyo 启动失败'), error.message); app.exit(1); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
-    if (quitting || !controller) return;
-    event.preventDefault(); quitting = true;
+    if (quitAllowed || !controller) return;
+    event.preventDefault();
+    if (quitPending) return;
+    quitPending = true;
     controller.close()
-      .catch(error => dialog.showErrorBox(t('关闭 Grokbuild Tokyo 时出错'), error.message))
-      .finally(() => app.quit());
+      .then(() => { quitAllowed = true; app.quit(); })
+      .catch(error => { quitPending = false; dialog.showErrorBox(t('关闭 Grokbuild Tokyo 时出错'), error.message); });
   });
 }

@@ -4,7 +4,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { fileURLToPath } = require('node:url');
-const { imageMime, isReadTool } = require('./media.cjs');
+const { imageMime, isReadTool, readLocalBytes } = require('./media.cjs');
+const { downloadPublicResource } = require('./resource-download.cjs');
 const { createI18n } = require('./i18n.js');
 const { lexer, walkTokens } = require('./renderer/vendor/marked.umd.js');
 const defaultT = createI18n('en');
@@ -38,24 +39,6 @@ function decodeBase64(data, t = defaultT) {
   return bytes;
 }
 
-async function readBounded(file, t = defaultT) {
-  const handle = await fs.open(file, 'r');
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || stat.size > MAX_ATTACHMENT_BYTES) throw new Error(t('附件必须是文件，且不能超过 20 MB'));
-    // Bound the read even if another process grows the selected file.
-    const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_ATTACHMENT_BYTES + 1));
-    let length = 0;
-    while (length < bytes.length) {
-      const result = await handle.read(bytes, length, bytes.length - length, length);
-      if (!result.bytesRead) break;
-      length += result.bytesRead;
-    }
-    if (length !== stat.size || length > MAX_ATTACHMENT_BYTES) throw new Error(t('附件读取期间发生变化，请重新选择'));
-    return bytes.subarray(0, length);
-  } finally { await handle.close(); }
-}
-
 async function stageAttachments(files, directory, { fromPaths = false, t = defaultT } = {}) {
   if (!Array.isArray(files) || !files.length || files.length > MAX_ATTACHMENTS) throw new Error(t('每条消息最多添加 10 个附件'));
   const result = [];
@@ -68,7 +51,7 @@ async function stageAttachments(files, directory, { fromPaths = false, t = defau
       if (fromPaths && (typeof file !== 'string' || !path.isAbsolute(file))) throw new Error(t('无效的附件'));
       if (!fromPaths && (!file || typeof file.name !== 'string')) throw new Error(t('无效的附件'));
       const name = safeName(fromPaths ? file : file.name);
-      const bytes = fromPaths ? await readBounded(file, t) : decodeBase64(file.data, t);
+      const bytes = fromPaths ? await readLocalBytes(file, undefined, t, true) : decodeBase64(file.data, t);
       total += bytes.length;
       if (total > MAX_TOTAL_BYTES) throw new Error(t('每条消息的附件总大小不能超过 50 MB'));
       let mimeType;
@@ -144,7 +127,7 @@ function restoreMessageAttachments(message) {
   return [...new Map([...outputs, ...saved, ...explicit].map(attachment => [attachment.id, attachment])).values()];
 }
 
-async function resolveAttachment(src, directories, t = defaultT, fetcher = globalThis.fetch) {
+async function resolveAttachment(src, directories, t = defaultT, fetcher) {
   if (typeof src !== 'string' || !src.trim()) throw new Error(t('无效的附件'));
   src = src.trim();
   if (/^data:/i.test(src)) {
@@ -153,29 +136,7 @@ async function resolveAttachment(src, directories, t = defaultT, fetcher = globa
     return decodeBase64(match[1], t);
   }
   if (/^https?:\/\//i.test(src)) {
-    let url = new URL(src);
-    const signal = AbortSignal.timeout(60000);
-    // Validate each redirect; never interpret a download URL as a local path.
-    for (let attempt = 0; attempt < 6; attempt++) {
-      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error(t('不支持的附件地址'));
-      const response = await fetcher(url.href, { redirect: 'manual', signal });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        await response.body?.cancel();
-        const location = response.headers.get('location');
-        if (!location) throw new Error(t('附件下载失败'));
-        url = new URL(location, url); continue;
-      }
-      if (!response.ok) { await response.body?.cancel(); throw new Error(t('附件下载失败')); }
-      if (Number(response.headers.get('content-length')) > MAX_ATTACHMENT_BYTES) { await response.body?.cancel(); throw new Error(t('附件数据无效或超过 20 MB')); }
-      const parts = []; let total = 0;
-      for await (const chunk of response.body || []) {
-        total += chunk.length;
-        if (total > MAX_ATTACHMENT_BYTES) throw new Error(t('附件数据无效或超过 20 MB'));
-        parts.push(Buffer.from(chunk));
-      }
-      return Buffer.concat(parts);
-    }
-    throw new Error(t('附件下载失败'));
+    return downloadPublicResource(src, { t, fetcher });
   }
   let files = [src];
   if (/^file:/i.test(src)) {
@@ -193,7 +154,7 @@ async function resolveAttachment(src, directories, t = defaultT, fetcher = globa
     let target;
     try { target = await fs.realpath(path.resolve(root, file)); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue; throw error; }
     if (!roots.some(allowed => within(allowed, target))) throw new Error(t('附件不在这段对话允许的目录内'));
-    return readBounded(target, t);
+    return readLocalBytes(target, roots, t, true);
   }
   throw new Error(t('找不到附件文件，文件可能已移动或删除'));
 }

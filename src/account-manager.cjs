@@ -190,7 +190,10 @@ class AccountManager extends EventEmitter {
         if (urlText) {
           try {
             const url = new URL(urlText);
-            if (!url.username && !url.password && !/[?&](?:access_token|refresh_token|token)=/i.test(urlText)) pending.url = url.href;
+            // URLSearchParams decodes escaped parameter names; a raw-string
+            // check misses ?access%5Ftoken= and fragments can contain OAuth tokens.
+            const secretParameter = [...url.searchParams.keys()].some(key => /^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|(?:client[_-]?)?secret|password|authorization|api[_-]?key)$/i.test(key));
+            if (!url.username && !url.password && !url.hash && !secretParameter) pending.url = url.href;
           } catch {}
         }
         if (codeText) pending.code = codeText;

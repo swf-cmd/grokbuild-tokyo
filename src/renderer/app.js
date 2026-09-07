@@ -303,7 +303,16 @@
           if (/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i.test(token.href || '')) return image(token);
           return link.call(this, token);
         };
-        return window.DOMPurify.sanitize(window.marked.parse(text || '', { breaks: true, gfm: true, renderer }), { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'input', 'button', 'form', 'iframe', 'style'], FORBID_ATTR: ['style', 'srcset'] });
+        // Reply HTML must not create application controls, duplicate their IDs,
+        // borrow application CSS classes, or initiate its own resource loads.
+        return window.DOMPurify.sanitize(window.marked.parse(text || '', { breaks: true, gfm: true, renderer }), {
+          ALLOWED_TAGS: ['a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'kbd', 'li', 'mark', 'ol', 'p', 'pre', 's', 'samp', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'var'],
+          ALLOWED_ATTR: ['href', 'title', 'colspan', 'rowspan', 'start', 'reversed', 'open', 'data-image-source', 'data-image-alt'],
+          // These are inert placeholders, including Windows drive paths. The
+          // main-process image resolver validates them before setting img.src.
+          ADD_URI_SAFE_ATTR: ['data-image-source', 'data-image-alt'],
+          ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+        });
       } catch (_) { /* Fall through to safe plain text. */ }
     }
     return escapeHtml(text).replace(/\n/g, '<br>');

@@ -70,7 +70,7 @@ test('literal percent sequences keep their filename while encoded Markdown paths
 
 test('image URLs and inline images are validated without arbitrary file or scheme access', async t => {
   const root = fixture(t); fs.mkdirSync(path.join(root, 'workspace')); fs.writeFileSync(path.join(root, 'private.png'), png);
-  assert.equal((await resolveImage('https://images.example.test/a.png', root)).src, 'https://images.example.test/a.png');
+  assert.equal((await resolveImage('https://images.example.test/a.png', root, undefined, undefined, async () => new Response(png))).src, `data:image/png;base64,${encoded}`);
   assert.equal((await resolveImage(`data:image/png;base64,${encoded}`, root)).src, `data:image/png;base64,${encoded}`);
   for (const src of ['../private.png', 'javascript:alert(1)', '\\\\server\\share\\x.png', 'file://server/share/x.png', 'https://user:password@example.test/a.png', 'data:text/html;base64,PHNjcmlwdD4=', 'data:image/png;base64,aGVsbG8=', 'file.txt']) {
     await assert.rejects(resolveImage(src, path.join(root, 'workspace')));

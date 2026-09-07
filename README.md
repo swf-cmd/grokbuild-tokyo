@@ -2,7 +2,7 @@
 
 为 Grok Build CLI 制作的非官方 Windows 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片与附件发送、回复文件保存和独立账户管理。
 
-当前版本：**1.2.2**。本仓库先用于私有开发，项目自身仍标记为 `UNLICENSED`；正式开源前再确定许可证。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+当前版本：**1.2.4**。项目自身仍标记为 `UNLICENSED`；正式开源前需要确定许可证并添加许可文件。第三方组件声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，安全边界及漏洞反馈说明见 [SECURITY.md](SECURITY.md)。
 
 ## 启动
 
@@ -24,7 +24,7 @@ npm run build
 & '.\App\Grokbuild Tokyo.exe'
 ```
 
-构建前关闭正在运行的客户端。构建会更新 `App`；运行时需要保留整个 `App` 目录及其配套文件。安装依赖和首次构建需要联网下载 Electron。源码仓库不包含预编译程序或本机快捷方式。
+构建前关闭正在运行的客户端。构建仅纳入明确列出的运行文件，并整体替换 `App`，旧目录保存在 `work/package-backups` 以便恢复，避免旧文件混入发布包；运行时需要保留整个 `App` 目录及其配套文件。安装依赖和首次构建需要联网下载 Electron。源码仓库不包含预编译程序或本机快捷方式。
 
 ## 账户管理
 
@@ -56,6 +56,8 @@ npm run build
 Markdown 图片、图片链接、HTML 图片及 ACP 回复或生成工具返回的图片可直接显示。读取工具返回的图片只作为工具内容保留，不追加到正式回复；历史中旧版误追加的读取图片也会在载入时过滤。点击图片放大，Esc 关闭；加载失败可重试。支持网络图片、内嵌图片、当前会话工作目录与 Grok 缓存中的本地图片。相对路径先从工作目录查找，再查当前会话缓存。本地和内嵌图片上限 20 MB。
 
 导出 Markdown 包含已记录的图片来源；本地图片路径仍依赖原文件。普通的“删除会话”只删除客户端记录，不删除 CLI 底层会话；这与“删除账户”的清理范围不同。
+
+网络图片与附件仅允许公开的 HTTP/HTTPS 地址；每次重定向和实际连接的 DNS 地址都检查，拒绝 localhost、私网及特殊用途地址。主进程下载有 20 MB 和总计 60 秒限制，图片经格式检查后交给界面显示，不共享浏览器 Cookie、不使用环境代理。局域网服务、依赖代理或浏览器登录的网站可能无法访问；服务器忽略 `Accept-Encoding: identity` 并强制压缩时会明确报错。公开图片仍会向来源网站发起请求。回复 HTML 不能创建应用控件或注入应用 ID、样式类。
 
 ## 模型、配置与外观
 
@@ -93,15 +95,20 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或生成工具返回�
 ```powershell
 npm test
 npm run test:ui
+npm run test:security
 npm run test:accounts
 npm run test:attachments
 npm run test:i18n
 npm run test:time
 npm run build
+node scripts/verify-package.cjs
+node tests/ui-security.cjs --packaged
 node scripts/images-accounts-smoke.cjs --packaged
 node tests/i18n-ui.cjs --packaged
 node tests/ui-attachments.cjs --packaged
 ```
+
+`npm audit --audit-level=moderate` 检查依赖注册表中已知的漏洞；这不能代替代码及运行时安全检查。安全回归测试覆盖恶意回复 HTML、私网请求、权限请求复用、文件读取竞态、退出重试和发布包内容。
 
 单元测试覆盖 ACP、模型与配置、会话持久化、图片路径、账户隔离、登录生命周期、名称校验、账户删除及失败恢复，以及七种语言的词条完整性、参数插值与默认语言处理。界面测试使用真实 Electron 主进程、IPC 和界面，替换 CLI 和登录为隔离的模拟引擎；不会调用真实模型或修改日常账户。账户界面测试覆盖添加、登录、重命名、删除确认、自动切换、重启恢复及 980 × 680 布局。语言界面测试检查七种语言的即时预览、保存与取消、重启恢复、辅助标签、动态状态、对话和草稿保留、生成期间切换及紧凑窗口布局。GitHub Actions 在 Windows 上运行上述检查，并验证打包后的语言功能。
 
