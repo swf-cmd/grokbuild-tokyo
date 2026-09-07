@@ -21,12 +21,20 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
   if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
   delete env.ELECTRON_RUN_AS_NODE;
-  let desktop = await _electron.launch({ args: [path.join(root, 'tests/fixtures/ui-app.cjs')], env });
+  const launchArgs = [path.join(root, 'tests/fixtures/ui-app.cjs')];
+  const scale = process.argv.find(arg => arg.startsWith('--scale='))?.slice('--scale='.length);
+  if (scale) {
+    assert.ok(['1', '1.5', '2'].includes(scale), 'Use --scale=1, --scale=1.5 or --scale=2');
+    launchArgs.unshift(`--force-device-scale-factor=${scale}`);
+  }
+  let desktop = await _electron.launch({ args: launchArgs, env });
   let page = await desktop.firstWindow();
   await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setAudioMuted(true));
+  if (process.argv.includes('--compact')) await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(980, 680));
   page.setDefaultTimeout(10000);
-  const errors = [], results = [];
+  const errors = [], results = [], requestFailures = [];
   page.on('pageerror', e => errors.push(e.message));
+  page.on('requestfailed', request => requestFailures.push({ url: request.url().slice(0, 240), error: request.failure()?.errorText }));
   await page.route('https://images.example.test/**', route => route.fulfill({ status: 200, contentType: 'image/png', body: icon }));
   const ready = () => page.waitForFunction(() => document.querySelector('#connection-label').textContent.includes('已连接') && !document.querySelector('#account-button').disabled);
   const idle = () => page.waitForFunction(() => document.querySelector('#stop-button').hidden && !document.querySelector('#account-button').disabled);
@@ -36,6 +44,35 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
   const switchRow = id => accountRow(id).locator('[data-account-action="switch"]');
   const renameRow = id => accountRow(id).locator('[data-account-action="rename"]');
   const deleteRow = id => accountRow(id).locator('[data-account-action="delete"]');
+  const verifyImages = async (repaired = false) => {
+    const successful = ['东京雨夜', '本地图标', '网络图片', 'HTML 图片', 'ACP 内嵌图片', ...(repaired ? ['失效图片'] : [])];
+    const failed = repaired ? ['危险链接'] : ['失效图片', '危险链接'];
+    await page.waitForFunction(() => document.querySelectorAll('.chat-image').length === 7);
+    for (const alt of successful) {
+      const figure = page.locator('.chat-image').filter({ has: page.getByAltText(alt, { exact: true }) });
+      // Resolve each source before scrolling: Chromium loads offscreen lazy images
+      // according to its viewport/network heuristics, not their order in the DOM.
+      await page.waitForFunction(name => {
+        const img = [...document.querySelectorAll('.image-thumbnail img')].find(item => item.alt === name);
+        return img && (img.getAttribute('src') || img.hidden);
+      }, alt);
+      assert.equal(await figure.locator('img').evaluate(img => img.hidden), false, `${alt}: ${await figure.locator('figcaption').textContent()}`);
+      await figure.scrollIntoViewIfNeeded();
+      await page.waitForFunction(name => {
+        const img = [...document.querySelectorAll('.image-thumbnail img')].find(item => item.alt === name);
+        return img?.complete && img.naturalWidth > 0;
+      }, alt);
+      assert.equal(await figure.locator('.image-thumbnail').isEnabled(), true, `${alt} must open in the preview`);
+      assert.equal(await figure.locator('.image-retry').isHidden(), true);
+    }
+    for (const alt of failed) {
+      const figure = page.locator('.chat-image').filter({ has: page.getByAltText(alt, { exact: true }) });
+      await figure.locator('.image-retry').waitFor({ state: 'visible' });
+      assert.equal(await figure.locator('.image-thumbnail').isDisabled(), true);
+    }
+    assert.equal(await page.locator('.image-thumbnail img').evaluateAll(images => images.filter(img => img.complete && img.naturalWidth > 0).length), successful.length);
+    assert.equal(await page.locator('.image-retry:visible').count(), failed.length);
+  };
   try {
     await ready();
     let originalSession, newAccount, localSessionCount;
@@ -48,13 +85,11 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
         adapter.emit('event', { type: 'text', sessionId: data.sessionId, text: `## 雨夜里的图片\n\n![东京雨夜](<东京 image.png>)\n\n[本地图标](<${data.absolute}>)\n\n![网络图片](https://images.example.test/preview.png)\n\n<img src="absolute.png" alt="HTML 图片" onerror="window.__unsafe=1">\n\n![失效图片](missing.png)\n\n![危险链接](javascript:alert)\n\n<script>window.__unsafe=1</script>` });
         adapter.emit('event', { type: 'image', sessionId: data.sessionId, image: { src: `data:image/png;base64,${data.icon}`, alt: 'ACP 内嵌图片' } });
       }, { sessionId: originalSession, absolute: path.join(workspace, 'absolute.png'), icon: icon.toString('base64') });
-      await page.locator('.chat-image').last().scrollIntoViewIfNeeded();
-      await page.waitForFunction(() => [...document.querySelectorAll('.image-thumbnail img')].filter(img => img.complete && img.naturalWidth > 0).length === 5);
-      assert.equal(await page.locator('.image-retry:visible').count(), 2);
+      await verifyImages();
       assert.equal(await page.evaluate(() => window.__unsafe), undefined);
       const first = page.locator('.image-thumbnail').first(); await first.scrollIntoViewIfNeeded(); await first.click();
       await page.locator('#image-dialog').waitFor({ state: 'visible' });
-      assert.ok(await page.locator('#image-preview').evaluate(img => img.naturalWidth > 0));
+      await page.waitForFunction(() => { const img = document.querySelector('#image-preview'); return img.complete && img.naturalWidth > 0; });
       await page.screenshot({ path: path.join(testRoot, 'image-preview.png') });
       await page.keyboard.press('Escape'); await page.locator('#image-dialog').waitFor({ state: 'hidden' });
     });
@@ -66,11 +101,10 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await closeAccounts(); await page.locator('#stop-button').click(); await idle();
       assert.equal(readState().sessions[0].messages.at(-1).images.length, 1);
       await page.reload(); await ready(); await page.locator('.session-select').first().click();
-      await page.locator('.chat-image').last().scrollIntoViewIfNeeded();
-      await page.waitForFunction(() => [...document.querySelectorAll('.image-thumbnail img')].filter(img => img.complete && img.naturalWidth > 0).length === 5);
+      await verifyImages();
       fs.writeFileSync(path.join(workspace, 'missing.png'), icon);
       await page.locator('.chat-image').filter({ hasText: '找不到图片文件' }).locator('.image-retry').click();
-      await page.waitForFunction(() => [...document.querySelectorAll('.image-thumbnail img')].filter(img => img.complete && img.naturalWidth > 0).length === 6);
+      await verifyImages(true);
       const exportFile = path.join(testRoot, 'images.md');
       await desktop.evaluate((_e, file) => globalThis.__tokyoUITest.dialogs.push({ canceled: false, filePath: file }), exportFile);
       await page.locator('#export-button').click();
@@ -221,7 +255,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
     });
     await stage('a full application restart does not recreate deleted profiles or their chats', async () => {
       await desktop.close();
-      desktop = await _electron.launch({ args: [path.join(root, 'tests/fixtures/ui-app.cjs')], env });
+      desktop = await _electron.launch({ args: launchArgs, env });
       page = await desktop.firstWindow(); page.setDefaultTimeout(10000); page.on('pageerror', e => errors.push(e.message));
       await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setAudioMuted(true));
       await ready(); await page.locator('#account-button').click();
@@ -235,6 +269,20 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ passed: results.length, packaged: process.argv.includes('--packaged'), realGenerations: 0, output: testRoot }));
   } catch (error) {
+    const diagnostics = await page.evaluate(() => {
+      const rect = element => { const { x, y, width, height } = element.getBoundingClientRect(); return { x, y, width, height }; };
+      return {
+        viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
+        scroller: { ...rect(document.querySelector('#conversation-scroll')), scrollTop: document.querySelector('#conversation-scroll').scrollTop },
+        images: [...document.querySelectorAll('.chat-image')].map(figure => {
+          const img = figure.querySelector('img');
+          return { alt: img.alt, src: img.src.startsWith('data:') ? `${img.src.slice(0, 40)}… (${img.src.length} chars)` : img.src, complete: img.complete, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, loading: img.loading, hidden: img.hidden, caption: figure.querySelector('figcaption')?.textContent, imageRect: rect(img), figureRect: rect(figure) };
+        }),
+      };
+    }).catch(diagnosticError => ({ error: diagnosticError.message }));
+    Object.assign(diagnostics, { errors, requestFailures });
+    fs.writeFileSync(path.join(testRoot, 'diagnostics.json'), JSON.stringify(diagnostics, null, 2));
+    console.error('Image diagnostics:', JSON.stringify(diagnostics));
     await page.screenshot({ path: path.join(testRoot, 'failure.png') }).catch(() => {});
     throw error;
   } finally {
