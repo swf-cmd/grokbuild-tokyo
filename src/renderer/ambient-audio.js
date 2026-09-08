@@ -9,9 +9,8 @@
 
   const BPM = 80;
   const DURATION = 96;
-  // At 90%, gain is 1.35: 2.5 times the previous 60% * 0.90 output.
-  // The bundled track peaks at ~0.638, so 100% also retains headroom.
-  const MAX_OUTPUT_GAIN = 1.50;
+  // Apply 2.5 times the previous 1.50 gain at the same volume setting.
+  const MAX_OUTPUT_GAIN = 3.75;
   const TITLE = 'Tokyo Afterimage · 東京残像';
   const AUDIO_URL = new URL('./assets/tokyo-afterimage.wav', document.currentScript?.src || document.baseURI).href;
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -91,7 +90,20 @@
       context = new Context({ latencyHint: 'playback' });
       output = context.createGain();
       output.gain.value = 0;
-      output.connect(context.destination);
+      // Combine the boost and soft peak limiting within WaveShaper's [-1, 1]
+      // input range. Quieter samples stay linear; loud peaks approach 0.98.
+      const boost = context.createWaveShaper();
+      const curve = new Float32Array(4097);
+      for (let index = 0; index < curve.length; index++) {
+        const value = (index * 2 / (curve.length - 1) - 1) * MAX_OUTPUT_GAIN;
+        const magnitude = Math.abs(value);
+        curve[index] = magnitude <= 0.90 ? value
+          : Math.sign(value) * (0.90 + 0.08 * Math.tanh((magnitude - 0.90) / 0.08));
+      }
+      boost.curve = curve;
+      boost.oversample = '4x';
+      output.connect(boost);
+      boost.connect(context.destination);
       context.onstatechange = () => {
         if (disposed) return;
         if (wanted() && source && context.state === 'running') publish('playing');
@@ -143,7 +155,7 @@
         return;
       }
       if (source && context?.state === 'running') {
-        fade(volume / 100 * MAX_OUTPUT_GAIN, 0.12);
+        fade(volume / 100, 0.12);
         publish('playing');
         return;
       }
@@ -181,7 +193,7 @@
           startingAt = ctx.currentTime;
           source.start(startingAt, offset);
         }
-        fade(volume / 100 * MAX_OUTPUT_GAIN, 0.32);
+        fade(volume / 100, 0.32);
         publish('playing');
       } catch (failure) {
         if (disposed || !wanted()) return;
