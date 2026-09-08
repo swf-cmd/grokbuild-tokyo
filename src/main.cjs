@@ -45,7 +45,7 @@ else {
     // Only presentation preferences travel with the renderer startup. This lets
     // the first frame use the saved language without synchronous IPC or disk I/O.
     const initialPreferences = Object.fromEntries(['language', 'rainEnabled', 'musicEnabled', 'musicVolume'].map(key => [key, controller.settings[key]]));
-    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: isMac, ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}), show: false, backgroundColor: '#0b0e11', title: 'Grokbuild Tokyo', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--tokyo-preferences=${encodeURIComponent(JSON.stringify(initialPreferences))}`], contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
+    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: isMac, ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}), show: false, backgroundColor: '#0b0e11', title: 'Grokbuild Tokyo', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--tokyo-preferences=${encodeURIComponent(JSON.stringify(initialPreferences))}`], autoplayPolicy: 'no-user-gesture-required', contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
     installMenu();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event, url) => { if (url !== entryURL) event.preventDefault(); });

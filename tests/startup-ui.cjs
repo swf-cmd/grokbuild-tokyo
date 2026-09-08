@@ -14,7 +14,7 @@ const output = fs.mkdtempSync(path.join(base, 'run-'));
 const results = [], errors = [];
 const text = (language, source) => createI18n(language)(source);
 
-async function launch(name, { history = true, hold = 'start', musicEnabled = false } = {}) {
+async function launch(name, { history = true, hold = 'start', musicEnabled = false, musicVolume = 31 } = {}) {
   const profile = path.join(output, name);
   const workspace = path.join(profile, 'Workspace');
   const executable = path.join(profile, process.platform === 'win32' ? 'grok.exe' : 'grok');
@@ -24,18 +24,46 @@ async function launch(name, { history = true, hold = 'start', musicEnabled = fal
   const session = (id, title, offset) => ({ id, title, cwd: workspace, ...(id === 'recent' ? { model: 'grok-4.6', mode: 'medium' } : {}), createdAt: Date.now() - offset, updatedAt: Date.now() - offset, messages: [
     { id: `${id}-message`, role: 'user', text: `${title} — saved content`, createdAt: new Date().toISOString(), status: 'complete' },
   ] });
-  fs.writeFileSync(file, JSON.stringify({ version: 1, settings: { executable, workspace, language: 'ja', rainEnabled: false, musicEnabled, musicVolume: 31 }, sessions: history ? [
+  fs.writeFileSync(file, JSON.stringify({ version: 1, settings: { executable, workspace, language: 'ja', rainEnabled: false, musicEnabled, musicVolume }, sessions: history ? [
     session('recent', 'Recent history', 0), session('older', 'Older history', 60000),
   ] : [] }));
   const env = { ...process.env, TOKYO_TEST_ROOT: profile, TOKYO_TEST_HOLD: hold };
   if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const launchedAt = Date.now();
-  const desktop = await _electron.launch({ args: [path.join(__dirname, 'fixtures', 'ui-app.cjs')], env });
+  const desktop = await _electron.launch({ args: ['--mute-audio', path.join(__dirname, 'fixtures', 'ui-app.cjs')], env });
   const page = await desktop.firstWindow();
   page.setDefaultTimeout(10000);
   page.on('pageerror', error => errors.push(`${name}: ${error.message}`));
-  await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setAudioMuted(true));
+  const cdp = await page.context().newCDPSession(page);
+  // Playwright evaluate() supplies a user gesture. Read through CDP with that
+  // disabled so the first playback assertion cannot accidentally unlock audio.
+  const inspectWithoutGesture = async () => {
+    const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
+      expression: `JSON.stringify({ rendererMs: Math.round(performance.now()), language: document.documentElement.lang,
+        music: document.querySelector('#music-status')?.dataset.state,
+        localReady: Boolean(document.querySelector('#settings-button')) && !document.querySelector('#settings-button').disabled,
+        userActivated: navigator.userActivation.hasBeenActive })`,
+      userGesture: false, returnByValue: true,
+    });
+    assert.equal(exceptionDetails, undefined);
+    return JSON.parse(result.value);
+  };
+  const audioBeforeInteraction = async expected => {
+    const deadline = Date.now() + 10000;
+    let timing;
+    do {
+      timing = await inspectWithoutGesture();
+      assert.equal(timing.userActivated, false, 'startup audio must not depend on any user interaction');
+      if (timing.language === 'ja' && timing.localReady && timing.music === expected) break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
+    assert.equal(timing.music, expected);
+    assert.equal(timing.language, 'ja');
+    assert.equal(timing.localReady, true);
+    const entry = { name, stage: `music ${expected} before interaction`, launchMs: Date.now() - launchedAt, ...timing };
+    results.push(entry); console.log(`PASS ${name}: ${JSON.stringify(entry)}`);
+  };
   const readState = () => JSON.parse(fs.readFileSync(file, 'utf8'));
   const gate = async method => {
     const deadline = Date.now() + 10000;
@@ -57,7 +85,7 @@ async function launch(name, { history = true, hold = 'start', musicEnabled = fal
     const entry = { name, stage: label, launchMs: Date.now() - launchedAt, ...timing };
     results.push(entry); console.log(`PASS ${name}: ${label} ${JSON.stringify(timing)}`);
   };
-  return { name, profile, desktop, page, readState, gate, release, calls, localReady, engineReady, openSettings, closeSettings, saveSettings, timed };
+  return { name, profile, desktop, page, readState, gate, release, calls, localReady, engineReady, openSettings, closeSettings, saveSettings, timed, audioBeforeInteraction };
 }
 
 async function run(name, options, action) {
@@ -86,7 +114,7 @@ async function assertEngineBlocked(page) {
 (async () => {
   await run('saved-history', { hold: 'start,loadSession', musicEnabled: true }, async test => {
     const { page, desktop, gate, release, readState, openSettings, closeSettings, saveSettings } = test;
-    await gate('start'); await test.localReady();
+    await gate('start'); await test.audioBeforeInteraction('playing');
     assert.equal(await page.locator('#rain-layer').evaluate(element => element.hidden), true);
     assert.equal(await page.locator('.session-select').count(), 2);
     await test.timed('saved language, rain and local UI restored while CLI start is blocked');
@@ -110,7 +138,7 @@ async function assertEngineBlocked(page) {
     assert.equal(await page.locator('#music-input').isChecked(), true);
     assert.equal(await page.locator('#music-volume').inputValue(), '31');
     await page.waitForFunction(() => document.querySelector('#music-status').dataset.state === 'playing');
-    await test.timed('music plays after interaction while CLI start is still blocked');
+    await test.timed('automatic music playback continues after interaction while CLI start is still blocked');
     await page.locator('#language-select').selectOption('fr');
     await page.locator('#music-volume').fill('47');
     await saveSettings();
@@ -144,6 +172,24 @@ async function assertEngineBlocked(page) {
     assert.equal((await test.calls()).filter(item => item.method === 'loadSession').at(-1).sessionId, 'older');
     await test.timed('bootstrap preserves settings preview, history selection and drafts; send works once ready');
   });
+
+  for (const [name, preferences] of [
+    ['saved-music-disabled', { musicEnabled: false, musicVolume: 31 }],
+    ['saved-music-zero-volume', { musicEnabled: true, musicVolume: 0 }],
+  ]) {
+    await run(name, { hold: 'start', ...preferences }, async test => {
+      await test.gate('start'); await test.audioBeforeInteraction('paused');
+      await test.openSettings();
+      assert.equal(await test.page.locator('#music-input').isChecked(), preferences.musicEnabled);
+      assert.equal(await test.page.locator('#music-volume').inputValue(), String(preferences.musicVolume));
+      await test.closeSettings();
+      await test.release('start'); await test.engineReady();
+      assert.equal(await test.page.locator('#music-status').getAttribute('data-state'), 'paused', 'saved silence survives interaction and engine startup');
+      assert.equal(test.readState().settings.musicEnabled, preferences.musicEnabled);
+      assert.equal(test.readState().settings.musicVolume, preferences.musicVolume);
+      await test.timed('saved silence is respected before and after interaction and engine startup');
+    });
+  }
 
   await run('empty-history', { history: false, hold: 'newSession' }, async test => {
     const { page, gate, release } = test;

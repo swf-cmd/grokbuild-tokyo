@@ -21,6 +21,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/*.test.cjs",
+    "test:audio": "node tests/ambient-audio-render.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",
     "test:security": "node tests/ui-security.cjs",
     "test:accounts": "node scripts/images-accounts-smoke.cjs",

@@ -14,18 +14,41 @@ const workspace = path.join(testRoot, 'Workspace');
 const executable = path.join(testRoot, 'missing-cli');
 fs.mkdirSync(path.join(testRoot, 'data'));
 fs.mkdirSync(workspace);
-fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, sessions: [], settings: { executable, workspace, language: 'en', musicEnabled: false } }));
+fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, sessions: [], settings: { executable, workspace, language: 'en', musicEnabled: true, musicVolume: 31 } }));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot, GROK_HOME: path.join(testRoot, 'grok-home') };
   for (const key of ['ELECTRON_RUN_AS_NODE', 'TOKYO_UI_SOURCE_ROOT', 'GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete env[key];
-  const desktop = await _electron.launch({ executablePath: packagedExecutable(root), args: [], env });
+  const launchedAt = Date.now();
+  // Mute at process launch so verification never sends music to the speakers.
+  const desktop = await _electron.launch({ executablePath: packagedExecutable(root), args: ['--mute-audio'], env });
   try {
     const page = await desktop.firstWindow();
     page.setDefaultTimeout(10000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.waitForFunction(() => !document.querySelector('#settings-button').disabled);
+    const cdp = await page.context().newCDPSession(page);
+    const deadline = Date.now() + 10000;
+    let autoplay;
+    do {
+      // Ordinary Playwright evaluate() supplies a user gesture. This read must
+      // never do so, otherwise the check could hide a click-to-play regression.
+      const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
+        expression: `JSON.stringify({ rendererMs: Math.round(performance.now()),
+          music: document.querySelector('#music-status')?.dataset.state,
+          localReady: Boolean(document.querySelector('#settings-button')) && !document.querySelector('#settings-button').disabled,
+          userActivated: navigator.userActivation.hasBeenActive })`,
+        userGesture: false, returnByValue: true,
+      });
+      assert.equal(exceptionDetails, undefined);
+      autoplay = JSON.parse(result.value);
+      assert.equal(autoplay.userActivated, false, 'the delivered app must play before any interaction');
+      if (autoplay.localReady && autoplay.music === 'playing') break;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
+    assert.equal(autoplay.localReady, true);
+    assert.equal(autoplay.music, 'playing');
+    autoplay.launchMs = Date.now() - launchedAt;
     const details = await desktop.evaluate(({ app, BrowserWindow }) => ({
       packaged: app.isPackaged, appPath: app.getAppPath(), userData: app.getPath('userData'),
       platform: process.platform, windows: BrowserWindow.getAllWindows().length,
@@ -63,6 +86,7 @@ fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringi
       assert.equal(await page.locator('#prompt').inputValue(), 'Draft survives closing the Mac window');
     }
     assert.deepEqual(errors, []);
-    console.log(`PASS actual packaged ${process.platform}/${process.arch} binary: isolated profile, renderer, shortcuts and lifecycle`);
+    fs.writeFileSync(path.join(testRoot, 'results.json'), JSON.stringify({ isolated: true, autoplay, details, errors }, null, 2));
+    console.log(`PASS actual packaged ${process.platform}/${process.arch} binary: automatic music before interaction, isolated profile, renderer, shortcuts and lifecycle ${JSON.stringify(autoplay)}`);
   } finally { await desktop.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

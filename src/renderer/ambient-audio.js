@@ -11,8 +11,9 @@
   const DURATION = 96;
   const SAMPLE_RATE = 44100;
   const METER_FRAMES = 32768;
-  // Apply 2.5 times the previous 1.50 gain at the same volume setting.
-  const MAX_OUTPUT_GAIN = 3.75;
+  // The bundled track peaks below 0.64, leaving headroom at full volume.
+  // Keep amplification linear: waveshaping its peaks makes the music distort.
+  const MAX_OUTPUT_GAIN = 1.50;
   const TITLE = 'Tokyo Afterimage · 東京残像';
   const AUDIO_URL = new URL('./assets/tokyo-afterimage.wav', document.currentScript?.src || document.baseURI).href;
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -55,7 +56,6 @@
     let rendering = null;
     let pauseTimer = null;
     let suspension = null;
-    let activated = false;
     let disposed = false;
     let startingAt = 0;
     let offset = 0;
@@ -99,20 +99,7 @@
       context = new Context({ latencyHint: 'playback', sampleRate: SAMPLE_RATE });
       output = context.createGain();
       output.gain.value = 0;
-      // Combine the boost and soft peak limiting within WaveShaper's [-1, 1]
-      // input range. Quieter samples stay linear; loud peaks approach 0.98.
-      const boost = context.createWaveShaper();
-      const curve = new Float32Array(4097);
-      for (let index = 0; index < curve.length; index++) {
-        const value = (index * 2 / (curve.length - 1) - 1) * MAX_OUTPUT_GAIN;
-        const magnitude = Math.abs(value);
-        curve[index] = magnitude <= 0.90 ? value
-          : Math.sign(value) * (0.90 + 0.08 * Math.tanh((magnitude - 0.90) / 0.08));
-      }
-      boost.curve = curve;
-      boost.oversample = '4x';
-      output.connect(boost);
-      boost.connect(context.destination);
+      output.connect(context.destination);
       context.onstatechange = () => {
         if (disposed) return;
         if (wanted() && source && context.state === 'running') publish('playing');
@@ -160,15 +147,16 @@
       if (!wanted()) return;
       cancelPause();
       if (source && context?.state === 'running') {
-        fade(volume / 100, 0.12);
+        fade(volume / 100 * MAX_OUTPUT_GAIN, 0.12);
         publish('playing');
         return;
       }
-      publish(activated ? 'starting' : 'blocked');
+      publish('starting');
       try {
         const ctx = ensureContext();
-        // unlock() supplies the resume promise created within the user gesture.
-        const resume = resuming || (!activated || ctx.state === 'running' ? Promise.resolve() : ctx.resume());
+        // The desktop window allows autoplay. Resume and decode in parallel
+        // as soon as the saved preferences enable music.
+        const resume = resuming || (ctx.state === 'running' ? Promise.resolve() : ctx.resume());
         if (!rendering && !rendered) {
           rendering = loadComposition(ctx).then(result => {
             if (!disposed) rendered = result;
@@ -179,9 +167,7 @@
           });
         }
         await Promise.all([resume, rendered ? Promise.resolve(rendered) : rendering]);
-        // Warm enabled music while the first frame is interactive, even if a
-        // user gesture is still required. Preparing never starts audible output.
-        if (!wanted() || !activated) return;
+        if (!wanted()) return;
         if (suspension) await suspension;
         if (!wanted()) return;
         if (ctx.state !== 'running') await ctx.resume();
@@ -200,7 +186,7 @@
           startingAt = ctx.currentTime;
           source.start(startingAt, offset);
         }
-        fade(volume / 100, 0.32);
+        fade(volume / 100 * MAX_OUTPUT_GAIN, 0.32);
         publish('playing');
       } catch (failure) {
         if (disposed || !wanted()) return;
@@ -220,11 +206,10 @@
       else pause();
     }
     function unlock() {
-      if (disposed) return Promise.resolve();
-      // First interaction also primes the context if settings are still loading.
-      if (activated && !wanted()) return Promise.resolve();
-      if (activated && context?.state === 'running' && (source || state === 'starting')) return Promise.resolve();
-      activated = true;
+      // A gesture may retry interrupted playback, but is never required to
+      // start enabled music and must not activate disabled or muted music.
+      if (!wanted()) return Promise.resolve();
+      if (context?.state === 'running' && (source || state === 'starting')) return Promise.resolve();
       let resuming;
       try {
         const ctx = ensureContext();
@@ -233,8 +218,7 @@
         publish('error', String(failure?.message || failure));
         return Promise.resolve();
       }
-      if (wanted()) return start(resuming);
-      return resuming.then(() => { if (!wanted() && !disposed) pause(); }).catch(() => {});
+      return start(resuming);
     }
     function dispose() {
       if (disposed) return;

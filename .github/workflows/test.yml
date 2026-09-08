@@ -26,6 +26,7 @@ jobs:
       - run: npm run test:attachments
       - run: npm run test:i18n
       - run: npm run test:startup
+      - run: npm run test:audio
       - run: npm run test:time
       - run: npm run build
       - run: node scripts/verify-package.cjs
@@ -34,6 +35,7 @@ jobs:
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
       - run: node tests/startup-ui.cjs --packaged
+      - run: npm run test:audio -- --packaged
       - run: node tests/ui-attachments.cjs --packaged
       - run: node tests/time-ui.cjs --packaged
       - name: Keep UI failure diagnostics
@@ -79,6 +81,7 @@ jobs:
       - run: npm run test:attachments
       - run: npm run test:i18n
       - run: npm run test:startup
+      - run: npm run test:audio
       - run: npm run test:time
       # Run the universal app natively on each CPU family, without Rosetta.
       - run: npm run build:mac
@@ -88,6 +91,7 @@ jobs:
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
       - run: node tests/startup-ui.cjs --packaged
+      - run: npm run test:audio -- --packaged
       - run: node tests/ui-attachments.cjs --packaged
       - run: node tests/time-ui.cjs --packaged
       - name: Keep tested universal Mac ZIP
