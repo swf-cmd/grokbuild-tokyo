@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { AppController } = require('../src/app-controller.cjs');
 const { attachmentsFromContent } = require('../src/attachments.cjs');
+const { executableName } = require('../src/platform.cjs');
 
 // Fixtures must never resolve the caller's inline or redirected authentication.
 for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
@@ -27,9 +28,9 @@ function fixture(t, saved, { useAppLanguage = false } = {}) {
   const base = path.resolve(__dirname, '..', 'work', 'controller-tests');
   fs.mkdirSync(base, { recursive: true });
   const root = fs.mkdtempSync(path.join(base, 'run-'));
-  const executable = path.join(root, 'home', '.grok', 'bin', 'grok.exe');
+  const executable = path.join(root, 'home', '.grok', 'bin', executableName());
   fs.mkdirSync(path.dirname(executable), { recursive: true });
-  fs.writeFileSync(executable, 'fake executable; never launched');
+  fs.writeFileSync(executable, 'fake executable; never launched', { mode: 0o755 });
   if (saved !== undefined) {
     fs.mkdirSync(path.join(root, 'data'));
     fs.writeFileSync(path.join(root, 'data', 'conversations.json'), typeof saved === 'string' ? saved : JSON.stringify(saved));
@@ -797,12 +798,26 @@ test('path settings reject missing folders and executable directories without ch
   const before = structuredClone(controller.settings);
   const directory = path.join(root, 'directory.exe');
   fs.mkdirSync(directory);
-  await assert.rejects(controller.saveSettings({ executable: directory }), /有效的 grok.exe/);
+  await assert.rejects(controller.saveSettings({ executable: directory }), /有效的 Grok CLI/);
   await assert.rejects(controller.saveSettings({ workspace: path.join(root, 'missing') }), /有效的工作目录/);
   await assert.rejects(controller.createSession({ cwd: path.join(root, 'missing') }), /有效的工作目录/);
   await assert.rejects(controller.createSession({ cwd: 'relative-folder' }), /有效的工作目录/);
   assert.deepEqual(controller.settings, before);
   assert.equal(adapter.closeCount, 0);
+});
+
+test('POSIX settings accept executable CLI files with spaces and reject files without execute permission', { skip: process.platform === 'win32' }, async t => {
+  const { controller, root } = await started(t);
+  const executable = path.join(root, 'Grok CLI with spaces');
+  fs.writeFileSync(executable, 'fixture only; never launched', { mode: 0o644 });
+  const previous = controller.settings.executable;
+  await assert.rejects(controller.saveSettings({ executable }), /有效的 Grok CLI/);
+  assert.equal(controller.settings.executable, previous);
+  fs.chmodSync(executable, 0o755);
+  assert.equal((await controller.saveSettings({ executable })).executable, executable);
+  fs.chmodSync(executable, 0o644);
+  await assert.rejects(controller.connect(), /没有找到 Grok/);
+  await assert.rejects(controller.loginAccount('local'), /有效的 Grok CLI/);
 });
 
 test('a failed settings write preserves the settings that were actually saved', async t => {

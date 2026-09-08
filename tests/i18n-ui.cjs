@@ -12,9 +12,10 @@ const base = path.join(root, 'work', 'i18n-qa');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data'));
 fs.writeFileSync(executable, 'Fixture only; never executed.');
+fs.chmodSync(executable, 0o755);
 // Omit language to exercise migration of existing settings.
 fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false }, sessions: [] }));
 const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
@@ -23,7 +24,7 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App', 'resources', 'app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   let desktop, page;
   const errors = [], results = [];
@@ -146,18 +147,22 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
     await stage('validation and native dialogs follow unsaved language previews', async () => {
       await openSettings(); await choose('en');
       await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click();
-      await assertText('#settings-feedback', '请选择 Grokbuild 的 grok.exe 文件。', 'en');
-      await choose('ja'); await assertText('#settings-feedback', '请选择 Grokbuild 的 grok.exe 文件。', 'ja');
+      await assertText('#settings-feedback', '请选择 Grokbuild 的 Grok CLI 文件。', 'en');
+      await choose('ja'); await assertText('#settings-feedback', '请选择 Grokbuild 的 Grok CLI 文件。', 'ja');
       await page.locator('#executable-input').fill(executable);
       await page.locator('#workspace-input').fill(path.join(testRoot, 'missing-workspace'));
       await page.locator('#save-settings-button').click();
       await page.waitForFunction(label => document.querySelector('#settings-feedback').textContent === label, translated('ja', '请选择有效的工作目录'));
       await choose('de'); await assertText('#settings-feedback', '请选择有效的工作目录', 'de');
-      for (const [selector, title] of [['#choose-workspace', '选择 Grok 工作目录'], ['#choose-executable', '选择 grok.exe']]) {
+      for (const [selector, title] of [['#choose-workspace', '选择 Grok 工作目录'], ['#choose-executable', '选择 Grok CLI']]) {
         await page.locator(selector).click();
         const chooser = await desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(item => item.method === 'showOpenDialog').at(-1));
         assert.equal(chooser.options.title, translated('de', title));
-        if (selector === '#choose-executable') assert.equal(chooser.options.filters[0].name, translated('de', 'Grok 可执行文件'));
+        if (selector === '#choose-executable') {
+          if (process.platform === 'win32') assert.equal(chooser.options.filters[0].name, translated('de', 'Grok 可执行文件'));
+          else assert.equal(chooser.options.filters, undefined, 'extensionless CLI files must be selectable');
+          assert.ok(chooser.options.properties.includes('showHiddenFiles'));
+        }
       }
       assert.equal(readState().settings.language, 'fr');
       assert.equal(readState().settings.workspace, workspace);

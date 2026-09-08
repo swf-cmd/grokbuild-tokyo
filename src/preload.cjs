@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const invoke = name => (...args) => ipcRenderer.invoke(`tokyo:${name}`, ...args);
 contextBridge.exposeInMainWorld('tokyo', {
+  platform: process.platform,
+  onMenuAction: callback => { const listener = (_event, action) => { if (['preferences', 'new-conversation'].includes(action)) callback(action); }; ipcRenderer.on('tokyo:menu', listener); return () => ipcRenderer.removeListener('tokyo:menu', listener); },
   bootstrap: invoke('bootstrap'), createSession: invoke('createSession'), selectSession: invoke('selectSession'),
   configureSession: invoke('configureSession'),
   chooseAttachments: invoke('chooseAttachments'), importAttachments: invoke('importAttachments'), saveAttachment: invoke('saveAttachment'),

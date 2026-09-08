@@ -10,9 +10,10 @@ const base = path.join(root, 'work', 'time-qa');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data'));
 fs.writeFileSync(executable, 'Fixture only; never executed.');
+fs.chmodSync(executable, 0o755);
 const session = (id, title, time) => ({ id, title, cwd: workspace, createdAt: time, updatedAt: time, messages: [
   { id: `${id}-message`, role: 'user', text: title, createdAt: '2026-09-06T15:00:00.000Z', status: 'complete' },
 ] });
@@ -27,7 +28,7 @@ fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringi
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const desktop = await _electron.launch({ args: [path.join(__dirname, 'fixtures', 'ui-app.cjs')], env });
   const errors = [];

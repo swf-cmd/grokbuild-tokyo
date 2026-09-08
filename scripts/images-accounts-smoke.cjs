@@ -8,8 +8,9 @@ const base = path.join(root, 'work', 'images-accounts-qa');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data')); fs.writeFileSync(executable, 'Fixture only');
+fs.chmodSync(executable, 0o755);
 const png = fs.readFileSync(path.join(root, 'src/renderer/assets/tokyo-rain.png'));
 const icon = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 fs.writeFileSync(path.join(workspace, '东京 image.png'), png);
@@ -19,7 +20,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const launchArgs = [path.join(root, 'tests/fixtures/ui-app.cjs')];
   const scale = process.argv.find(arg => arg.startsWith('--scale='))?.slice('--scale='.length);
@@ -157,6 +158,10 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
     });
     await stage('switch accounts restores the correct history, draft and saved active account', async () => {
       await closeAccounts();
+      assert.equal(await page.locator('#prompt').inputValue(), 'Pending profile draft', 'login completion preserves a new-conversation draft');
+      // Exercise a saved conversation separately from the new-conversation
+      // draft; login no longer silently selects this bootstrap history entry.
+      await page.locator('.session-select').first().click(); await idle();
       await page.locator('#prompt').fill('Work account chat'); await page.locator('#send-button').click(); await idle();
       await page.locator('#prompt').fill('Work account draft');
       await page.locator('#account-button').click(); await switchRow('local').click(); await ready(); await closeAccounts();

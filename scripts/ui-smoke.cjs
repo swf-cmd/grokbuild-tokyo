@@ -33,7 +33,7 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(state.overflow, false);
     await page.locator('#settings-button').click();
     await page.locator('#settings-dialog').waitFor({ state: 'visible' });
-    assert.ok((await page.locator('#executable-input').inputValue()).endsWith('grok.exe'));
+    assert.ok((await page.locator('#executable-input').inputValue()).endsWith(process.platform === 'win32' ? 'grok.exe' : 'grok'));
     await page.screenshot({ path: path.join(output, 'settings.png') });
     await page.locator('[data-close-dialog="settings-dialog"]').click();
     console.log(JSON.stringify({ stage: 'settings', passed: true }));

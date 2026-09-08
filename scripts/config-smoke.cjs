@@ -1,18 +1,27 @@
 const { _electron } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { findGrokExecutable } = require('../src/platform.cjs');
+const { packagedExecutable } = require('./package-paths.cjs');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const base = path.join(root, 'work', 'config-ui');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
+fs.mkdirSync(path.join(testRoot, 'data'));
+fs.mkdirSync(path.join(testRoot, 'Workspace'));
+fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, sessions: [], settings: {
+  executable: process.env.GROK_EXECUTABLE || findGrokExecutable({ home: os.homedir() }),
+  workspace: path.join(testRoot, 'Workspace'), language: 'zh-CN', musicEnabled: false,
+} }));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
   delete env.ELECTRON_RUN_AS_NODE;
   const packaged = process.argv.includes('--packaged');
   const desktop = await _electron.launch(packaged
-    ? { executablePath: path.join(root, 'App', 'Grokbuild Tokyo.exe'), args: [], env }
+    ? { executablePath: packagedExecutable(root), args: [], env }
     : { args: [root], env });
   try {
     const page = await desktop.firstWindow();

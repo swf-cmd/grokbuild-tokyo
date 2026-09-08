@@ -11,6 +11,11 @@ const { GrokAdapter } = require('../src/grok-adapter.cjs');
 const fakeAgent = String.raw`
 const readline = require('node:readline');
 const fs = require('node:fs');
+if (process.env.TEST_DESCENDANT === '1') {
+ const worker = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+ fs.writeFileSync('descendant.pid', String(worker.pid));
+ worker.unref();
+}
 const send = message => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...message})+'\n');
 const update = (sessionId, update) => send({method:'session/update',params:{sessionId,update}});
 const efforts=[{id:'deep',value:'high',label:'Deep Official'},{id:'low',value:'low',label:'Low Official'}];
@@ -64,6 +69,7 @@ async function fixture(t, settings = {}) {
   await fs.writeFile(path.join(cwd, 'agent'), fakeAgent);
   const adapter = new GrokAdapter({ executable: process.execPath, cwd, subagentsEnabled: settings.subagentsEnabled, spawnProcess: (executable, args, options) => {
     assert.deepEqual(args, ['agent', '--no-leader', 'stdio']);
+    assert.equal(options.detached, process.platform !== 'win32');
     assert.equal(options.env.GROK_SUBAGENTS, settings.subagentsEnabled === false ? '0' : '1');
     options.env.TEST_MODERN = settings.modern ? '1' : '0';
     options.env.TEST_NOOP = settings.noop ? '1' : '0';
@@ -74,6 +80,7 @@ async function fixture(t, settings = {}) {
     options.env.TEST_PROTOCOL = String(settings.protocol || 1);
     options.env.TEST_NO_LOAD = settings.noLoad ? '1' : '0';
     options.env.TEST_LOAD_DELAY = String(settings.loadDelay || 0);
+    options.env.TEST_DESCENDANT = settings.descendant ? '1' : '0';
     return spawn(executable, ['agent'], options);
   } });
   t.after(async () => { await adapter.close(); assert(path.resolve(cwd).startsWith(base + path.sep)); await fs.rm(cwd, { recursive: true, force: true }); });
@@ -486,4 +493,37 @@ test('an executable that fails to spawn preserves the original error and release
   adapter.executable = path.join(cwd, 'nonexistent-grok.exe');
   await assert.rejects(adapter.start(), { code: 'ENOENT' });
   assert.equal(adapter.process, null);
+});
+
+test('POSIX shutdown and unexpected CLI exit also stop owned tool descendants', { skip: process.platform === 'win32' }, async t => {
+  for (const scenario of ['close', 'crash']) await t.test(scenario, async t => {
+    const { adapter, cwd } = await fixture(t, { descendant: true });
+    await adapter.start();
+    const pid = Number(await fs.readFile(path.join(cwd, 'descendant.pid'), 'utf8'));
+    assert.ok(Number.isInteger(pid) && pid > 0);
+    let stopped = false;
+    t.after(() => { if (!stopped) { try { process.kill(pid, 'SIGKILL'); } catch {} } });
+    process.kill(pid, 0);
+    if (scenario === 'close') await adapter.close();
+    else {
+      const session = await adapter.newSession();
+      await assert.rejects(adapter.prompt({ sessionId: session.sessionId, text: 'crash' }), { code: 'PROCESS_EXIT' });
+    }
+    const running = async () => {
+      try {
+        process.kill(pid, 0);
+        // A killed orphan may briefly await reaping under Linux CI's PID 1.
+        if (process.platform === 'linux' && /\) Z /.test(await fs.readFile(`/proc/${pid}/stat`, 'utf8'))) return false;
+        return true;
+      } catch (error) {
+        if (error.code === 'ESRCH' || error.code === 'ENOENT') return false;
+        throw error;
+      }
+    };
+    const deadline = Date.now() + 2000;
+    while (await running() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    stopped = !await running();
+    assert.equal(stopped, true, 'the CLI tool must not survive its owned process group');
+    assert.equal(adapter.process, null);
+  });
 });

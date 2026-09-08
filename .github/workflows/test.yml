@@ -28,6 +28,7 @@ jobs:
       - run: npm run test:time
       - run: npm run build
       - run: node scripts/verify-package.cjs
+      - run: node scripts/packaged-launch-smoke.cjs
       - run: node tests/ui-security.cjs --packaged
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
@@ -38,6 +39,67 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-ui-diagnostics
+          path: |
+            work/images-accounts-qa/run-*/*.png
+            work/images-accounts-qa/run-*/results.json
+            work/images-accounts-qa/run-*/diagnostics.json
+            work/ui-controls/run-*/failure-*.png
+            work/i18n-qa/run-*/*.png
+            work/i18n-qa/run-*/results.json
+            work/ui-attachments/run-*/*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --audit-level=moderate
+      - run: npm run test:ui
+      - run: npm run test:security
+      - run: npm run test:accounts
+      - run: npm run test:attachments
+      - run: npm run test:i18n
+      - run: npm run test:time
+      # Run the universal app natively on each CPU family, without Rosetta.
+      - run: npm run build:mac
+      - run: node scripts/verify-package.cjs --platform darwin --arch universal
+      - run: node scripts/packaged-launch-smoke.cjs
+      - run: node tests/ui-security.cjs --packaged
+      - run: node scripts/images-accounts-smoke.cjs --packaged
+      - run: node tests/i18n-ui.cjs --packaged
+      - run: node tests/ui-attachments.cjs --packaged
+      - run: node tests/time-ui.cjs --packaged
+      - name: Keep tested universal Mac ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-universal-tested-on-${{ matrix.arch }}
+          path: |
+            dist/*-mac-universal.zip
+            dist/*-mac-universal.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
+      - name: Keep UI failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-${{ matrix.arch }}-ui-diagnostics
           path: |
             work/images-accounts-qa/run-*/*.png
             work/images-accounts-qa/run-*/results.json

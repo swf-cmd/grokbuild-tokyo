@@ -6,13 +6,14 @@
 
 **Your ideas. After dark.**
 
-A Tokyo rainy-night desktop home for Grok Build — built for Windows.
+A Tokyo rainy-night desktop home for Grok Build — for Windows and Mac.
 
 **English** · [简体中文](README.zh-CN.md)
 
 [![Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml/badge.svg)](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-71d6c6)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows_x64-86b7f9)
+![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 ![Version 1.2.4](https://img.shields.io/badge/version-1.2.4-c1adff)
 
 [Get started](#get-started) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
@@ -45,28 +46,28 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 
 ### Requirements
 
-- **Windows x64**. The build and CI target Windows; macOS and Linux are not currently supported by this client.
-- **Node.js 22.12.0 or later** and npm. Development and CI use Node.js 24.
-- **Git** and an installed [Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary), with account access to the service.
+- **Windows x64**, or **macOS 13 Ventura or later on Intel or Apple Silicon**. The universal Mac build includes both architectures. The minimum macOS version follows [Electron 44](https://www.electronjs.org/blog/electron-44-0); older Macs must be able to run macOS 13 or later. Linux is not a supported client target.
+- An installed [Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary), with account access to the service. The official CLI supports both Mac architectures; see its [changelog](https://x.ai/build/changelog).
+- To run from source or build: **Git**, **Node.js 22.12.0 or later**, and npm. Development and CI use Node.js 24. Mac packaging also needs Apple Command Line Tools (`xcode-select --install`). Packaged apps include Electron and do not require a separate Node.js installation.
 
 ### Run from source
 
-```powershell
+```sh
 git clone https://github.com/swf-cmd/grokbuild-tokyo.git
 cd grokbuild-tokyo
 npm ci
 npm start
 ```
 
-1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe`. If yours is elsewhere, choose it in **Preferences** at the bottom left.
+1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac. If yours is elsewhere, choose the executable in **Preferences** at the bottom left. On Mac, select `grok` without a `.exe` extension.
 2. Use **Switch account** to sign in or add a profile. The local profile reuses the official CLI's existing login and configuration.
-3. Choose a project folder in **Preferences**, then start a new conversation. Without a selection, the client creates a `Workspace` subfolder in the source checkout. Existing conversations keep their original folder.
+3. Choose a project folder in **Preferences**, then start a new conversation. The default is `Workspace` in the source checkout on Windows, or `~/Library/Application Support/Grokbuild Tokyo/Workspace` on Mac. Existing conversations keep their original folder.
 
 English is the initial interface language. Change it in **Preferences → Interface language** and save. No API key needs to be entered into this desktop interface.
 
 ### Build the desktop app
 
-Close the running client before building:
+Quit the running client before building. On Windows:
 
 ```powershell
 npm run build
@@ -74,17 +75,33 @@ node scripts/verify-package.cjs
 & '.\App\Grokbuild Tokyo.exe'
 ```
 
-Keep the **entire `App` folder** together when running or distributing it. The build includes an explicit list of runtime files and licenses; the previous build is preserved under `work/package-backups`. Installing dependencies and the first build require internet access for Electron downloads. The source repository does not include a prebuilt executable.
+Keep the **entire `App` folder** together when running or distributing the Windows version.
+
+On Mac, build one app for both Intel and Apple Silicon:
+
+```sh
+npm run build:mac
+node scripts/verify-package.cjs --platform darwin --arch universal
+open "App/Grokbuild Tokyo.app"
+```
+
+The shareable archive is `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`, with a matching `.zip.sha256` checksum. Unzip it and move **Grokbuild Tokyo.app** to **Applications**. `npm run build:mac:arm64` and `npm run build:mac:x64` create smaller builds for a single architecture. `npm run build` targets the current computer; on Mac this uses its current Node.js architecture.
+
+Mac builds are locally signed (ad hoc), without a Developer ID certificate or Apple notarization. A downloaded build may need approval in **System Settings → Privacy & Security → Open Anyway** after you verify its source; see [Apple’s instructions](https://support.apple.com/en-us/102445).
+
+Both versions use the same interface, seven languages, chat, account, attachment, model, rain, and music features. Mac adds native window controls and menus. Closing the Mac window keeps the app and ongoing work running; click its Dock icon to reopen, or press **Cmd+Q** to quit.
+
+Packaging uses an explicit list of runtime files and licenses; the previous `App` build is preserved under `work/package-backups`. Installing dependencies and the first build require internet access for Electron downloads. The source repository does not include prebuilt apps.
 
 ## Everyday shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Enter` | Send |
-| `Shift + Enter` | New line |
-| `Ctrl + N` | New conversation |
-| `Ctrl + ,` | Preferences |
-| `Esc` | Close image preview or cancel a settings preview |
+| Windows | Mac | Action |
+| --- | --- | --- |
+| `Enter` | `Enter` | Send |
+| `Shift + Enter` | `Shift + Enter` | New line |
+| `Ctrl + N` | `Cmd + N` | New conversation |
+| `Ctrl + ,` | `Cmd + ,` | Preferences |
+| `Esc` | `Esc` | Close image preview or cancel a settings preview |
 
 ## How it connects
 
@@ -105,11 +122,11 @@ The client keeps its chat history and settings locally, while the CLI handles mo
 
 ## Your data
 
-`data/` contains chats, attachments, settings and account credentials saved by the CLI. It is local, excluded from Git and **not additionally encrypted by this app**. The local account may also use `GROK_HOME` (default `~/.grok`). Separate profiles isolate configuration and history, but are not operating-system sandboxes.
+On Windows, `data/` is in the source checkout or beside the packaged `App` folder. On Mac, it is `~/Library/Application Support/Grokbuild Tokyo/data`, outside the `.app` bundle and shared by source and packaged runs. It contains chats, attachments, settings and account credentials saved by the CLI. It is local, excluded from Git and **not additionally encrypted by this app**. The local account may also use `GROK_HOME` (default `~/.grok`). Separate profiles isolate configuration and history, but are not operating-system sandboxes.
 
 | Tracked in this repository | Kept out of Git |
 | --- | --- |
-| `src/`, `scripts/`, `tests/`, `docs/`, licenses and project configuration | `data/`, `Workspace/`, `App/`, `work/`, `node_modules/`, `.env` files |
+| `src/`, `scripts/`, `tests/`, `docs/`, licenses and project configuration | `data/`, `Workspace/`, `App/`, `dist/`, `work/`, `node_modules/`, `.env` files |
 
 Remote images can contact public image hosts. Read the [security policy](SECURITY.md) for permission, file access and network boundaries. Back up personal data separately; do not include it in an issue, screenshot or release archive.
 
@@ -121,7 +138,7 @@ npm run test:ui
 npm run test:security
 ```
 
-Default tests use isolated fixtures without real model requests. Windows CI also checks accounts, attachments, languages, clocks, dependencies and the packaged application. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete checks, contribution workflow and opt-in live tests.
+Default tests use isolated fixtures without real model requests. CI checks accounts, attachments, languages, clocks, dependencies and the packaged application on the configured Windows and Mac runners. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete checks, contribution workflow and opt-in live tests.
 
 Bug reports, focused fixes, translations and documentation improvements are welcome. Please use [private vulnerability reporting](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new) for sensitive security findings.
 

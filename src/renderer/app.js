@@ -4,6 +4,9 @@
 (() => {
   const $ = id => document.getElementById(id);
   const api = window.tokyo;
+  const isMac = api?.platform === 'darwin';
+  document.documentElement.classList.toggle('platform-darwin', isMac);
+  if (isMac) for (const hint of document.querySelectorAll('kbd')) hint.textContent = hint.textContent.replace('Ctrl', '⌘');
   const i18n = window.TokyoI18n;
   const t = i18n.t;
   const diagnostic = i18n.localizeDiagnostic;
@@ -29,6 +32,7 @@
   const pathName = path => (path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path || t('选择工作空间');
   const uid = () => `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let unsubscribe;
+  let unsubscribeMenu;
   let ambience;
   let searchVisible = false;
   let clockTimer;
@@ -954,7 +958,10 @@
         rememberDraft(); state.accountDrafts.set(state.activeAccountId, { drafts: state.drafts, activeId: state.activeId });
       }
       const saved = state.accountDrafts.get(result.activeAccountId);
-      state.drafts = saved?.drafts || new Map(); state.activeId = saved?.activeId || null;
+      state.drafts = saved?.drafts || new Map();
+      // null is an intentional new-conversation selection with its own draft.
+      // Only a first visit to an account should default to its latest history.
+      state.activeId = saved ? saved.activeId : result.sessions?.[0]?.id || null;
       imageCache.clear(); closeSessionMenu();
       if ($('image-dialog').open) $('image-dialog').close();
       $('image-preview').removeAttribute('src');
@@ -965,7 +972,7 @@
     state.activeAccountId = result.activeAccountId;
     state.accounts = result.accounts || []; state.login = result.login || null;
     state.sessions = (result.sessions || []).map(normalizeSession);
-    if (!state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
+    if (state.activeId !== null && !state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
     state.info = { ...result.info, models: normalizeChoices(result.info?.models), modes: normalizeChoices(result.info?.modes) };
     state.connected = result.connected === true; state.connectionStatus = state.connected ? 'ready' : 'disconnected'; state.lastError = result.error || '';
     state.busy.clear(); state.permissions.clear(); state.started.clear(); syncNewChatChoices(true);
@@ -1031,7 +1038,7 @@
     $('save-settings-button').disabled = true; $('settings-feedback').textContent = '';
     try {
       const patch = settingsPatch();
-      if (!patch.executable) throw new Error(t('请选择 Grokbuild 的 grok.exe 文件。'));
+      if (!patch.executable) throw new Error(t('请选择 Grokbuild 的 Grok CLI 文件。'));
       if (!patch.workspace) throw new Error(t('请选择默认工作目录。'));
       const reconnectRequired = forceReconnect || ['executable', 'workspace', 'subagentsEnabled'].some(key => patch[key] !== state.settings[key]);
       if (reconnectRequired && state.busy.size) throw new Error(t('此设置需要重新连接引擎，请先停止正在执行的任务，再保存。'));
@@ -1283,6 +1290,10 @@
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); if (!document.querySelector('dialog[open]')) newChat(); }
       if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); showSettings(); }
     });
+    unsubscribeMenu = api?.onMenuAction?.(action => {
+      if (action === 'preferences') showSettings();
+      else if (action === 'new-conversation' && !document.querySelector('dialog[open]')) newChat();
+    });
     $('conversation-scroll').addEventListener('scroll', () => { $('scroll-bottom').hidden = !activeSession()?.messages.length || nearBottom(); });
     $('scroll-bottom').addEventListener('click', () => { $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight; });
     const composerRegion = document.querySelector('.composer-region');
@@ -1291,7 +1302,7 @@
     window.addEventListener('resize', closeSessionMenu);
     window.addEventListener('focus', updateClock);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) updateClock(); });
-    window.addEventListener('beforeunload', () => { clearTimeout(clockTimer); composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); ambience?.dispose(); });
+    window.addEventListener('beforeunload', () => { clearTimeout(clockTimer); composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); unsubscribeMenu?.(); ambience?.dispose(); });
   }
 
   function applyLanguage(language) {

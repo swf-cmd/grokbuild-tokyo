@@ -10,9 +10,10 @@ const base = path.join(root, 'work', 'ui-attachments');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data'));
 fs.writeFileSync(executable, 'Offline fixture only');
+fs.chmodSync(executable, 0o755);
 const png = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 const imageFile = path.join(workspace, '东京 photo.png');
 const documentFile = path.join(workspace, 'notes.txt');
@@ -22,7 +23,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const desktop = await _electron.launch({ args: [path.join(__dirname, 'fixtures/ui-app.cjs')], env });
   const page = await desktop.firstWindow();
@@ -201,6 +202,9 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       const accountId = readState().activeAccountId;
       await desktop.evaluate(() => globalThis.__tokyoUITest.finishLogin(true)); await ready();
       await page.locator('[data-close-dialog="accounts-dialog"]').click(); await drafts(0);
+      // Explicitly leave saved history: new-conversation drafts use a separate
+      // key and must remain selected after switching away and returning.
+      await page.locator('#new-session').click();
       await choose([imageFile], 1); await page.locator('#prompt').fill('Profile attachment draft');
       const switchTo = async id => { await page.locator('#account-button').click(); await page.locator(`.account-row[data-account-id="${id}"] [data-account-action="switch"]`).click(); await ready(); await page.locator('[data-close-dialog="accounts-dialog"]').click(); };
       await switchTo('local'); await drafts(1);

@@ -13,7 +13,7 @@ async function main() {
   const base = path.resolve(__dirname, '..', 'work', 'config-audit');
   await fs.mkdir(base, { recursive: true });
   const cwd = await fs.mkdtemp(path.join(base, 'live-'));
-  const executable = process.env.GROK_EXECUTABLE || path.join(os.homedir(), '.grok', 'bin', 'grok.exe');
+  const executable = process.env.GROK_EXECUTABLE || require('../src/platform.cjs').findGrokExecutable({ home: os.homedir(), env: process.env });
   const hashConfig = async () => fs.readFile(path.join(os.homedir(), '.grok', 'config.toml')).then(data => createHash('sha256').update(data).digest('hex'), () => null);
   const originalConfig = await hashConfig();
   const checks = [];

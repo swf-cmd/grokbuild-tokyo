@@ -12,8 +12,8 @@ body:
     id: versions
     attributes:
       label: Versions / 版本
-      description: App version, Grok Build CLI version, Windows version, and Node.js version if running from source.
-      placeholder: "App 1.2.4; Grok Build 1.0.13; Windows 11; Node.js 24"
+      description: App and Grok Build CLI versions, Windows or macOS version, CPU architecture (x64/Intel or arm64/Apple Silicon), and Node.js version if running from source / 应用和 CLI 版本、系统版本、CPU 架构；源码运行时也请填写 Node.js 版本。
+      placeholder: "App 1.2.4; Grok Build 1.0.13; macOS 15; Apple Silicon arm64; Node.js 24"
     validations:
       required: true
   - type: textarea
