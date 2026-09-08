@@ -14,8 +14,9 @@ function defaultExecutable(home = os.homedir(), platform = process.platform) {
 }
 
 function isExecutable(file, platform = process.platform) {
-  if (typeof file !== 'string' || !path.isAbsolute(file)) return false;
-  if (platform === 'win32' && path.extname(file).toLowerCase() !== '.exe') return false;
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  if (typeof file !== 'string' || !paths.isAbsolute(file)) return false;
+  if (platform === 'win32' && paths.extname(file).toLowerCase() !== '.exe') return false;
   try {
     if (!fs.statSync(file).isFile()) return false;
     if (platform !== 'win32') fs.accessSync(file, fs.constants.X_OK);
@@ -26,13 +27,14 @@ function isExecutable(file, platform = process.platform) {
 function cliEnvironment(env = process.env, { home = os.homedir(), platform = process.platform, executable } = {}) {
   const result = { ...env };
   if (platform !== 'darwin') return result;
+  const paths = path.posix;
   // Finder-launched apps do not inherit a login shell's PATH. Keep explicit
   // entries in their original order, then supply common user and Homebrew bins.
   // Do not source shell configuration or execute shell commands during startup.
   const bins = [
     ...(result.PATH || '').split(':'),
-    ...(typeof executable === 'string' && path.isAbsolute(executable) ? [path.dirname(executable)] : []),
-    ...['.grok/bin', '.local/bin', '.cargo/bin', '.bun/bin', 'bin'].map(bin => path.join(home, bin)),
+    ...(typeof executable === 'string' && paths.isAbsolute(executable) ? [paths.dirname(executable)] : []),
+    ...['.grok/bin', '.local/bin', '.cargo/bin', '.bun/bin', 'bin'].map(bin => paths.join(home, bin)),
     '/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/local/sbin',
     '/usr/bin', '/bin', '/usr/sbin', '/sbin',
   ];

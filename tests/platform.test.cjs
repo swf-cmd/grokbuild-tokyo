@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { executableName, defaultExecutable, isExecutable, cliEnvironment, findGrokExecutable } = require('../src/platform.cjs');
 
 function fixture(t) {
@@ -39,6 +40,21 @@ test('macOS GUI PATH supplies both Homebrew architectures while preserving confi
   assert.equal(original.PATH, '/custom/bin:/usr/bin:/custom/bin');
   assert.deepEqual(cliEnvironment(original, { platform: 'win32' }), original);
   assert.ok(cliEnvironment({}, { home: '/Users/example', platform: 'darwin' }).PATH.includes('/usr/bin'));
+});
+
+test('macOS PATH construction stays POSIX when the host uses Windows path utilities', () => {
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/platform.cjs'), 'utf8'), {
+    module, process,
+    require: name => name === 'node:path' ? path.win32 : require(name),
+  });
+  const env = { PATH: '/custom/bin:/usr/bin' };
+  const options = { platform: 'darwin', home: '/Users/example', executable: '/custom/grok install/grok' };
+  const windowsHost = module.exports.cliEnvironment(env, options);
+  assert.equal(windowsHost.PATH, cliEnvironment(env, options).PATH);
+  assert.ok(windowsHost.PATH.split(':').includes('/Users/example/.grok/bin'));
+  assert.ok(windowsHost.PATH.split(':').includes('/custom/grok install'));
+  assert.equal(windowsHost.PATH.includes('\\'), false);
 });
 
 test('executable validation accepts native binaries and symlinks and rejects missing or non-executable paths', { skip: process.platform === 'win32' }, t => {
