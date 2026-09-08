@@ -958,7 +958,10 @@
         rememberDraft(); state.accountDrafts.set(state.activeAccountId, { drafts: state.drafts, activeId: state.activeId });
       }
       const saved = state.accountDrafts.get(result.activeAccountId);
-      state.drafts = saved?.drafts || new Map(); state.activeId = saved?.activeId || null;
+      state.drafts = saved?.drafts || new Map();
+      // null is an intentional new-conversation selection with its own draft.
+      // Only a first visit to an account should default to its latest history.
+      state.activeId = saved ? saved.activeId : result.sessions?.[0]?.id || null;
       imageCache.clear(); closeSessionMenu();
       if ($('image-dialog').open) $('image-dialog').close();
       $('image-preview').removeAttribute('src');
@@ -969,7 +972,7 @@
     state.activeAccountId = result.activeAccountId;
     state.accounts = result.accounts || []; state.login = result.login || null;
     state.sessions = (result.sessions || []).map(normalizeSession);
-    if (!state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
+    if (state.activeId !== null && !state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
     state.info = { ...result.info, models: normalizeChoices(result.info?.models), modes: normalizeChoices(result.info?.modes) };
     state.connected = result.connected === true; state.connectionStatus = state.connected ? 'ready' : 'disconnected'; state.lastError = result.error || '';
     state.busy.clear(); state.permissions.clear(); state.started.clear(); syncNewChatChoices(true);

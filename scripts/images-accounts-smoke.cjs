@@ -158,6 +158,10 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
     });
     await stage('switch accounts restores the correct history, draft and saved active account', async () => {
       await closeAccounts();
+      assert.equal(await page.locator('#prompt').inputValue(), 'Pending profile draft', 'login completion preserves a new-conversation draft');
+      // Exercise a saved conversation separately from the new-conversation
+      // draft; login no longer silently selects this bootstrap history entry.
+      await page.locator('.session-select').first().click(); await idle();
       await page.locator('#prompt').fill('Work account chat'); await page.locator('#send-button').click(); await idle();
       await page.locator('#prompt').fill('Work account draft');
       await page.locator('#account-button').click(); await switchRow('local').click(); await ready(); await closeAccounts();

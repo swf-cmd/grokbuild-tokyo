@@ -202,6 +202,9 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       const accountId = readState().activeAccountId;
       await desktop.evaluate(() => globalThis.__tokyoUITest.finishLogin(true)); await ready();
       await page.locator('[data-close-dialog="accounts-dialog"]').click(); await drafts(0);
+      // Explicitly leave saved history: new-conversation drafts use a separate
+      // key and must remain selected after switching away and returning.
+      await page.locator('#new-session').click();
       await choose([imageFile], 1); await page.locator('#prompt').fill('Profile attachment draft');
       const switchTo = async id => { await page.locator('#account-button').click(); await page.locator(`.account-row[data-account-id="${id}"] [data-account-action="switch"]`).click(); await ready(); await page.locator('[data-close-dialog="accounts-dialog"]').click(); };
       await switchTo('local'); await drafts(1);
