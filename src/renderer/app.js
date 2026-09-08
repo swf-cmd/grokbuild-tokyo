@@ -11,9 +11,9 @@
   const t = i18n.t;
   const diagnostic = i18n.localizeDiagnostic;
   const state = {
-    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'en' },
+    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'en', ...api?.initialPreferences },
     info: { models: [], modes: [], version: '' },
-    sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true,
+    sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true, startingEngine: true,
     sending: false, configuring: false, selecting: false, savingSettings: false, renaming: false, deleting: false,
     busy: new Set(), started: new Map(), permissions: new Map(),
     drafts: new Map(), selectedModel: '', selectedMode: '', menuId: null,
@@ -150,15 +150,15 @@
   }
 
   function renderConnection() {
-    const pending = state.initializing || state.connectionStatus === 'connecting';
-    const online = state.connected && !state.initializing;
+    const pending = state.initializing || state.startingEngine || state.connectionStatus === 'connecting';
+    const online = state.connected && !state.initializing && !state.startingEngine;
     const label = online ? t('引擎已连接') : pending ? t('连接中') : t('引擎未连接');
     const dotClass = `connection-dot ${online ? 'online' : pending ? 'connecting' : 'offline'}`;
     for (const id of ['sidebar-dot', 'connection-dot', 'settings-dot']) $(id).className = dotClass;
     $('connection-label').textContent = label;
     $('sidebar-status').textContent = online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
     $('connection-button').title = state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
-    $('settings-engine-status').textContent = state.connected ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : diagnostic(state.lastError) || t('Grokbuild 未连接，请检查文件路径与登录状态');
+    $('settings-engine-status').textContent = online ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : pending ? t('正在连接本地引擎') : diagnostic(state.lastError) || t('Grokbuild 未连接，请检查文件路径与登录状态');
     $('settings-engine-status').title = $('settings-engine-status').textContent;
     $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : t('本地');
     $('version-label').title = state.info.version || t('本地 Grokbuild');
@@ -215,7 +215,7 @@
     const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
     fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'));
     fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'));
-    const locked = state.initializing || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || state.busy.size > 0;
+    const locked = state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || state.busy.size > 0;
     for (const element of [$('model-select'), $('mode-select')]) {
       element.disabled = locked;
       element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : state.busy.size ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
@@ -278,7 +278,7 @@
       select.append(icon, title);
       select.addEventListener('click', () => guarded(() => selectSession(session.id)));
       const more = document.createElement('button');
-      more.disabled = select.disabled;
+      more.disabled = select.disabled || state.startingEngine;
       more.className = 'session-more'; more.textContent = '···'; more.setAttribute('aria-label', t('{title}的更多操作', { title: sessionTitle(session) }));
       more.addEventListener('click', event => { event.stopPropagation(); openSessionMenu(session.id, more); });
       row.append(select, more);
@@ -539,16 +539,16 @@
     const changing = state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login;
     $('send-button').hidden = busy;
     $('stop-button').hidden = !busy;
-    $('send-button').disabled = state.initializing || state.sending || changing || draft.pending > 0 || state.busy.size > 0 || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
-    $('attach-button').disabled = state.initializing || state.sending || state.busy.size > 0 || draft.pending > 0 || changing;
+    $('send-button').disabled = state.initializing || state.startingEngine || state.sending || changing || draft.pending > 0 || state.busy.size > 0 || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
+    $('attach-button').disabled = state.initializing || state.startingEngine || state.sending || state.busy.size > 0 || draft.pending > 0 || changing;
     renderDraftAttachments();
     $('settings-button').disabled = state.initializing || state.sending || changing;
     $('account-button').disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction;
-    $('workspace-button').disabled = state.initializing || state.sending || changing || state.busy.size > 0;
+    $('workspace-button').disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0;
     $('new-session').disabled = state.sending || changing;
-    for (const element of document.querySelectorAll('.session-select, .session-more')) element.disabled = state.initializing || state.sending || changing;
+    for (const element of document.querySelectorAll('.session-select, .session-more')) element.disabled = state.initializing || state.sending || changing || (state.startingEngine && element.classList.contains('session-more'));
     for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
-    for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
+    for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
     $('prompt').disabled = state.sending;
     $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : state.busy.size ? t('另一段对话正在运行，可以先写下你的想法…') : t('在雨声中，开始你的下一个想法…');
     $('activity-strip').hidden = !busy;
@@ -623,7 +623,7 @@
   }
 
   async function addAttachments(files) {
-    if (state.initializing || state.sending || state.busy.size > 0 || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    if (state.initializing || state.startingEngine || state.sending || state.busy.size > 0 || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
     const draft = currentDraft();
     if (draft.pending) return;
     const accountId = state.activeAccountId;
@@ -668,6 +668,15 @@
   async function selectSession(id) {
     if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || id === state.activeId) return;
     rememberDraft();
+    // Saved conversations are already in memory. Browsing them must not wait
+    // for ACP initialize or contend with its session restoration operation.
+    if (state.startingEngine) {
+      if (!state.sessions.some(session => session.id === id)) return;
+      state.activeId = id;
+      restoreDraft(); renderSessions(); renderSelects(); renderWorkspace(); renderMessages(true);
+      closeSessionMenu(); $('prompt').focus();
+      return;
+    }
     state.selecting = true; renderSelects(); renderComposerState();
     try {
       const session = await call('selectSession', id);
@@ -681,7 +690,7 @@
 
   async function configureSession(patch) {
     const session = activeSession();
-    if (!session || !state.connected || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    if (!session || !state.connected || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       const updated = await call('configureSession', { sessionId: session.id, ...patch });
@@ -695,7 +704,7 @@
   }
 
   async function prepareModel(model) {
-    if (state.initializing || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    if (state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       // A model without a published effort menu needs an actual session readback.
@@ -718,7 +727,7 @@
     const text = $('prompt').value.trim();
     const draft = currentDraft();
     const attachments = [...draft.attachments];
-    if ((!text && !attachments.length) || draft.pending || state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
+    if ((!text && !attachments.length) || draft.pending || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
     if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
     if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
     state.sending = true;
@@ -914,7 +923,7 @@
   }
 
   function accountsLocked() {
-    return state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.accountCancelPending || state.busy.size > 0 || !!state.login;
+    return state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.accountCancelPending || state.busy.size > 0 || !!state.login;
   }
 
   function validateAccountName(input, feedback) {
@@ -1030,6 +1039,7 @@
     const dirty = Object.entries(settingsPatch()).some(([key, value]) => value !== state.settings[key]);
     $('settings-reconnect').textContent = dirty ? t('保存并重连 ↗') : t('重新连接 ↗');
     $('settings-reconnect').title = dirty ? t('保存当前设置后重新连接引擎') : t('使用已保存的设置重新连接引擎');
+    for (const id of ['executable-input', 'workspace-input', 'subagents-input', 'choose-executable', 'choose-workspace']) $(id).disabled = state.startingEngine || state.savingSettings;
   }
 
   async function savePreferences(forceReconnect = false) {
@@ -1041,6 +1051,7 @@
       if (!patch.executable) throw new Error(t('请选择 Grokbuild 的 Grok CLI 文件。'));
       if (!patch.workspace) throw new Error(t('请选择默认工作目录。'));
       const reconnectRequired = forceReconnect || ['executable', 'workspace', 'subagentsEnabled'].some(key => patch[key] !== state.settings[key]);
+      if (reconnectRequired && state.startingEngine) throw new Error(t('请等待当前操作完成，再重新连接引擎。'));
       if (reconnectRequired && state.busy.size) throw new Error(t('此设置需要重新连接引擎，请先停止正在执行的任务，再保存。'));
       for (const element of $('settings-form').querySelectorAll('input, select, button')) element.disabled = true;
       const changes = Object.fromEntries(Object.entries(patch).filter(([key, value]) => value !== state.settings[key]));
@@ -1059,7 +1070,7 @@
   }
 
   async function reconnect() {
-    if (state.connectionStatus === 'connecting') return;
+    if (state.startingEngine || state.connectionStatus === 'connecting') return;
     if (state.sending || state.configuring || state.selecting) { toast(t('请等待当前操作完成，再重新连接引擎。')); return; }
     if (state.busy.size) { toast(t('请先停止正在执行的任务，再重新连接引擎。')); return; }
     state.selecting = true;
@@ -1200,7 +1211,7 @@
     $('choose-executable').addEventListener('click', () => guarded(async () => { const result = await call('chooseExecutable', i18n.getLanguage()); if (result) { $('executable-input').value = result; updateSettingsReconnect(); } }));
     $('choose-workspace').addEventListener('click', () => guarded(async () => { const result = await call('chooseFolder', i18n.getLanguage()); if (result) { $('workspace-input').value = result; updateSettingsReconnect(); } }));
     $('workspace-button').addEventListener('click', () => guarded(async () => {
-      if (state.savingSettings || state.sending || state.configuring || state.selecting || state.busy.size) return;
+      if (state.startingEngine || state.savingSettings || state.sending || state.configuring || state.selecting || state.busy.size) return;
       state.savingSettings = true; renderSelects(); renderComposerState();
       try {
         const workspace = await call('chooseFolder', i18n.getLanguage()); if (!workspace || workspace === state.settings.workspace) return;
@@ -1336,32 +1347,56 @@
   }
 
   async function bootstrap() {
+    i18n.setLanguage(state.settings.language);
     i18n.apply(document);
     ambience = window.TokyoAmbience.create({ onStatus: renderMusicStatus });
     installListeners(); updateClock(); setInterval(updateActivity, 1000);
+    applyAmbience();
     renderConnection();
     try {
       if (api?.onEvent) unsubscribe = api.onEvent(onEvent);
-      const result = await call('bootstrap');
-      state.settings = { ...state.settings, ...(result?.settings || {}) };
+      const local = await call('initialState');
+      state.settings = { ...state.settings, ...(local?.settings || {}) };
       i18n.setLanguage(state.settings.language); i18n.apply(document);
       updateClock();
+      state.info = normalizeInfo(local?.info || {});
+      state.sessions = (local?.sessions || []).map(normalizeSession);
+      state.accounts = local?.accounts || []; state.activeAccountId = local?.activeAccountId || 'local'; state.login = local?.login || null;
+      state.lastError = local?.error || '';
+      state.initializing = false;
+      syncNewChatChoices(true);
+      renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts();
+      resizePrompt(); $('prompt').focus();
+      if (state.lastError) toast(state.lastError, true, 9000);
+
+      // Only engine-dependent actions wait for ACP. Do not replace preferences,
+      // selection, language previews or drafts changed during this await.
+      const result = await call('bootstrap');
       state.info = normalizeInfo(result?.info || {});
       state.sessions = (result?.sessions || []).map(normalizeSession);
-      state.accounts = result?.accounts || []; state.activeAccountId = result?.activeAccountId || 'local'; state.login = result?.login || null;
+      state.accounts = result?.accounts || state.accounts;
       state.connected = result?.connected === true;
       state.connectionStatus = state.connected ? 'ready' : 'disconnected';
       state.lastError = result?.error || '';
-      state.initializing = false;
-      syncNewChatChoices(true);
-      renderWorkspace(); renderSessions(); renderSelects(); renderMessages(); renderConnection(); renderAccounts();
+      // The user may have opened older history while bootstrap restored the
+      // newest conversation. Confirm that selection too, including legacy
+      // records without model metadata, before enabling Send and model choices.
+      const restored = new Set([result?.sessions?.[0]?.id]);
+      while (state.connected && state.activeId && activeSession()?.modelSelectionVerified === false && !restored.has(state.activeId)) {
+        const id = state.activeId;
+        restored.add(id);
+        upsertSession(await call('selectSession', id));
+      }
+      state.startingEngine = false;
+      syncNewChatChoices();
+      renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts(); updateSettingsReconnect();
       if (state.lastError) toast(state.lastError, true, 9000);
     } catch (error) {
-      state.initializing = false;
+      state.initializing = false; state.startingEngine = false;
       state.connected = false; state.connectionStatus = 'disconnected'; state.lastError = error.message; renderConnection();
+      renderAccounts(); updateSettingsReconnect();
       toast(error.message, true, 10000);
     }
-    resizePrompt(); $('prompt').focus();
   }
 
   void bootstrap();

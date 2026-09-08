@@ -13,6 +13,33 @@ process.env.GROK_HOME = path.join(root, 'default-grok');
 for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
 const sourceRoot = process.env.TOKYO_UI_SOURCE_ROOT || path.resolve(__dirname, '../..');
 const test = globalThis.__tokyoUITest = { calls: [], dialogs: [], external: [], saved: [], adapters: [], records: new Map(), nextSession: 0 };
+// Optional deterministic gates let startup tests hold a CLI operation forever
+// without a slow timer or any real process. Existing smoke tests run normally.
+test.gates = new Map();
+test.hold = method => {
+  if (test.gates.has(method)) throw new Error(`Fixture gate already exists: ${method}`);
+  let resolve, reject;
+  const promise = new Promise((pass, fail) => { resolve = pass; reject = fail; });
+  promise.catch(() => {});
+  test.gates.set(method, { promise, resolve, reject, entered: false });
+};
+test.release = (method, error) => {
+  const gate = test.gates.get(method);
+  if (!gate) throw new Error(`Fixture gate does not exist: ${method}`);
+  test.gates.delete(method);
+  if (error) gate.reject(new Error(error)); else gate.resolve();
+};
+test.waitForGate = async method => {
+  const gate = test.gates.get(method);
+  if (!gate) return;
+  gate.entered = true;
+  test.calls.push({ method: 'gate', operation: method, at: Date.now() });
+  await gate.promise;
+};
+for (const method of (process.env.TOKYO_TEST_HOLD || '').split(',').filter(Boolean)) {
+  if (!['start', 'loadSession', 'newSession'].includes(method)) throw new Error(`Unsupported fixture gate: ${method}`);
+  test.hold(method);
+}
 const copy = value => structuredClone(value);
 const efforts = ['low', 'medium', 'high', 'xhigh'].map((id, index) => ({ id, name: ['Low Effort', 'Medium Effort', 'High Effort', 'Extra High Effort'][index], value: id }));
 const models = [
@@ -30,19 +57,21 @@ class FakeAdapter extends EventEmitter {
   }
   getInfo() { return copy(this.info); }
   getSession(id) { return copy(this.sessions.get(id)); }
-  async start() { test.calls.push({ method: 'start' }); this.emit('event', { type: 'status', status: 'ready' }); }
+  async start() { test.calls.push({ method: 'start' }); await test.waitForGate('start'); this.emit('event', { type: 'status', status: 'ready' }); }
   publish(session) {
     test.records.set(session.sessionId, copy(session));
     this.info.currentModelId = session.model; this.info.currentModeId = session.mode; this.info.modes = session.modes;
     return copy(session);
   }
   async newSession({ cwd, model = 'grok-4.6', mode }) {
+    await test.waitForGate('newSession');
     const choices = model === 'grok-discovered' ? efforts.slice(0, 3) : models.find(item => item.id === model)?.reasoningEfforts || [];
     const session = { sessionId: `ui-session-${++test.nextSession}`, cwd, model, mode: mode || (choices.length ? 'medium' : ''), models, modes: choices, loaded: true, modelSelectionVerified: true };
     this.sessions.set(session.sessionId, session); test.calls.push({ method: 'newSession', cwd, model, mode }); return this.publish(session);
   }
   async loadSession({ sessionId, cwd }) {
     test.calls.push({ method: 'loadSession', sessionId, cwd });
+    await test.waitForGate('loadSession');
     const session = copy(test.records.get(sessionId) || { sessionId, cwd, model: 'grok-4.6', mode: 'medium', models, modes: efforts, loaded: true, modelSelectionVerified: true });
     this.sessions.set(sessionId, session); return this.publish(session);
   }

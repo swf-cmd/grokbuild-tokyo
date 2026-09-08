@@ -116,6 +116,9 @@ class AppController extends EventEmitter {
   getSession(id) { const s = this.visibleSessions().find(s => s.id === id); if (!s) throw new Error(this.t('会话不存在或属于其他账户')); return s; }
   accountState() { return { accounts: this.accounts.map(a => this.accountManager.summary(a)), activeAccountId: this.activeAccountId, login: this.accountManager.loginState() }; }
   snapshot(error = null) { return { settings: this.settings, sessions: this.visibleSessions(), info: this.normalizeInfo(), connected: this.connected, error, ...this.accountState() }; }
+  // Local preferences and history are available before the CLI's initialize and
+  // session-restore round trips. Reading them must not reserve or start the engine.
+  initialState() { return this.snapshot(this.loadError); }
   listAccounts() { return this.accountState(); }
   accountName(name, exceptId) {
     if (typeof name !== 'string' || !name.trim() || Array.from(name.trim()).length > 60) throw new Error(this.t('请输入 1 到 60 字的账户名称'));
@@ -266,12 +269,12 @@ class AppController extends EventEmitter {
     }
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
-  async idleOperation(name, action) {
+  async idleOperation(name, action, { allowInterfaceSettings = false } = {}) {
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (this.active) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
     // Reserve synchronously, before the first await, so a send cannot race settings.
-    const operation = { name };
+    const operation = { name, allowInterfaceSettings };
     this.operation = operation;
     operation.promise = Promise.resolve().then(action);
     try { return await operation.promise; }
@@ -366,7 +369,7 @@ class AppController extends EventEmitter {
         }
       } catch (e) { error = e.message; }
       return this.snapshot(error);
-    });
+    }, { allowInterfaceSettings: true });
   }
   async createSession(options = {}) {
     return this.idleOperation(this.t('创建会话'), () => this._createSession(options));
@@ -387,7 +390,9 @@ class AppController extends EventEmitter {
     return session;
   }
   async ensureLoaded(session) {
-    return this.idleOperation(this.t('载入会话'), () => this._ensureLoaded(session));
+    // Restoring a session does not replace settings. Keep local preferences
+    // usable when startup also restores a conversation selected in the UI.
+    return this.idleOperation(this.t('载入会话'), () => this._ensureLoaded(session), { allowInterfaceSettings: true });
   }
   async _ensureLoaded(session) {
     if ((session.accountId || 'local') !== this.activeAccountId) throw new Error(this.t('请先切换到这段对话所属的账户'));
@@ -654,9 +659,12 @@ class AppController extends EventEmitter {
       try { this.save(); } catch (error) { this.settings = previous; throw error; }
       return this.settings;
     };
-    // Interface language and atmosphere changes remain usable mid-reply without restarting Grok.
+    // Startup does not write settings, so interface preferences can be saved
+    // while initialize/session restore is pending, just as during generation.
+    // Other operations may have captured settings before awaiting a teardown;
+    // retain their lock so they cannot overwrite a concurrent preference save.
     if (!changed) {
-      if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
+      if (this.operation && !this.operation.allowInterfaceSettings) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
       return persist();
     }
     return this.idleOperation(this.t('保存设置'), persist);

@@ -9,6 +9,8 @@
 
   const BPM = 80;
   const DURATION = 96;
+  const SAMPLE_RATE = 44100;
+  const METER_FRAMES = 32768;
   // Apply 2.5 times the previous 1.50 gain at the same volume setting.
   const MAX_OUTPUT_GAIN = 3.75;
   const TITLE = 'Tokyo Afterimage · 東京残像';
@@ -24,14 +26,19 @@
     }
     let peak = 0;
     let squareSum = 0;
+    let measured = 0;
+    // These are diagnostic estimates, not a playback limiter. Sample across
+    // the track instead of blocking the renderer on millions of PCM values.
+    const stride = Math.max(1, Math.ceil(buffer.length / METER_FRAMES));
     for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
       const samples = buffer.getChannelData(channel);
-      for (let index = 0; index < samples.length; index++) {
+      for (let index = 0; index < samples.length; index += stride) {
         peak = Math.max(peak, Math.abs(samples[index]));
         squareSum += samples[index] * samples[index];
+        measured++;
       }
     }
-    const rms = Math.sqrt(squareSum / (buffer.length * buffer.numberOfChannels));
+    const rms = Math.sqrt(squareSum / measured);
     if (!Number.isFinite(peak) || peak < 0.0001 || !Number.isFinite(rms)) {
       throw new Error('背景音乐文件无有效声音');
     }
@@ -87,7 +94,9 @@
       if (context) return context;
       const Context = window.AudioContext || window.webkitAudioContext;
       if (!Context) throw new Error('此设备不支持背景音乐播放');
-      context = new Context({ latencyHint: 'playback' });
+      // Decode at the bundled track's native rate instead of resampling the
+      // entire 96-second buffer to the audio device's rate before first play.
+      context = new Context({ latencyHint: 'playback', sampleRate: SAMPLE_RATE });
       output = context.createGain();
       output.gain.value = 0;
       // Combine the boost and soft peak limiting within WaveShaper's [-1, 1]
@@ -150,20 +159,16 @@
     async function start(resuming) {
       if (!wanted()) return;
       cancelPause();
-      if (!activated) {
-        publish('blocked');
-        return;
-      }
       if (source && context?.state === 'running') {
         fade(volume / 100, 0.12);
         publish('playing');
         return;
       }
-      publish('starting');
+      publish(activated ? 'starting' : 'blocked');
       try {
         const ctx = ensureContext();
         // unlock() supplies the resume promise created within the user gesture.
-        const resume = resuming || (ctx.state === 'running' ? Promise.resolve() : ctx.resume());
+        const resume = resuming || (!activated || ctx.state === 'running' ? Promise.resolve() : ctx.resume());
         if (!rendering && !rendered) {
           rendering = loadComposition(ctx).then(result => {
             if (!disposed) rendered = result;
@@ -174,7 +179,9 @@
           });
         }
         await Promise.all([resume, rendered ? Promise.resolve(rendered) : rendering]);
-        if (!wanted()) return;
+        // Warm enabled music while the first frame is interactive, even if a
+        // user gesture is still required. Preparing never starts audible output.
+        if (!wanted() || !activated) return;
         if (suspension) await suspension;
         if (!wanted()) return;
         if (ctx.state !== 'running') await ctx.resume();

@@ -603,6 +603,7 @@ test('engine shutdown for changed settings reserves the engine until complete', 
   const saving = controller.saveSettings({ subagentsEnabled: false });
   await assert.rejects(controller.send({ sessionId: session.id, text: 'do not race shutdown' }), /保存设置/);
   await assert.rejects(controller.reconnect(), /保存设置/);
+  await assert.rejects(controller.saveSettings({ language: 'ja', musicEnabled: false }), /保存设置/);
   adapter.closeGate.resolve();
   await saving;
   assert.equal(controller.operation, null);
@@ -961,6 +962,103 @@ test('bootstrap and reconnect recover model choices using a new default-director
       assert.equal(instances[0].prompts.length, 0);
     });
   }
+});
+
+test('startup exposes saved preferences and history while slow engine steps keep their operation lock', async t => {
+  for (const stage of ['startGate', 'loadGate']) {
+    await t.test(stage, async t => {
+      const { controller, instances } = fixture(t, {
+        settings: { language: 'ja', musicEnabled: false, musicVolume: 25, rainEnabled: false },
+        sessions: [{ id: 'saved', title: 'Saved', cwd: 'fixture-workspace', messages: [{ role: 'user', text: 'Existing history' }] }],
+      }, { useAppLanguage: true });
+      const initial = controller.initialState();
+      assert.equal(initial.settings.language, 'ja');
+      assert.equal(initial.settings.musicEnabled, false);
+      assert.equal(initial.settings.musicVolume, 25);
+      assert.equal(initial.settings.rainEnabled, false);
+      assert.equal(initial.sessions[0].messages[0].text, 'Existing history');
+      assert.equal(initial.connected, false);
+      assert.equal(controller.operation, null);
+      assert.equal(instances.length, 0, 'reading local state must not start the CLI');
+
+      const gate = deferred();
+      controller.Adapter.prototype[stage] = gate;
+      let settled = false;
+      const boot = controller.bootstrap().then(result => { settled = true; return result; });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(instances.length, 1);
+      assert.equal(settled, false, 'the fixture must still be waiting on the engine');
+      assert.equal(controller.initialState().sessions[0].id, 'saved');
+      assert.equal((await controller.selectSession('saved')).messages[0].text, 'Existing history');
+      const operation = controller.operation;
+      const preferences = { language: 'en', musicEnabled: true, musicVolume: 45, rainEnabled: true };
+      await controller.saveSettings(preferences);
+      for (const [key, value] of Object.entries(preferences)) assert.equal(controller.settings[key], value);
+      assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, controller.settings);
+      assert.equal(controller.operation, operation, 'preference saves must not release the engine lock');
+      assert.equal(instances[0].closeCount, 0);
+      await assert.rejects(controller.saveSettings({ subagentsEnabled: false }));
+      await assert.rejects(controller.createSession());
+      await assert.rejects(controller.reconnect());
+      assert.equal(settled, false);
+
+      gate.resolve();
+      const result = await boot;
+      assert.equal(result.connected, true);
+      assert.equal(result.settings.language, 'en');
+      assert.equal(result.settings.musicVolume, 45);
+      assert.equal(controller.operation, null);
+      assert.equal(instances[0].loads.length, 1);
+      assert.equal(instances[0].prompts.length, 0);
+    });
+  }
+});
+
+test('restoring older startup history allows preference saves while reserving the correct engine session', async t => {
+  const { controller, instances } = fixture(t, {
+    settings: {},
+    sessions: ['latest', 'older'].map(id => ({ id, title: id, cwd: 'fixture-workspace', messages: [{ role: 'user', text: `${id} history` }] })),
+  });
+  await controller.bootstrap();
+  const adapter = instances[0];
+  const older = controller.getSession('older');
+  assert.deepEqual(adapter.loads.map(load => load.sessionId), ['latest']);
+  assert.equal(older.modelSelectionVerified, false);
+  adapter.loadGate = deferred();
+  let settled = false;
+  const restoring = controller.selectSession(older.id).then(result => { settled = true; return result; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.deepEqual(adapter.loads.map(load => load.sessionId), ['latest', 'older']);
+  const operation = controller.operation;
+  assert.ok(operation, 'session restoration must own the engine before awaiting the CLI');
+  await controller.saveSettings({ language: 'ja', musicEnabled: false, musicVolume: 15, rainEnabled: false });
+  assert.equal(controller.operation, operation);
+  assert.equal(adapter.closeCount, 0);
+  assert.equal((await controller.selectSession('latest')).id, 'latest', 'local history stays readable during restore');
+  await assert.rejects(controller.send({ sessionId: older.id, text: 'do not race restore' }));
+  await assert.rejects(controller.configureSession({ sessionId: older.id, model: 'too-early' }));
+  await assert.rejects(controller.saveSettings({ subagentsEnabled: false }));
+  await assert.rejects(controller.reconnect());
+  assert.deepEqual(adapter.configurations, []);
+  assert.deepEqual(adapter.prompts, []);
+  assert.equal(settled, false);
+
+  adapter.loadGate.resolve();
+  assert.equal((await restoring).id, older.id);
+  assert.equal(older.modelSelectionVerified, true);
+  assert.equal(controller.operation, null);
+  assert.equal(controller.settings.language, 'ja');
+  assert.equal(controller.settings.musicVolume, 15);
+  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, controller.settings);
+  await controller.configureSession({ sessionId: older.id, model: 'selected-model' });
+  await controller.send({ sessionId: older.id, text: 'continue older history' });
+  assert.equal(adapter.configurations[0].sessionId, older.id);
+  assert.equal(adapter.prompts[0].sessionId, older.id);
+  assert.deepEqual(adapter.loads.map(load => load.sessionId), ['latest', 'older']);
+  assert.equal(controller.getSession('latest').messages.length, 1);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
 });
 
 test('stream events for another session never create a phantom reply in the UI', async t => {
