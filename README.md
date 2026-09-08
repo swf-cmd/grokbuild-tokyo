@@ -6,7 +6,7 @@
 
 **Your ideas. After dark.**
 
-A Tokyo rainy-night desktop home for Grok Build — for Windows and Mac.
+A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows and Mac.
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -16,11 +16,13 @@ A Tokyo rainy-night desktop home for Grok Build — for Windows and Mac.
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 ![Version 1.2.4](https://img.shields.io/badge/version-1.2.4-c1adff)
 
-[Get started](#get-started) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
+[Get started](#get-started) · [Downloads](#downloads) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
 
 </div>
 
 ![Grokbuild Tokyo English welcome screen, with a rainy Shibuya backdrop](docs/images/welcome-en.png)
+
+*Windows interface with an isolated demo profile. Mac uses native window controls and Command-key shortcuts. [Screenshot details](docs/images/README.md).*
 
 Grokbuild Tokyo is an **unofficial, independent desktop client** for the locally installed [Grok Build CLI](https://github.com/xai-org/grok-build). It connects over the Agent Client Protocol (ACP), bringing streaming conversations, separate account profiles, images and file attachments into a desktop interface inspired by Tokyo after hours.
 
@@ -33,10 +35,12 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 | **A place to focus** | Rainy Shibuya scenery, optional animated rain and an original offline synth soundtrack. |
 | **Conversations that stay with you** | Stream Markdown and code, search and rename chats, restore sessions and export Markdown. |
 | **Separate account profiles** | Add, sign in, switch, rename and remove profiles with their own login state and history. |
-| **Images and files** | Attach by picker, drag and drop, or pasted images; preview image replies and save returned files. |
+| **Images and files** | Select files, drop them onto the message composer, or paste images; preview image replies and save returned files. |
 | **Visibility into the work** | Follow tool progress and execution plans, respond to permission requests and stop generation. |
 | **Controls backed by the CLI** | Choose the models and reasoning levels exposed by your engine; configure subagents and a workspace. |
 | **Seven interface languages** | English, 简体中文, 日本語, 한국어, Español, Deutsch and Français. |
+
+Image input and file reading depend on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
 
 ![English demo conversation in the real desktop interface](docs/images/app-en.png)
 
@@ -49,6 +53,14 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 - **Windows x64**, or **macOS 13 Ventura or later on Intel or Apple Silicon**. The universal Mac build includes both architectures. The minimum macOS version follows [Electron 44](https://www.electronjs.org/blog/electron-44-0); older Macs must be able to run macOS 13 or later. Linux is not a supported client target.
 - An installed [Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary), with account access to the service. The official CLI supports both Mac architectures; see its [changelog](https://x.ai/build/changelog).
 - To run from source or build: **Git**, **Node.js 22.12.0 or later**, and npm. Development and CI use Node.js 24. Mac packaging also needs Apple Command Line Tools (`xcode-select --install`). Packaged apps include Electron and do not require a separate Node.js installation.
+
+### Downloads
+
+There is currently no published [Release](https://github.com/swf-cmd/grokbuild-tokyo/releases). The version badge identifies the source version, not a downloadable release.
+
+- **Mac test build:** sign in to GitHub and open the latest successful `main` run in [Actions → Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml?query=branch%3Amain). Under **Artifacts**, download either `macos-universal-tested-on-arm64` or `macos-universal-tested-on-x64`. Both contain a universal app; the suffix identifies the test runner. Artifacts are retained for 14 days.
+- Extract the artifact ZIP, then the enclosed `Grokbuild-Tokyo-…-mac-universal.zip`, and move **Grokbuild Tokyo.app** to **Applications**. The enclosed `.zip.sha256` applies to the inner app archive. These test builds use the ad-hoc signature described [below](#build-the-desktop-app), and still require the official CLI.
+- **Windows, or expired Mac artifacts:** [run from source](#run-from-source) or [build locally](#build-the-desktop-app). Windows CI currently does not publish an app download.
 
 ### Run from source
 

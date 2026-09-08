@@ -6,7 +6,7 @@
 
 **城市未眠，你的灵感也是。**
 
-为 Grok Build 打造的 Windows 与 Mac 桌面空间，窗外是东京的雨夜。
+为 Grok Build 打造的非官方 Windows 与 Mac 桌面客户端，窗外是东京的雨夜。
 
 [English](README.md) · **简体中文**
 
@@ -16,11 +16,13 @@
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 ![版本 1.2.4](https://img.shields.io/badge/version-1.2.4-c1adff)
 
-[快速开始](#快速开始) · [完整使用指南](docs/guide.zh-CN.md) · [参与贡献](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
+[快速开始](#快速开始) · [下载说明](#下载说明) · [完整使用指南](docs/guide.zh-CN.md) · [参与贡献](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
 
 </div>
 
 ![Grokbuild Tokyo 中文欢迎界面与涩谷雨夜背景](docs/images/welcome-zh-CN.png)
+
+*图为 Windows 界面，使用隔离的演示账户；Mac 使用原生窗口按钮和 Command 快捷键。见[截图说明](docs/images/README.md)。*
 
 Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build) 的**非官方、独立桌面客户端**。通过 Agent Client Protocol（ACP）连接官方引擎，把流式对话、独立账户、图片和附件放进一个有东京深夜氛围的桌面界面。
 
@@ -33,10 +35,12 @@ Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build
 | **有氛围的工作空间** | 涩谷雨夜背景、可关闭的动态雨滴，以及原创离线合成器音乐。 |
 | **持续积累的对话** | 流式 Markdown 与代码块、搜索与重命名、历史恢复和 Markdown 导出。 |
 | **独立账户管理** | 添加、登录、切换、重命名和删除账户，各自保存登录状态与聊天历史。 |
-| **图片与文件** | 选择文件、拖拽上传、粘贴图片，直接预览回复图片并保存返回的附件。 |
+| **图片与文件** | 选择文件、将文件拖入消息输入区或粘贴图片，直接预览回复图片并保存返回的附件。 |
 | **看得见的执行过程** | 查看工具进度和执行计划，逐项响应权限请求，随时停止生成。 |
 | **跟随官方引擎的控制** | 选择 CLI 提供的模型和推理档位，设置子代理与工作目录。 |
 | **七种界面语言** | 中文、English、日本語、한국어、Español、Deutsch、Français。 |
+
+图片输入与文件读取取决于所安装 CLI 的能力、工具及权限。此前测试的 CLI 1.0.13 使用本地资源引用，由工具读取附件。详见[附件支持范围与大小限制](docs/guide.zh-CN.md#聊天图片与附件)。
 
 ![真实桌面界面中的中文演示对话](docs/images/app-zh-CN.png)
 
@@ -49,6 +53,14 @@ Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build
 - **Windows x64**，或 **macOS 13 Ventura 及以上的 Intel / Apple Silicon Mac**。Mac 通用版同时包含两种架构。最低系统要求来自 [Electron 44](https://www.electronjs.org/blog/electron-44-0)，较老的 Mac 也必须能够运行 macOS 13 或更新系统；客户端暂不将 Linux 作为支持目标。
 - 已安装的 [Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary)，以及能够使用该服务的账户。官方 CLI 支持两种 Mac 架构，见[更新记录](https://x.ai/build/changelog)。
 - 从源码运行或构建时，需要 **Git**、**Node.js 22.12.0 或更高版本**及 npm；开发和 CI 使用 Node.js 24。Mac 打包还需要 Apple 命令行工具（`xcode-select --install`）。打包后的应用自带 Electron，无需另外安装 Node.js。
+
+### 下载说明
+
+目前尚未发布 [Release 正式版本](https://github.com/swf-cmd/grokbuild-tokyo/releases)，页首版本徽章表示源码版本，不代表已有对应的下载包。
+
+- **Mac 测试版：**登录 GitHub，打开 [Actions → Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml?query=branch%3Amain) 中最近一次成功的 `main` 分支运行，在 **Artifacts** 下载 `macos-universal-tested-on-arm64` 或 `macos-universal-tested-on-x64`。两者均包含通用版应用，后缀表示执行测试的机器架构；产物保留 14 天。
+- 先解压下载的产物 ZIP，再解压其中的 `Grokbuild-Tokyo-…-mac-universal.zip`，将 **Grokbuild Tokyo.app** 拖入**应用程序**。附带的 `.zip.sha256` 校验的是内层应用压缩包。测试版采用[下文说明](#构建桌面程序)的临时签名，仍需单独安装官方 CLI。
+- **Windows，或 Mac 产物已过期：**请[从源码运行](#从源码运行)或[本地构建](#构建桌面程序)。Windows CI 目前不提供应用下载包。
 
 ### 从源码运行
 
