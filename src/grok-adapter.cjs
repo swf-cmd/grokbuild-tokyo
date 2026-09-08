@@ -14,6 +14,7 @@ const { imagesFromContent, imageMime, readLocalBytes } = require('./media.cjs');
 const { attachmentsFromContent } = require('./attachments.cjs');
 const { version: clientVersion } = require('../package.json');
 const { labelModel, isLegacyGrok4Label, servedModelFromUsage } = require('./model-labels.cjs');
+const { cliEnvironment } = require('./platform.cjs');
 
 const CONTROL_TIMEOUT = 60000;
 // A 50 MB attachment batch needs roughly 67 MB when base64-encoded in ACP.
@@ -68,6 +69,7 @@ class GrokAdapter extends EventEmitter {
     this.configOptionSupported = undefined;
     this.configuring = new Set();
     this.process = null;
+    this.processGroups = new WeakSet();
     this.pending = new Map();
     this.permissions = new Map();
     this.sessions = new Map();
@@ -114,10 +116,12 @@ class GrokAdapter extends EventEmitter {
       cwd: this.cwd,
       shell: false,
       windowsHide: true,
+      detached: process.platform !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...this.env, NO_COLOR: '1', RUST_LOG: 'error', GROK_SUBAGENTS: this.subagentsEnabled ? '1' : '0' },
+      env: { ...cliEnvironment(this.env, { executable: this.executable }), NO_COLOR: '1', RUST_LOG: 'error', GROK_SUBAGENTS: this.subagentsEnabled ? '1' : '0' },
     });
     this.process = child;
+    if (process.platform !== 'win32' && Number.isInteger(child.pid) && child.pid > 0) this.processGroups.add(child);
     const decoder = new StringDecoder('utf8');
     let buffer = '';
     let stderr = '';
@@ -143,10 +147,15 @@ class GrokAdapter extends EventEmitter {
       }
     };
     child.on('error', error => disconnect(failure(
-      error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 grok.exe。') : this.safeMessage(error.message), error.code), child.pid == null));
-    child.on('exit', (code, signal) => disconnect(failure(
-      this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
-      'PROCESS_EXIT'), true));
+      error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 Grok CLI。') : this.safeMessage(error.message), error.code), child.pid == null));
+    child.on('exit', (code, signal) => {
+      // A CLI may exit before its tools; the isolated POSIX process group lets
+      // us stop those descendants without signalling the desktop application's group.
+      this._killProcessGroup(child);
+      disconnect(failure(
+        this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
+        'PROCESS_EXIT'), true);
+    });
     child.stdin.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
@@ -619,7 +628,20 @@ class GrokAdapter extends EventEmitter {
     return { cancelled: true };
   }
 
+  _killProcessGroup(child) {
+    if (!child || !this.processGroups.has(child)) return false;
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+      this.processGroups.delete(child);
+      return true;
+    } catch (error) {
+      if (error.code === 'ESRCH') this.processGroups.delete(child);
+      return false;
+    }
+  }
+
   _kill(child) {
+    if (this._killProcessGroup(child)) return Promise.resolve();
     if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
     if (process.platform === 'win32' && Number.isInteger(child.pid)) {
       return new Promise(resolve => {

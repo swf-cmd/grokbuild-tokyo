@@ -11,17 +11,17 @@ fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
 const alternateWorkspace = path.join(testRoot, 'Alternate');
-const executable = path.join(testRoot, 'grok.exe');
-const alternateExecutable = path.join(testRoot, 'alternate-grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
+const alternateExecutable = path.join(testRoot, process.platform === 'win32' ? 'alternate-grok.exe' : 'alternate-grok');
 for (const folder of [workspace, alternateWorkspace, path.join(testRoot, 'data')]) fs.mkdirSync(folder, { recursive: true });
-for (const file of [executable, alternateExecutable]) fs.writeFileSync(file, 'Test fixture only; never executed.');
+for (const file of [executable, alternateExecutable]) { fs.writeFileSync(file, 'Test fixture only; never executed.'); fs.chmodSync(file, 0o755); }
 fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, rainEnabled: true, subagentsEnabled: true, language: 'zh-CN' }, sessions: [] }));
 const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
   // Load the real packaged resources with the test engine, without extraction.
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App', 'resources', 'app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const desktop = await _electron.launch({ args: [path.join(__dirname, 'fixtures', 'ui-app.cjs')], env });
   const page = await desktop.firstWindow();
@@ -38,6 +38,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await desktop.evaluate(() => { globalThis.__tokyoUITest.dialogs = []; }).catch(() => {});
     }
   };
+  const controlWindow = action => process.platform === 'darwin' ? page.evaluate(action => window.tokyo.windowControl(action), action) : page.locator(`[data-window="${action}"]`).click();
   const ready = () => page.waitForFunction(() => document.querySelector('#connection-label')?.textContent.includes('已连接') && !document.querySelector('#settings-button').disabled);
   const idle = () => page.waitForFunction(() => document.querySelector('#stop-button').hidden && !document.querySelector('#settings-button').disabled);
   const select = async (id, value) => { await page.locator(id).selectOption(value); await page.waitForFunction(({ id, value }) => document.querySelector(id).value === value && !document.querySelector('#model-select').disabled, { id, value }); };
@@ -60,7 +61,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       for (const card of await page.locator('[data-prompt]').all()) {
         await card.click(); assert.equal(await page.locator('#prompt').inputValue(), await card.getAttribute('data-prompt'));
       }
-      await page.locator('#prompt').fill('first line'); await page.locator('#prompt').press('End'); await page.locator('#prompt').press('Shift+Enter');
+      await page.locator('#prompt').fill('first line'); await page.locator('#prompt').press(process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End'); await page.locator('#prompt').press('Shift+Enter');
       assert.equal(await page.locator('#prompt').inputValue(), 'first line\n');
       const count = (await calls('prompt')).length;
       await page.locator('#prompt').dispatchEvent('keydown', { key: 'Enter', isComposing: true, keyCode: 229 });
@@ -111,12 +112,12 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#search-toggle').click(); await page.locator('#session-search').fill('no-such-chat'); assert.equal(await page.locator('.session-select').count(), 0);
       await page.locator('#session-search').fill('Renamed'); assert.equal(await page.locator('.session-select').count(), 1);
       await page.locator('#session-search').press('Escape'); assert.equal(await page.locator('#history-search').isHidden(), true);
-      await page.locator('#prompt').fill('Saved draft'); await page.keyboard.press('Control+n'); assert.equal(await page.locator('#prompt').inputValue(), '');
+      await page.locator('#prompt').fill('Saved draft'); await page.keyboard.press(process.platform === 'darwin' ? 'Meta+n' : 'Control+n'); assert.equal(await page.locator('#prompt').inputValue(), '');
       await page.locator('#prompt').fill('New draft'); await page.locator('#new-session').click(); assert.equal(await page.locator('#prompt').inputValue(), 'New draft');
       await page.locator('.session-select').filter({ hasText: 'Renamed fixture' }).click(); await idle(); assert.equal(await page.locator('#prompt').inputValue(), 'Saved draft');
     });
     await stage('settings browser buttons, cancel, validation, persistence and reconnect', async () => {
-      await page.keyboard.press('Control+,'); await page.locator('#settings-dialog').waitFor({ state: 'visible' });
+      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,'); await page.locator('#settings-dialog').waitFor({ state: 'visible' });
       await queueDialog({ canceled: true, filePaths: [] }); await page.locator('#choose-executable').click(); assert.equal(await page.locator('#executable-input').inputValue(), executable);
       await queueDialog({ canceled: false, filePaths: [alternateExecutable] }); await page.locator('#choose-executable').click();
       await page.waitForFunction(expected => document.querySelector('#executable-input').value === expected, alternateExecutable);
@@ -198,9 +199,9 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.equal(await page.locator('#save-settings-button').evaluate(element => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), true);
       await page.screenshot({ path: path.join(testRoot, 'compact-settings.png'), animations: 'disabled' }); await page.locator('[data-close-dialog="settings-dialog"]').click();
-      await page.locator('[data-window="maximize"]').click(); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), true);
-      await page.locator('[data-window="maximize"]').click(); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), false);
-      await page.locator('[data-window="minimize"]').click(); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), true);
+      await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), true);
+      await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), false);
+      await controlWindow('minimize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), true);
       await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].restore());
     });
     await stage('delete keep/close/confirm and disabled export after deletion', async () => {
@@ -224,7 +225,15 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
     await stage('no renderer errors', async () => assert.deepEqual(errors, []));
     await page.screenshot({ path: path.join(testRoot, 'complete.png'), animations: 'disabled' });
     await stage('close window', async () => {
-      await Promise.all([page.waitForEvent('close'), page.locator('[data-window="close"]').click()]);
+      if (process.platform === 'darwin') {
+        await controlWindow('close');
+        assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+        await desktop.evaluate(({ app }) => { app.emit('activate'); });
+        assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
+        const closed = page.waitForEvent('close');
+        await desktop.evaluate(({ app }) => { setImmediate(() => app.quit()); });
+        await closed;
+      } else await Promise.all([page.waitForEvent('close'), controlWindow('close')]);
     });
   } finally {
     await desktop.close().catch(() => {});

@@ -12,7 +12,7 @@ const { promisify } = require('node:util');
 const { GrokAdapter } = require('../src/grok-adapter.cjs');
 
 async function main() {
-  const executable = process.env.GROK_EXECUTABLE || path.join(os.homedir(), '.grok', 'bin', 'grok.exe');
+  const executable = process.env.GROK_EXECUTABLE || require('../src/platform.cjs').findGrokExecutable({ home: os.homedir(), env: process.env });
   const base = path.resolve(__dirname, '..', 'work', 'live-audit');
   await fs.mkdir(base, { recursive: true });
   const cwd = await fs.mkdtemp(path.join(base, 'run-'));
@@ -68,7 +68,8 @@ async function main() {
       console.log(JSON.stringify({ check: 'resume', passed: true, characters: second.text.length }));
     }
     if (permissionCheck) {
-      await adapter.prompt({ sessionId: session.sessionId, text: 'We are testing the client permission dialog in this dedicated temporary test directory. Use run_terminal_command once to execute: powershell -NoProfile -Command "Set-Content -LiteralPath permission-probe.txt -Value probe". If the user rejects it, do not retry, use another tool, or write anything else; just say the permission was denied.' });
+      const probeCommand = process.platform === 'win32' ? 'powershell -NoProfile -Command "Set-Content -LiteralPath permission-probe.txt -Value probe"' : "printf probe > permission-probe.txt";
+      await adapter.prompt({ sessionId: session.sessionId, text: `We are testing the client permission dialog in this dedicated temporary test directory. Use run_terminal_command once to execute: ${probeCommand}. If the user rejects it, do not retry, use another tool, or write anything else; just say the permission was denied.` });
       const wrote = await fs.stat(path.join(cwd, 'permission-probe.txt')).then(() => true, () => false);
       console.log(JSON.stringify({ check: 'permission', permissionRequests, blockedWrite: !wrote }));
       assert(permissionRequests > 0, 'tool permission request reached the client');

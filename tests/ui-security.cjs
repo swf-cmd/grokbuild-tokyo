@@ -7,14 +7,15 @@ const root = path.resolve(__dirname, '..');
 fs.mkdirSync(path.join(root, 'work/security-ui'), { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(root, 'work/security-ui/run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data'));
 fs.writeFileSync(executable, 'Never executed: isolated fixture.');
+fs.chmodSync(executable, 0o755);
 fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false, language: 'en' }, sessions: [] }));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const desktop = await _electron.launch({ args: [path.join(__dirname, 'fixtures/ui-app.cjs')], env });
   try {
@@ -68,7 +69,8 @@ fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify(
         return new Promise((resolve, reject) => { test.releaseClose = resolve; test.rejectClose = reject; });
       };
     });
-    await page.evaluate(() => window.tokyo.windowControl('close'));
+    if (process.platform === 'darwin') await desktop.evaluate(({ app }) => { app.quit(); });
+    else await page.evaluate(() => window.tokyo.windowControl('close'));
     assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.shutdownCalls), 1);
     const stillClosing = await desktop.evaluate(({ app, BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0].close(); app.quit();
@@ -80,7 +82,8 @@ fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify(
     assert.equal(closeErrors.length, 1);
     assert.equal(closeErrors[0].message, 'UI fixture: process did not stop');
     assert.equal(page.isClosed(), false, 'failed shutdown must preserve a window for retry');
-    await page.evaluate(() => window.tokyo.windowControl('close'));
+    if (process.platform === 'darwin') await desktop.evaluate(({ app }) => { app.quit(); });
+    else await page.evaluate(() => window.tokyo.windowControl('close'));
     assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.shutdownCalls), 2, 'a failed shutdown permits retry');
     const closed = page.waitForEvent('close');
     await desktop.evaluate(() => { setImmediate(() => globalThis.__tokyoUITest.releaseClose()); });

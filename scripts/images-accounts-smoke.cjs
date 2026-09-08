@@ -8,8 +8,9 @@ const base = path.join(root, 'work', 'images-accounts-qa');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace); fs.mkdirSync(path.join(testRoot, 'data')); fs.writeFileSync(executable, 'Fixture only');
+fs.chmodSync(executable, 0o755);
 const png = fs.readFileSync(path.join(root, 'src/renderer/assets/tokyo-rain.png'));
 const icon = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 fs.writeFileSync(path.join(workspace, '东京 image.png'), png);
@@ -19,7 +20,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App/resources/app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   delete env.ELECTRON_RUN_AS_NODE;
   const launchArgs = [path.join(root, 'tests/fixtures/ui-app.cjs')];
   const scale = process.argv.find(arg => arg.startsWith('--scale='))?.slice('--scale='.length);

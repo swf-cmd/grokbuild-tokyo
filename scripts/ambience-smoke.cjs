@@ -10,10 +10,11 @@ const base = path.join(root, 'work', 'ambience-qa');
 fs.mkdirSync(base, { recursive: true });
 const testRoot = fs.mkdtempSync(path.join(base, 'run-'));
 const workspace = path.join(testRoot, 'Workspace');
-const executable = path.join(testRoot, 'grok.exe');
+const executable = path.join(testRoot, process.platform === 'win32' ? 'grok.exe' : 'grok');
 fs.mkdirSync(workspace);
 fs.mkdirSync(path.join(testRoot, 'data'));
 fs.writeFileSync(executable, 'Never executed: fake engine fixture.');
+fs.chmodSync(executable, 0o755);
 const stateFile = path.join(testRoot, 'data', 'conversations.json');
 fs.writeFileSync(stateFile, JSON.stringify({ version: 1, settings: { workspace, executable, rainEnabled: true, subagentsEnabled: true }, sessions: [] }));
 const readSettings = () => JSON.parse(fs.readFileSync(stateFile, 'utf8')).settings;
@@ -21,7 +22,7 @@ const readSettings = () => JSON.parse(fs.readFileSync(stateFile, 'utf8')).settin
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
   delete env.ELECTRON_RUN_AS_NODE;
-  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = path.join(root, 'App', 'resources', 'app.asar');
+  if (process.argv.includes('--packaged')) env.TOKYO_UI_SOURCE_ROOT = require('../scripts/package-paths.cjs').packagedArchive(root);
   const desktop = await _electron.launch({ args: [path.join(root, 'tests', 'fixtures', 'ui-app.cjs')], env });
   const page = await desktop.firstWindow();
   const errors = [];

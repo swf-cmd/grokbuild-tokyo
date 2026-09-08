@@ -6,21 +6,44 @@ const { pathToFileURL } = require('node:url');
 const { createI18n, languages } = require('./i18n.js');
 const { AppController } = require('./app-controller.cjs');
 const { safeName } = require('./attachments.cjs');
-const root = process.env.TOKYO_TEST_ROOT || (app.isPackaged ? path.resolve(path.dirname(process.execPath), '..') : path.resolve(__dirname, '..'));
+const { appRoot } = require('./app-paths.cjs');
+const isMac = process.platform === 'darwin';
+const root = appRoot({ testRoot: process.env.TOKYO_TEST_ROOT, appData: app.getPath('appData'), isPackaged: app.isPackaged, executablePath: process.execPath, sourceRoot: path.resolve(__dirname, '..') });
+fs.mkdirSync(path.join(root, 'data', 'browser'), { recursive: true });
 app.setPath('userData', path.join(root, 'data', 'browser'));
 app.setName('Grokbuild Tokyo');
-app.setAppUserModelId('local.grokbuild.tokyo');
+if (process.platform === 'win32') app.setAppUserModelId('local.grokbuild.tokyo');
 let win, controller, quitPending = false, quitAllowed = false;
 const t = createI18n(() => controller?.settings.language);
 const entry = path.join(__dirname, 'renderer', 'index.html');
 const entryURL = pathToFileURL(entry).href;
+const showWindow = () => { if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } };
+const menuAction = action => { showWindow(); win?.webContents.send('tokyo:menu', action); };
+function installMenu() {
+  if (!isMac) { Menu.setApplicationMenu(null); return; }
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu', submenu: [
+      { role: 'about' }, { type: 'separator' },
+      { id: 'preferences', label: t('偏好设置'), accelerator: 'Cmd+,', click: () => menuAction('preferences') },
+      { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+      { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
+    ] },
+    { role: 'fileMenu', submenu: [
+      { id: 'new-conversation', label: t('开启新对话'), accelerator: 'Cmd+N', click: () => menuAction('new-conversation') },
+      { type: 'separator' }, { role: 'close' },
+    ] },
+    { role: 'editMenu' }, { role: 'viewMenu', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { role: 'windowMenu' },
+  ]));
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
+  app.on('second-instance', showWindow);
+  app.on('activate', showWindow);
   app.whenReady().then(() => {
     controller = new AppController({ root, home: os.homedir() });
-    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: false, show: false, backgroundColor: '#0b0e11', title: 'Grokbuild Tokyo', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
-    Menu.setApplicationMenu(null);
+    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: isMac, ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}), show: false, backgroundColor: '#0b0e11', title: 'Grokbuild Tokyo', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
+    installMenu();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event, url) => { if (url !== entryURL) event.preventDefault(); });
     win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -30,11 +53,12 @@ else {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== entryURL) throw new Error('Invalid IPC sender');
       return fn(...args);
     });
-    for (const name of ['bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'saveSettings', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
+    for (const name of ['bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
+    handle('saveSettings', async patch => { const result = await controller.saveSettings(patch); installMenu(); return result; });
     // Dialogs opened from settings follow its language preview without saving it.
     const dialogTranslator = language => typeof language === 'string' && Object.hasOwn(languages, language) ? createI18n(language) : t;
     handle('chooseFolder', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 Grok 工作目录'), defaultPath: controller.settings.workspace, properties: ['openDirectory', 'createDirectory'] }); return r.canceled ? null : r.filePaths[0]; });
-    handle('chooseExecutable', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 grok.exe'), defaultPath: controller.settings.executable, filters: [{ name: translate('Grok 可执行文件'), extensions: ['exe'] }], properties: ['openFile'] }); return r.canceled ? null : r.filePaths[0]; });
+    handle('chooseExecutable', async language => { const translate = dialogTranslator(language); const r = await dialog.showOpenDialog(win, { title: translate('选择 Grok CLI'), defaultPath: controller.settings.executable, ...(process.platform === 'win32' ? { filters: [{ name: translate('Grok 可执行文件'), extensions: ['exe'] }] } : {}), properties: ['openFile', 'showHiddenFiles'] }); return r.canceled ? null : r.filePaths[0]; });
     handle('chooseAttachments', async ({ language, accountId = controller.activeAccountId } = {}) => {
       if (controller.activeAccountId !== accountId) throw new Error(t('附件已失效，请重新添加'));
       const result = await dialog.showOpenDialog(win, { title: dialogTranslator(language)('选择图片或附件'), properties: ['openFile', 'multiSelections'] });
@@ -65,10 +89,10 @@ else {
     handle('openExternal', async url => { const parsed = new URL(url); if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error(t('不支持的链接')); return shell.openExternal(parsed.href); });
     handle('copyText', async text => { if (typeof text !== 'string' || text.length > 2000000) throw new Error(t('无法复制这段内容')); await clipboard.writeText(text); return true; });
     win.once('ready-to-show', () => win.show());
-    win.on('close', event => { if (!quitAllowed) { event.preventDefault(); app.quit(); } });
+    win.on('close', event => { if (!quitAllowed) { event.preventDefault(); if (isMac && !quitPending) win.hide(); else app.quit(); } });
     win.loadFile(entry);
   }).catch(error => { dialog.showErrorBox(t('Grokbuild Tokyo 启动失败'), error.message); app.exit(1); });
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => { if (!isMac) app.quit(); });
   app.on('before-quit', event => {
     if (quitAllowed || !controller) return;
     event.preventDefault();

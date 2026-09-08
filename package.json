@@ -27,7 +27,11 @@
     "test:attachments": "node tests/ui-attachments.cjs",
     "test:i18n": "node tests/i18n-ui.cjs",
     "test:time": "node tests/time-ui.cjs",
-    "build": "node scripts/package.cjs"
+    "build": "node scripts/package.cjs",
+    "build:win": "node scripts/package.cjs --platform win32 --arch x64",
+    "build:mac": "node scripts/package.cjs --platform darwin --arch universal",
+    "build:mac:arm64": "node scripts/package.cjs --platform darwin --arch arm64",
+    "build:mac:x64": "node scripts/package.cjs --platform darwin --arch x64"
   },
   "devDependencies": {
     "electron": "44.2.0",

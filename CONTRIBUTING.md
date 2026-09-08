@@ -2,7 +2,7 @@
 
 English · [简体中文](CONTRIBUTING.zh-CN.md)
 
-Thanks for helping improve this unofficial Windows desktop client for Grok Build CLI. Bug reports, documentation, translations, accessibility improvements, and focused code changes are welcome.
+Thanks for helping improve this unofficial Windows and Mac desktop client for Grok Build CLI. Bug reports, documentation, translations, accessibility improvements, and focused code changes are welcome.
 
 ## Before you start
 
@@ -13,11 +13,11 @@ Thanks for helping improve this unofficial Windows desktop client for Grok Build
 
 ## Development setup
 
-Use Windows x64 and Node.js 22.12.0 or newer. CI uses Node.js 24; use that version when reproducing CI failures. The locally installed [Grok Build CLI](https://github.com/xai-org/grok-build) is required for normal application use, while the default automated tests use isolated mock engines.
+Use Windows x64 or macOS 13+ on Intel or Apple Silicon, with Node.js 22.12.0 or newer. CI uses Node.js 24; use that version when reproducing CI failures. The locally installed [Grok Build CLI](https://github.com/xai-org/grok-build) is required for normal application use, while the default automated tests use isolated mock engines.
 
 Fork this repository, clone your fork, and create a branch for your change:
 
-```powershell
+```sh
 git clone https://github.com/YOUR-USERNAME/grokbuild-tokyo.git
 cd grokbuild-tokyo
 git switch -c describe-your-change
@@ -25,22 +25,24 @@ npm ci
 npm start
 ```
 
-Installation and the first build need network access to download dependencies and Electron. Use the app's settings to select `grok.exe` if it is not installed at `%USERPROFILE%\.grok\bin\grok.exe`.
+Installation and the first build need network access to download dependencies and Electron. Windows defaults to `%USERPROFILE%\.grok\bin\grok.exe`; Mac defaults to `~/.grok/bin/grok`, with common installation paths as fallbacks. Select your executable in settings if necessary. On Mac, packaging requires Apple Command Line Tools (`xcode-select --install`).
+
+Mac source and packaged runs share `~/Library/Application Support/Grokbuild Tokyo` for `data/` and `Workspace/`. Tests use isolated roots; use those fixtures when checking account or history changes. Windows keeps its existing data layout in the checkout or beside `App/`.
 
 ## Make a focused change
 
 - Follow the surrounding code style and keep unrelated formatting changes out of the pull request.
 - Add or update meaningful regression coverage when changing behavior. Include screenshots for visible UI changes, using demo data only.
-- Keep English and Chinese documentation aligned. Changes to interface text should cover all seven UI languages and pass the internationalization checks.
+- Keep English and Chinese documentation aligned. Changes to interface text should cover all seven UI languages and pass the internationalization checks. Keep Windows and Mac feature behavior aligned; platform-specific window controls, menus, paths, and modifier keys are intentional.
 - Preserve account isolation, limited IPC, reply sanitization, permission handling, and local/remote resource restrictions. Account separation is not an operating-system sandbox; tool execution is controlled by the official CLI.
-- Do not commit `data/`, `Workspace/`, `App/`, `work/`, `node_modules/`, environment files, login output, or personal screenshots. Check the staged diff as well as `.gitignore`.
+- Do not commit `data/`, `Workspace/`, `App/`, `dist/`, `work/`, `node_modules/`, environment files, login output, or personal screenshots. Check the staged diff as well as `.gitignore`.
 - Retain third-party notices and license files. Describe the source and license of any new dependency or media asset.
 
 ## Validate your change
 
-Run the checks relevant to the change locally. The Windows CI workflow runs this complete set:
+Run the checks relevant to the change locally. CI runs the shared checks on Windows x64 and Mac Intel/Apple Silicon runners. `npm run build` selects the host platform (and the current Node.js architecture on Mac):
 
-```powershell
+```sh
 npm ci
 npm test
 npm audit --audit-level=moderate
@@ -59,7 +61,19 @@ node tests/ui-attachments.cjs --packaged
 node tests/time-ui.cjs --packaged
 ```
 
-Close the running client before building. The build replaces the entire `App/` directory and saves the previous directory under `work/package-backups/`. Distribute the complete output directory with its license files.
+Quit the running client before building (**Cmd+Q** on Mac; closing its window only hides it). The build replaces the entire `App/` directory and saves the previous directory under `work/package-backups/`. Windows distributions need the complete `App/` directory and its license files.
+
+For a Mac release, build the universal app on a Mac and validate both architectures:
+
+```sh
+npm run build:mac
+node scripts/verify-package.cjs --platform darwin --arch universal
+node scripts/packaged-launch-smoke.cjs
+```
+
+This creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip` with a `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` produce individual architecture builds. `npm run build:win` explicitly targets Windows x64.
+
+Mac packages are ad-hoc signed, without a Developer ID certificate or notarization. Do not label them as notarized releases. See the [user guide](docs/guide.md#getting-started) for installation and first-launch behavior. Validate a universal package on both architectures before claiming runtime coverage for both; inspecting its Mach-O slices alone is not a runtime test.
 
 Default unit and UI tests use mock CLI/login behavior and isolated test data; they do not make real model requests or modify your everyday account. Dependency audit results cover known registry advisories and do not replace code or runtime review.
 

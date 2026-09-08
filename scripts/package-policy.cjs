@@ -6,12 +6,12 @@ const path = require('node:path');
 const packageFiles = [
   'package.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
   'licenses/DOMPurify-LICENSE.txt', 'licenses/marked-LICENSE.txt',
-  'src/account-manager.cjs', 'src/app-controller.cjs', 'src/attachments.cjs',
+  'src/account-manager.cjs', 'src/app-controller.cjs', 'src/app-paths.cjs', 'src/attachments.cjs',
   'src/grok-adapter.cjs', 'src/i18n.js', 'src/locales.js', 'src/main.cjs',
-  'src/media.cjs', 'src/model-labels.cjs', 'src/preload.cjs', 'src/resource-download.cjs',
+  'src/media.cjs', 'src/model-labels.cjs', 'src/platform.cjs', 'src/preload.cjs', 'src/resource-download.cjs',
   'src/renderer/ambient-audio.js', 'src/renderer/app.js', 'src/renderer/index.html',
   'src/renderer/styles.css', 'src/renderer/vendor/marked.umd.js',
-  'src/renderer/vendor/purify.min.js', 'src/renderer/assets/icon.ico',
+  'src/renderer/vendor/purify.min.js', 'src/renderer/assets/icon.ico', 'src/renderer/assets/icon.icns',
   'src/renderer/assets/icon.png', 'src/renderer/assets/tokyo-afterimage.wav',
   'src/renderer/assets/tokyo-rain.png',
 ];

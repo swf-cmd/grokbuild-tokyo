@@ -17,7 +17,7 @@ These browser distributions are included unmodified. Their original notices rema
 
 ## Electron and development dependencies
 
-Electron and its bundled Chromium components retain their `LICENSE` and `LICENSES.chromium.html` files in the generated `App` directory. Keep these files when distributing a build. The project's own `LICENSE`, this notice and the browser-library license texts are included inside `App/resources/app.asar`.
+On Windows, Electron and its bundled Chromium components retain their `LICENSE` and `LICENSES.chromium.html` files in the generated `App` directory. On Mac, they are included inside `Grokbuild Tokyo.app/Contents/Resources` as `LICENSE.electron.txt` and `LICENSES.chromium.html`, so the `.app` and its ZIP retain these notices. Keep these files when distributing a build. The project's own `LICENSE`, this notice and the browser-library license texts are included in `App/resources/app.asar` on Windows, or `Grokbuild Tokyo.app/Contents/Resources/app.asar` on Mac.
 
 Other development dependencies and their exact versions are recorded in `package-lock.json`. Their notices are available in their installed packages. The project's MIT license does not replace any dependency license.
 
@@ -26,7 +26,7 @@ Other development dependencies and their exact versions are recorded in `package
 | Asset | Origin |
 | --- | --- |
 | `src/renderer/assets/tokyo-rain.png` | AI-generated Shibuya rainy-night scene. Generation prompt: [IMAGE-PROMPT.md](src/renderer/assets/IMAGE-PROMPT.md). It is an illustration, not a documentary photograph. |
-| `src/renderer/assets/icon.png`, `icon.ico` | Project icon drawn by [scripts/make-icon.py](scripts/make-icon.py). |
+| `src/renderer/assets/icon.png`, `icon.ico`, `icon.icns` | Project icon drawn by [scripts/make-icon.py](scripts/make-icon.py); the Mac icon is converted from that PNG by [scripts/make-mac-icon.cjs](scripts/make-mac-icon.cjs). |
 | `src/renderer/assets/tokyo-afterimage.wav` | **Tokyo Afterimage · 東京残像**, an original, locally synthesized instrumental: 80 BPM, 96-second loop. Composition and synthesis: [scripts/ambient-score.js](scripts/ambient-score.js); render with `node scripts/render-ambience.cjs`. No third-party recordings or samples are used. |
 | `docs/images/*.png` | Captures of the project's real Electron interface using isolated demo data and a simulated engine. Demo text is illustrative, not an actual model response or performance claim. |
 
@@ -36,6 +36,6 @@ Other development dependencies and their exact versions are recorded in `package
 
 本项目为独立、非官方客户端，与 xAI 无隶属关系，也未获其背书。Grok Build CLI 需单独安装，不随本仓库或桌面构建分发，其许可证和服务条款独立适用。
 
-Marked 与 DOMPurify 的原始声明和许可文本随程序保留；分发构建时也应保留 Electron 的 `LICENSE` 与 `LICENSES.chromium.html`。本项目的许可证、本文及浏览器库许可文本位于 `App/resources/app.asar` 内。
+Marked 与 DOMPurify 的原始声明和许可文本随程序保留。Windows 的 Electron 许可文件为 `App` 中的 `LICENSE` 与 `LICENSES.chromium.html`；Mac 则将它们以 `LICENSE.electron.txt` 和 `LICENSES.chromium.html` 保存在 `Grokbuild Tokyo.app/Contents/Resources` 内，单独分发 `.app` 或 ZIP 时也会保留。本项目的许可证、本文及浏览器库许可文本位于 Windows 的 `App/resources/app.asar` 或 Mac 的 `Grokbuild Tokyo.app/Contents/Resources/app.asar` 内。
 
 涩谷背景为 AI 生成图，并非实景纪实照片；图标由脚本绘制；《Tokyo Afterimage · 東京残像》为无第三方录音采样的原创合成器器乐。文档截图采用隔离演示数据和模拟引擎，不展示真实账户信息或真实模型回复。

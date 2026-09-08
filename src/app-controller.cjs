@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
+const { findGrokExecutable, isExecutable } = require('./platform.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
 const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
 const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
@@ -28,7 +29,7 @@ class AppController extends EventEmitter {
     this.dir = path.join(root, 'data');
     fs.mkdirSync(this.dir, { recursive: true });
     this.file = path.join(this.dir, 'conversations.json');
-    this.settings = { executable: path.join(home, '.grok', 'bin', 'grok.exe'), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, language: 'en' };
+    this.settings = { executable: findGrokExecutable({ home }), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, language: 'en' };
     this.t = createI18n(() => this.settings.language);
     this.sessions = [];
     this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
@@ -218,7 +219,7 @@ class AppController extends EventEmitter {
       const account = this.accounts.find(a => a.id === id);
       if (!account) throw new Error(this.t('账户不存在'));
       if (this.accountManager.pending) throw new Error(this.t('已有账户正在登录'));
-      if (!isPathType(this.settings.executable, 'isFile')) throw new Error(this.t('请在设置中选择有效的 grok.exe'));
+      if (!isExecutable(this.settings.executable)) throw new Error(this.t('请在设置中选择有效的 Grok CLI'));
       if (id === this.activeAccountId) {
         this.invalidateConnection();
         await this.closeAdapter();
@@ -328,7 +329,7 @@ class AppController extends EventEmitter {
     if (this.connected) return this.normalizeInfo();
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
-      if (!isPathType(this.settings.executable, 'isFile')) throw new Error(this.t('没有找到 Grok。请在设置中选择 grok.exe。'));
+      if (!isExecutable(this.settings.executable)) throw new Error(this.t('没有找到 Grok。请在设置中选择 Grok CLI。'));
       if (!isPathType(this.settings.workspace, 'isDirectory')) throw new Error(this.t('工作目录不存在，请在设置中重新选择。'));
       await this.closeAdapter();
       this.loaded.clear();
@@ -619,7 +620,7 @@ class AppController extends EventEmitter {
       next.language = patch.language;
     }
     if (patch.executable !== undefined) {
-      if (!isPathType(patch.executable, 'isFile') || path.extname(patch.executable).toLowerCase() !== '.exe') throw new Error(this.t('请选择有效的 grok.exe'));
+      if (!isExecutable(patch.executable)) throw new Error(this.t('请选择有效的 Grok CLI'));
       next.executable = patch.executable;
     }
     if (patch.workspace !== undefined) {

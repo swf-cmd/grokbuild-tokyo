@@ -6,12 +6,14 @@ const { spawn } = require('node:child_process');
 const { StringDecoder } = require('node:string_decoder');
 const fs = require('node:fs');
 const path = require('node:path');
+const { cliEnvironment } = require('./platform.cjs');
 const ACCOUNT_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 class AccountManager extends EventEmitter {
   constructor({ dir, home, spawnProcess = spawn, cancelTimeoutMs = 2000, getLanguage = () => 'en', getWorkingDirectory = () => process.cwd() }) {
     super();
     this.dir = dir;
+    this.userHome = home;
     this.t = createI18n(getLanguage);
     this.defaultHome = path.resolve(process.env.GROK_HOME || path.join(home, '.grok'));
     this.spawnProcess = spawnProcess;
@@ -162,7 +164,7 @@ class AccountManager extends EventEmitter {
     const pending = { accountId: account.id, url: '', code: '', status: 'starting', cancelled: false };
     this.pending = pending;
     let child;
-    try { child = this.spawnProcess(executable, ['login', '--device-auth'], { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: this.environment(account.id) }); }
+    try { child = this.spawnProcess(executable, ['login', '--device-auth'], { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: cliEnvironment(this.environment(account.id), { home: this.userHome, executable }) }); }
     catch { this.pending = null; throw new Error(this.t('无法启动 Grok 登录，请检查可执行文件。')); }
     pending.child = child;
     let finish;
