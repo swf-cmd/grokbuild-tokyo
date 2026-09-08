@@ -58,9 +58,9 @@ Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build
 
 目前尚未发布 [Release 正式版本](https://github.com/swf-cmd/grokbuild-tokyo/releases)，页首版本徽章表示源码版本，不代表已有对应的下载包。
 
-- **Mac 测试版：**登录 GitHub，打开 [Actions → Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml?query=branch%3Amain) 中最近一次成功的 `main` 分支运行，在 **Artifacts** 下载 `macos-universal-tested-on-arm64` 或 `macos-universal-tested-on-x64`。两者均包含通用版应用，后缀表示执行测试的机器架构；产物保留 14 天。
+- **Mac 测试版**：登录 GitHub，打开 [Actions → Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml?query=branch%3Amain) 中最近一次成功的 `main` 分支运行，在 **Artifacts** 下载 `macos-universal-tested-on-arm64` 或 `macos-universal-tested-on-x64`。两者均包含通用版应用，后缀表示执行测试的机器架构；产物保留 14 天。
 - 先解压下载的产物 ZIP，再解压其中的 `Grokbuild-Tokyo-…-mac-universal.zip`，将 **Grokbuild Tokyo.app** 拖入**应用程序**。附带的 `.zip.sha256` 校验的是内层应用压缩包。测试版采用[下文说明](#构建桌面程序)的临时签名，仍需单独安装官方 CLI。
-- **Windows，或 Mac 产物已过期：**请[从源码运行](#从源码运行)或[本地构建](#构建桌面程序)。Windows CI 目前不提供应用下载包。
+- **Windows，或 Mac 产物已过期**：请[从源码运行](#从源码运行)或[本地构建](#构建桌面程序)。Windows CI 目前不提供应用下载包。
 
 ### 从源码运行
 
@@ -130,7 +130,7 @@ Grokbuild Tokyo（Electron 桌面界面）
 
 客户端把自己的聊天记录和设置保存在本地，由 CLI 处理模型请求。它并非离线模型：CLI 可能将提示词与工具上下文发送给模型服务。
 
-**兼容性基线：**2026-09-07 在 Windows 上核查的 Grok Build **1.0.13 / ACP 1**。该版本未宣告 ACP 原生图片或音频输入，上传图片和文件会以本地资源引用交给 CLI 工具读取，回复图片仍可预览。客户端没有为所有 TUI 功能提供界面，例如交互终端、Git/worktree 管理、会话分叉和斜杠菜单。详见[完整兼容说明](docs/guide.zh-CN.md#grok-兼容范围)。
+**兼容性基线**：2026-09-07 在 Windows 上核查的 Grok Build **1.0.13 / ACP 1**。该版本未宣告 ACP 原生图片或音频输入，上传图片和文件会以本地资源引用交给 CLI 工具读取，回复图片仍可预览。客户端没有为所有 TUI 功能提供界面，例如交互终端、Git/worktree 管理、会话分叉和斜杠菜单。详见[完整兼容说明](docs/guide.zh-CN.md#grok-兼容范围)。
 
 ## 你的数据放在哪里
 
