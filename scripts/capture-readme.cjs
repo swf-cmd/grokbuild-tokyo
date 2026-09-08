@@ -11,6 +11,9 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'work', 'readme-capture');
 const images = path.join(output, 'images');
 const qa = path.join(output, 'qa');
+const motionEnabled = process.argv.includes('--motion');
+const motionFps = 20;
+const motionFrames = 60;
 const captureTime = '2026-09-07T14:42:00.000Z';
 const workspace = 'R:\\Workspace';
 const copy = {
@@ -71,24 +74,59 @@ function seedProfile(runRoot, locale) {
 
 async function settleAndPause(page) {
   await page.evaluate(async () => {
+    // Blur and scrolling can start transitions. Do these before collecting the
+    // animations so the comparison cannot mistake a settling control for rain.
+    document.activeElement?.blur();
+    document.querySelector('#conversation-scroll').scrollTo({ top: 0, behavior: 'instant' });
     await document.fonts.ready;
     const artwork = new Image();
     artwork.src = new URL('assets/tokyo-rain.png', location.href).href;
     await artwork.decode();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const animations = document.getAnimations();
     for (const animation of animations) {
       const timing = animation.effect.getComputedTiming();
-      animation.pause();
-      // Keep a real mid-cycle rain frame. Cancelling infinite animations for a
-      // screenshot loses their transform and can change their painted result.
-      animation.currentTime = Number.isFinite(timing.endTime)
-        ? timing.endTime : Number(timing.duration) * 0.42;
+      if (Number.isFinite(timing.endTime)) {
+        animation.finish();
+      } else {
+        // Keep a real mid-cycle rain frame. Cancelling an infinite animation
+        // loses its transform and can change its painted result.
+        animation.pause();
+        animation.currentTime = Number(timing.duration) * 0.42;
+      }
     }
     await Promise.all(animations.map(animation => animation.ready));
-    document.activeElement?.blur();
-    document.querySelector('#conversation-scroll').scrollTop = 0;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
+}
+
+async function compareScreenshots(desktop, first, second, panel) {
+  return desktop.evaluate(({ nativeImage }, { first, second, panel }) => {
+    const firstImage = nativeImage.createFromPath(first);
+    const secondImage = nativeImage.createFromPath(second);
+    const size = firstImage.getSize();
+    if (size.width !== 1440 || size.height !== 940 || JSON.stringify(size) !== JSON.stringify(secondImage.getSize())) throw new Error('Unexpected screenshot dimensions');
+    const a = firstImage.toBitmap({ scaleFactor: 1 });
+    const b = secondImage.toBitmap({ scaleFactor: 1 });
+    if (a.length !== b.length || a.length !== size.width * size.height * 4) throw new Error('Unexpected bitmap dimensions');
+    let changedPixels = 0, outsidePanelPixels = 0, maximumChannelDelta = 0;
+    for (let index = 0; index < a.length; index += 4) {
+      const delta = Math.max(Math.abs(a[index] - b[index]), Math.abs(a[index + 1] - b[index + 1]), Math.abs(a[index + 2] - b[index + 2]));
+      maximumChannelDelta = Math.max(maximumChannelDelta, delta);
+      if (delta < 3) continue;
+      const x = (index / 4) % size.width, y = Math.floor(index / 4 / size.width);
+      if (x >= panel.x && x < panel.x + panel.width && y >= panel.y && y < panel.y + panel.height) changedPixels++;
+      else outsidePanelPixels++;
+    }
+    return { changedPixels, outsidePanelPixels, maximumChannelDelta, threshold: 3 };
+  }, { first, second, panel });
+}
+
+async function setRainHidden(page, hidden) {
+  await page.locator('#rain-layer').evaluate(async (element, hidden) => {
+    element.hidden = hidden;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }, hidden);
 }
 
 async function captureView(desktop, page, locale, view) {
@@ -127,38 +165,86 @@ async function captureView(desktop, page, locale, view) {
   const basename = `${view}-${locale}`;
   const rainOn = path.join(qa, `${basename}-rain-on.png`);
   const rainOff = path.join(qa, `${basename}-rain-off.png`);
+  const rainOffStable = path.join(qa, `${basename}-rain-off-stable.png`);
   await page.screenshot({ path: rainOn, animations: 'allow', caret: 'hide', scale: 'css' });
   try {
     // This temporary toggle is used only for QA; the deliverable is rain-on.
-    await page.locator('#rain-layer').evaluate(element => { element.hidden = true; });
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await setRainHidden(page, true);
     await page.screenshot({ path: rainOff, animations: 'allow', caret: 'hide', scale: 'css' });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.screenshot({ path: rainOffStable, animations: 'allow', caret: 'hide', scale: 'css' });
   } finally {
-    await page.locator('#rain-layer').evaluate(element => { element.hidden = false; });
+    await setRainHidden(page, false);
   }
-  const pixelDiff = await desktop.evaluate(({ nativeImage }, { rainOn, rainOff, panel }) => {
-    const onImage = nativeImage.createFromPath(rainOn);
-    const offImage = nativeImage.createFromPath(rainOff);
-    const size = onImage.getSize();
-    if (size.width !== 1440 || size.height !== 940 || JSON.stringify(size) !== JSON.stringify(offImage.getSize())) throw new Error('Unexpected screenshot dimensions');
-    const on = onImage.toBitmap({ scaleFactor: 1 });
-    const off = offImage.toBitmap({ scaleFactor: 1 });
-    if (on.length !== off.length || on.length !== size.width * size.height * 4) throw new Error('Unexpected bitmap dimensions');
-    let changedPixels = 0, outsidePanelPixels = 0, maximumChannelDelta = 0;
-    for (let index = 0; index < on.length; index += 4) {
-      const delta = Math.max(Math.abs(on[index] - off[index]), Math.abs(on[index + 1] - off[index + 1]), Math.abs(on[index + 2] - off[index + 2]));
-      maximumChannelDelta = Math.max(maximumChannelDelta, delta);
-      if (delta < 3) continue;
-      const x = (index / 4) % size.width, y = Math.floor(index / 4 / size.width);
-      if (x >= panel.x && x < panel.x + panel.width && y >= panel.y && y < panel.y + panel.height) changedPixels++;
-      else outsidePanelPixels++;
-    }
-    return { changedPixels, outsidePanelPixels, maximumChannelDelta, threshold: 3 };
-  }, { rainOn, rainOff, panel: evidence.panel });
-  assert.ok(pixelDiff.changedPixels > 100, `Rain must visibly change the screenshot: ${JSON.stringify(pixelDiff)}`);
+  const rainOffStability = await compareScreenshots(desktop, rainOff, rainOffStable, evidence.panel);
+  assert.equal(rainOffStability.maximumChannelDelta, 0, 'The rain-off comparison must have no changing UI pixels');
+  const pixelDiff = await compareScreenshots(desktop, rainOn, rainOff, evidence.panel);
+  assert.ok(pixelDiff.changedPixels > 100, `Rain must change rendered pixels: ${JSON.stringify(pixelDiff)}`);
   assert.equal(pixelDiff.outsidePanelPixels, 0, 'Only the rain layer may change in the QA comparison');
   fs.copyFileSync(rainOn, path.join(images, `${basename}.png`));
-  return { locale, view, file: `${basename}.png`, ...evidence, pixelDiff };
+  return { locale, view, file: `${basename}.png`, ...evidence, pixelDiff, rainOffStability };
+}
+
+async function captureMotion(desktop, page, locale, panel) {
+  const basename = `welcome-${locale}`;
+  const frameDirectory = path.join(output, 'frames', basename);
+  fs.mkdirSync(frameDirectory, { recursive: true });
+  const framePath = frame => path.join(frameDirectory, `frame-${String(frame).padStart(3, '0')}.png`);
+  const rainOffStart = path.join(qa, `${basename}-motion-rain-off-start.png`);
+  const rainOffEnd = path.join(qa, `${basename}-motion-rain-off-end.png`);
+  await settleAndPause(page);
+  try {
+    await setRainHidden(page, true);
+    await page.screenshot({ path: rainOffStart, animations: 'allow', caret: 'hide', scale: 'css' });
+  } finally { await setRainHidden(page, false); }
+  await settleAndPause(page);
+  const rainAnimations = await page.evaluate(() => document.getAnimations()
+    .filter(animation => ['rain-near', 'rain-far'].includes(animation.animationName))
+    .map(animation => ({ name: animation.animationName, initialTime: animation.currentTime, state: animation.playState })));
+  assert.deepEqual(rainAnimations.map(animation => animation.name).sort(), ['rain-far', 'rain-near']);
+  assert.ok(rainAnimations.every(animation => animation.state === 'paused' && animation.initialTime > 0));
+  for (let frame = 0; frame < motionFrames; frame++) {
+    // Advance only the real production rain animations, in 50 ms increments.
+    // No opacity, droplet geometry, or background styles are changed.
+    await page.evaluate(async ({ rainAnimations, elapsedMs }) => {
+      const animations = document.getAnimations();
+      for (const { name, initialTime } of rainAnimations) {
+        const animation = animations.find(candidate => candidate.animationName === name);
+        if (!animation || animation.playState !== 'paused') throw new Error(`Rain animation is not paused: ${name}`);
+        animation.currentTime = initialTime + elapsedMs;
+      }
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    }, { rainAnimations, elapsedMs: frame * 1000 / motionFps });
+    await page.screenshot({ path: framePath(frame), animations: 'allow', caret: 'hide', scale: 'css' });
+  }
+  try {
+    await setRainHidden(page, true);
+    await page.screenshot({ path: rainOffEnd, animations: 'allow', caret: 'hide', scale: 'css' });
+  } finally { await setRainHidden(page, false); }
+  const rainOffStability = await compareScreenshots(desktop, rainOffStart, rainOffEnd, panel);
+  assert.equal(rainOffStability.maximumChannelDelta, 0, 'Non-rain UI must remain identical throughout motion capture');
+  const motionDiff = await compareScreenshots(desktop, framePath(0), framePath(motionFrames - 1), panel);
+  assert.ok(motionDiff.changedPixels > 100, `Rain frames must differ: ${JSON.stringify(motionDiff)}`);
+  assert.equal(motionDiff.outsidePanelPixels, 0, 'Motion must remain within the rain panel');
+  fs.copyFileSync(framePath(0), path.join(qa, `${basename}-motion-first.png`));
+  fs.copyFileSync(framePath(motionFrames - 1), path.join(qa, `${basename}-motion-last.png`));
+  const inputPattern = path.join(frameDirectory, 'frame-%03d.png');
+  const palette = path.join(frameDirectory, 'palette.png');
+  const file = `${basename}.gif`;
+  const gifPath = path.join(images, file);
+  const ffmpegOptions = { timeout: 120000, windowsHide: true };
+  // One palette for every frame and ordered dithering keep unchanged artwork
+  // stable instead of introducing color or error-diffusion flicker.
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-framerate', String(motionFps), '-i', inputPattern,
+    '-vf', 'palettegen=stats_mode=full', '-frames:v', '1', palette], ffmpegOptions);
+  execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-framerate', String(motionFps), '-i', inputPattern,
+    '-i', palette, '-filter_complex', '[0:v][1:v]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle',
+    '-frames:v', String(motionFrames), '-loop', '0', gifPath], ffmpegOptions);
+  return {
+    locale, view: 'welcome', file, width: 1440, height: 940, fps: motionFps, frames: motionFrames,
+    durationSeconds: motionFrames / motionFps, bytes: fs.statSync(gifPath).size,
+    rainAnimations, motionDiff, rainOffStability, palette: 'shared', dither: 'bayer',
+  };
 }
 
 async function captureLocale(electron, runRoot, locale, results) {
@@ -195,7 +281,9 @@ async function captureLocale(electron, runRoot, locale, results) {
     assert.equal(await page.locator('#model-select').inputValue(), 'grok-4');
     assert.equal(await page.locator('#tokyo-time').textContent(), '23:42 JST');
     await page.locator('#welcome').waitFor({ state: 'visible' });
-    results.captures.push(await captureView(desktop, page, locale, 'welcome'));
+    const welcome = await captureView(desktop, page, locale, 'welcome');
+    results.captures.push(welcome);
+    if (motionEnabled) results.motion.push(await captureMotion(desktop, page, locale, welcome.panel));
     await page.locator('.session-select').filter({ hasText: copy[locale].title }).click();
     await page.waitForFunction(() => document.querySelectorAll('#messages .message').length === 2 && !document.querySelector('#model-select').disabled);
     assert.equal(await page.locator('#model-select').inputValue(), 'grok-4');
@@ -217,15 +305,16 @@ async function main() {
   const { _electron: electron } = require('playwright');
   for (const directory of [images, qa]) fs.mkdirSync(directory, { recursive: true });
   const runRoot = fs.mkdtempSync(path.join(output, 'fixture-'));
-  const results = { complete: false, capturedAt: new Date().toISOString(), demoTime: captureTime, platform: process.platform, workspace, captures: [], locales: {} };
+  const results = { complete: false, capturedAt: new Date().toISOString(), demoTime: captureTime, platform: process.platform, workspace, captures: [], motion: [], locales: {} };
   let mapped = false;
   try {
+    if (motionEnabled) execFileSync('ffmpeg', ['-version'], { stdio: 'ignore', windowsHide: true });
     execFileSync('subst', ['R:', runRoot]);
     mapped = true;
     fs.mkdirSync(workspace, { recursive: true });
     for (const locale of Object.keys(copy)) await captureLocale(electron, runRoot, locale, results);
     results.complete = true;
-    console.log(JSON.stringify({ complete: true, images, qa, captures: results.captures.map(({ file, pixelDiff }) => ({ file, pixelDiff })) }, null, 2));
+    console.log(JSON.stringify({ complete: true, images, qa, captures: results.captures.map(({ file, pixelDiff }) => ({ file, pixelDiff })), motion: results.motion }, null, 2));
   } catch (error) {
     results.error = error.stack || String(error);
     throw error;
