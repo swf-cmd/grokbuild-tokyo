@@ -20,9 +20,9 @@
 
 </div>
 
-![Grokbuild Tokyo 中文欢迎界面，涩谷夜景前可见飘落的雨滴](docs/images/welcome-zh-CN.png?v=rain-20260908)
+![Grokbuild Tokyo 中文欢迎界面，涩谷夜景中的雨滴动态演示](docs/images/welcome-zh-CN.gif)
 
-*图为 Windows 界面，使用隔离的演示账户；Mac 使用原生窗口按钮和 Command 快捷键。见[截图说明](docs/images/README.md)。*
+*Windows 欢迎页雨滴动态演示，使用隔离的演示账户；Mac 使用原生窗口按钮和 Command 快捷键。[静态截图](docs/images/welcome-zh-CN.png?v=motion-20260908) · [拍摄说明](docs/images/README.md)。*
 
 Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build) 的**非官方、独立桌面客户端**。通过 Agent Client Protocol（ACP）连接官方引擎，把流式对话、独立账户、图片和附件放进一个有东京深夜氛围的桌面界面。
 
@@ -42,7 +42,7 @@ Grokbuild Tokyo 是本机 [Grok Build CLI](https://github.com/xai-org/grok-build
 
 图片输入与文件读取取决于所安装 CLI 的能力、工具及权限。此前测试的 CLI 1.0.13 使用本地资源引用，由工具读取附件。详见[附件支持范围与大小限制](docs/guide.zh-CN.md#聊天图片与附件)。
 
-![真实桌面界面中的中文演示对话，背景保留较淡的雨滴](docs/images/app-zh-CN.png?v=rain-20260908)
+![真实桌面界面中的中文演示对话，背景保留较淡的雨滴](docs/images/app-zh-CN.png?v=motion-20260908)
 
 *截图来自隔离的演示账户与模拟引擎，对话内容仅作界面展示；可用模型和工具取决于你安装的 CLI。*
 

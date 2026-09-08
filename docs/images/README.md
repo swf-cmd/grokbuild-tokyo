@@ -11,20 +11,22 @@ The focus-timer conversation is authored demo content, not a recorded model resp
 | File / 文件 | View / 界面 |
 | --- | --- |
 | `welcome-en.png` | English welcome screen / 英文欢迎页 |
+| `welcome-en.gif` | English welcome screen with animated rain / 英文欢迎页雨滴动图 |
 | `app-en.png` | English demo conversation / 英文示例对话 |
 | `welcome-zh-CN.png` | Simplified Chinese welcome screen / 简体中文欢迎页 |
+| `welcome-zh-CN.gif` | Simplified Chinese welcome screen with animated rain / 简体中文欢迎页雨滴动图 |
 | `app-zh-CN.png` | Simplified Chinese demo conversation / 简体中文示例对话 |
 
-Captured on 2026-09-08. Rain is explicitly enabled. The two production rain animations are paused at a fixed point in their cycles for each PNG, preserving the droplets instead of removing animations during capture. The app naturally makes rain subtler in conversations. These are static frames of the live rain effect; no rain was painted onto the images and no production styles were changed for the screenshots.
+Captured on 2026-09-08 with rain enabled. The README uses looping welcome-screen GIFs so the rain remains recognizable when the image is scaled down. Each GIF records three seconds of the two production rain animations at 20 frames per second. The PNGs retain a fixed frame of the same effect; rain is naturally subtler in conversations. No rain was painted onto the images and no production styles were changed for the captures.
 
-拍摄于 2026-09-08，明确开启了雨滴。截图时将应用原有的两层雨滴动画暂停在固定帧，保留雨滴，不通过禁用动画来拍摄。聊天界面中的雨滴按应用原本设计更淡。PNG 展示动态雨滴的一帧，未在图片上后期添加雨滴，也未为截图修改应用样式。
+拍摄于 2026-09-08，开启了雨滴。介绍页使用循环播放的欢迎页 GIF，让缩小后的图片也能通过运动呈现下雨效果。每张 GIF 以每秒 20 帧记录应用原有的两层雨滴动画，共三秒。PNG 保留同一效果的固定帧，聊天界面中的雨滴按应用原本设计更淡。未在图片上后期添加雨滴，也未为拍摄修改应用样式。
 
 ## Reproduce / 重新拍摄
 
-On Windows, install dependencies with `npm ci`, then run `node scripts/capture-readme.cjs`. Alternatively, run the **README screenshots** workflow in GitHub Actions and download its `readme-screenshots` artifact.
+On Windows, install dependencies with `npm ci`, then run `node scripts/capture-readme.cjs` for the PNGs. To also create the GIFs, install FFmpeg on `PATH` and run `node scripts/capture-readme.cjs --motion`. Alternatively, run the **README screenshots** workflow in GitHub Actions, which includes GIF capture, and download its `readme-screenshots` artifact.
 
-The four candidate images are written to `work/readme-capture/images/`. The `qa/` directory contains matching rain-on/rain-off captures and `results.json`, which verifies that the rain changes rendered pixels. Review the images before copying them to `docs/images/`. The capture uses a fixed demo clock and isolated fixture data, with music muted and no real CLI requests.
+Candidate images are written to `work/readme-capture/images/`. The `qa/` directory contains matching rain-on/rain-off captures and `results.json`, which checks rain rendering, motion, and an otherwise stable interface. Review the GIFs playing at README display size before copying them to `docs/images/`; pixel differences alone do not establish that rain is easy to see. The capture uses a fixed demo clock and isolated fixture data, with music muted and no real CLI requests.
 
-Windows 上先运行 `npm ci`，再运行 `node scripts/capture-readme.cjs`。也可在 GitHub Actions 手动运行 **README screenshots** 工作流，下载 `readme-screenshots` 产物。
+Windows 上先运行 `npm ci`，再运行 `node scripts/capture-readme.cjs` 生成 PNG。如需同时生成 GIF，将 FFmpeg 加入 `PATH` 后运行 `node scripts/capture-readme.cjs --motion`。也可在 GitHub Actions 手动运行包含动图拍摄的 **README screenshots** 工作流，下载 `readme-screenshots` 产物。
 
-四张候选图片保存在 `work/readme-capture/images/`；`qa/` 中保留相同画面的雨滴开启/关闭对照图及 `results.json`，检查雨滴是否实际改变了画面像素。确认图片后再复制到 `docs/images/`。拍摄使用固定演示时间与隔离测试数据，音乐静音，不调用真实 CLI。
+候选图片保存在 `work/readme-capture/images/`；`qa/` 中保留相同画面的雨滴开启/关闭对照图及 `results.json`，检查雨滴渲染、运动和其余界面的稳定性。复制到 `docs/images/` 前，应按介绍页实际显示尺寸检查 GIF 的播放效果；仅有像素变化不能证明雨滴容易辨认。拍摄使用固定演示时间与隔离测试数据，音乐静音，不调用真实 CLI。

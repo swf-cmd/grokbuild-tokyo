@@ -20,9 +20,9 @@ A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows an
 
 </div>
 
-![Grokbuild Tokyo English welcome screen, with rain droplets over Shibuya](docs/images/welcome-en.png?v=rain-20260908)
+![Grokbuild Tokyo English welcome screen with animated rain over Shibuya](docs/images/welcome-en.gif)
 
-*Windows interface with an isolated demo profile. Mac uses native window controls and Command-key shortcuts. [Screenshot details](docs/images/README.md).*
+*Animated rain in the Windows interface, using an isolated demo profile. Mac uses native window controls and Command-key shortcuts. [Still image](docs/images/welcome-en.png?v=motion-20260908) · [Capture details](docs/images/README.md).*
 
 Grokbuild Tokyo is an **unofficial, independent desktop client** for the locally installed [Grok Build CLI](https://github.com/xai-org/grok-build). It connects over the Agent Client Protocol (ACP), bringing streaming conversations, separate account profiles, images and file attachments into a desktop interface inspired by Tokyo after hours.
 
@@ -42,7 +42,7 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 
 Image input and file reading depend on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
 
-![English demo conversation with the subtle rain effect in the real desktop interface](docs/images/app-en.png?v=rain-20260908)
+![English demo conversation with the subtle rain effect in the real desktop interface](docs/images/app-en.png?v=motion-20260908)
 
 *Screenshots use an isolated demo profile and a simulated engine. Conversation text is illustrative; available models and tools depend on your installed CLI.*
 
