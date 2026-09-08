@@ -15,6 +15,16 @@ The focus-timer conversation is authored demo content, not a recorded model resp
 | `welcome-zh-CN.png` | Simplified Chinese welcome screen / 简体中文欢迎页 |
 | `app-zh-CN.png` | Simplified Chinese demo conversation / 简体中文示例对话 |
 
-Captured on 2026-09-08. No visual changes were made to the application for these screenshots.
+Captured on 2026-09-08. Rain is explicitly enabled. The two production rain animations are paused at a fixed point in their cycles for each PNG, preserving the droplets instead of removing animations during capture. The app naturally makes rain subtler in conversations. These are static frames of the live rain effect; no rain was painted onto the images and no production styles were changed for the screenshots.
 
-拍摄于 2026-09-08，未为截图修改应用的视觉界面。
+拍摄于 2026-09-08，明确开启了雨滴。截图时将应用原有的两层雨滴动画暂停在固定帧，保留雨滴，不通过禁用动画来拍摄。聊天界面中的雨滴按应用原本设计更淡。PNG 展示动态雨滴的一帧，未在图片上后期添加雨滴，也未为截图修改应用样式。
+
+## Reproduce / 重新拍摄
+
+On Windows, install dependencies with `npm ci`, then run `node scripts/capture-readme.cjs`. Alternatively, run the **README screenshots** workflow in GitHub Actions and download its `readme-screenshots` artifact.
+
+The four candidate images are written to `work/readme-capture/images/`. The `qa/` directory contains matching rain-on/rain-off captures and `results.json`, which verifies that the rain changes rendered pixels. Review the images before copying them to `docs/images/`. The capture uses a fixed demo clock and isolated fixture data, with music muted and no real CLI requests.
+
+Windows 上先运行 `npm ci`，再运行 `node scripts/capture-readme.cjs`。也可在 GitHub Actions 手动运行 **README screenshots** 工作流，下载 `readme-screenshots` 产物。
+
+四张候选图片保存在 `work/readme-capture/images/`；`qa/` 中保留相同画面的雨滴开启/关闭对照图及 `results.json`，检查雨滴是否实际改变了画面像素。确认图片后再复制到 `docs/images/`。拍摄使用固定演示时间与隔离测试数据，音乐静音，不调用真实 CLI。

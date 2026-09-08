@@ -20,7 +20,7 @@ A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows an
 
 </div>
 
-![Grokbuild Tokyo English welcome screen, with a rainy Shibuya backdrop](docs/images/welcome-en.png)
+![Grokbuild Tokyo English welcome screen, with rain droplets over Shibuya](docs/images/welcome-en.png?v=rain-20260908)
 
 *Windows interface with an isolated demo profile. Mac uses native window controls and Command-key shortcuts. [Screenshot details](docs/images/README.md).*
 
@@ -42,7 +42,7 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 
 Image input and file reading depend on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
 
-![English demo conversation in the real desktop interface](docs/images/app-en.png)
+![English demo conversation with the subtle rain effect in the real desktop interface](docs/images/app-en.png?v=rain-20260908)
 
 *Screenshots use an isolated demo profile and a simulated engine. Conversation text is illustrative; available models and tools depend on your installed CLI.*
 
