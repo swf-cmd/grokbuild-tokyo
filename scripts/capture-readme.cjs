@@ -172,7 +172,7 @@ async function captureLocale(electron, runRoot, locale, results) {
     const page = await desktop.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     page.setDefaultTimeout(15000);
-    const ready = () => page.waitForFunction(() => document.querySelector('#connection-label')?.textContent === window.TokyoI18n.t('引擎已连接') && !document.querySelector('#settings-button').disabled);
+    const ready = () => page.waitForFunction(() => window.TokyoI18n && document.querySelector('#connection-label')?.textContent === window.TokyoI18n.t('引擎已连接') && document.querySelector('#settings-button')?.disabled === false);
     await ready();
     await desktop.evaluate(({ BrowserWindow }, sessions) => {
       const window = BrowserWindow.getAllWindows()[0];
