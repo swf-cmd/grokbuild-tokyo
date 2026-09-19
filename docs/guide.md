@@ -95,6 +95,8 @@ The older CLI's third option, `grok-4`, appears as **Grok 4.3 (grok-4)**. In a W
 
 Compatible older CLIs change reasoning levels through `_meta.reasoningEffort` on `session/set_model`, then load the session to read the setting back. CLIs supporting `session/set_config_option` use that interface. The client does not use `session/set_mode` to change reasoning levels.
 
+If the reasoning selector says **Please update Grok CLI**, the engine reports reasoning support but does not publish selectable levels. Run `grok update` in a terminal (use the executable selected in Preferences if you have multiple installations), then reconnect using the connection button. CLI 0.2.11 was observed to omit the menu and acknowledge effort changes without returning the requested value on session reload. Updating to 1.0.34 restored selectable levels on Mac. The client does not invent a menu or treat an acknowledgement alone as a confirmed change.
+
 **Allow subagents** passes `GROK_SUBAGENTS=1/0` to the CLI and restarts the account's engine after saving. Permissions, sandboxing, and MCP follow the official configuration precedence; the client does not rewrite the official `config.toml`. Reconnect after changing the official configuration.
 
 **Tokyo Midnight Radio** plays the bundled original synthesizer instrumental *Tokyo Afterimage · 東京残像*: an 80 BPM, 96-second loop that works offline. It is enabled by default at 90% volume. If playback has not started after launch, click the window or press a key. Rain, music, and volume changes preview immediately; saving remembers them, while closing settings restores the previous values. Ambience preferences can be saved during generation without restarting the engine. Rain animation stops when your system enables reduced motion.

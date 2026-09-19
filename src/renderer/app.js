@@ -222,9 +222,11 @@
     }
     if (!models.length) $('model-select').disabled = true;
     if (!modes.length) {
+      const selectedModel = models.find(item => item.id === model);
+      const needsCliUpdate = selectedModel?.supportsReasoningEffort === true && !Array.isArray(selectedModel.reasoningEfforts);
       $('mode-select').disabled = true;
-      $('mode-select').title = t('当前模型不提供可选的推理档位。');
-      if (!mode) $('mode-select').options[0].textContent = model ? t('无可选推理档位') : t('请先选择模型');
+      $('mode-select').title = needsCliUpdate ? t('当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。') : t('当前模型不提供可选的推理档位。');
+      if (needsCliUpdate || !mode) $('mode-select').options[0].textContent = needsCliUpdate ? t('请更新 Grok CLI') : model ? t('无可选推理档位') : t('请先选择模型');
     }
     if (session?.modelSelectionVerified === false) {
       for (const element of [$('model-select'), $('mode-select')]) {

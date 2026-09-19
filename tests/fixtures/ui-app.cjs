@@ -47,6 +47,10 @@ const models = [
   { id: 'grok-4.5', name: 'Grok 4.5', reasoningEfforts: efforts.slice(0, 3), reasoningEffort: 'medium' },
   { id: 'grok-4', name: 'Grok 4', reasoningEfforts: [] },
   { id: 'grok-discovered', name: 'Grok Discovered' },
+  { id: 'grok-legacy', name: 'Legacy Grok', supportsReasoningEffort: true, reasoningEffort: 'high' },
+  { id: 'grok-no-reasoning', name: 'No Reasoning', supportsReasoningEffort: false },
+  { id: 'grok-unknown', name: 'Unknown Capabilities' },
+  { id: 'grok-empty-catalog', name: 'Explicit Empty Catalog', supportsReasoningEffort: true, reasoningEfforts: [] },
 ];
 class FakeAdapter extends EventEmitter {
   constructor(options) {

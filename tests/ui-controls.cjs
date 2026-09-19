@@ -222,6 +222,34 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#send-button').click(); await idle();
       assert.equal((await calls('prompt')).at(-1).text, 'Preserved discovery draft');
     });
+    await stage('legacy capability-only CLI explains the update without inventing choices', async () => {
+      const modeChanges = (await calls('setMode')).length;
+      await select('#model-select', 'grok-legacy');
+      const assertUpgradeHint = async () => {
+        assert.equal(await page.locator('#mode-select').isDisabled(), true);
+        assert.equal(await page.locator('#mode-select option').count(), 1);
+        assert.equal(await page.locator('#mode-select option:checked').textContent(), '请更新 Grok CLI');
+        assert.equal(await page.locator('#mode-select').getAttribute('title'), '当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。');
+      };
+      await assertUpgradeHint();
+      await page.locator('#new-session').click();
+      await assertUpgradeHint();
+      await page.locator('.session-select').first().click();
+      for (const model of ['grok-no-reasoning', 'grok-unknown', 'grok-empty-catalog']) {
+        await select('#model-select', model);
+        assert.equal(await page.locator('#mode-select').isDisabled(), true, model);
+        assert.equal(await page.locator('#mode-select option:checked').textContent(), '无可选推理档位', model);
+        assert.equal(await page.locator('#mode-select').getAttribute('title'), '当前模型不提供可选的推理档位。', model);
+        await page.locator('#new-session').click();
+        assert.equal(await page.locator('#model-select').inputValue(), model);
+        assert.equal(await page.locator('#mode-select option:checked').textContent(), '无可选推理档位', `${model}: new conversation`);
+        await page.locator('.session-select').first().click();
+      }
+      assert.equal((await calls('setMode')).length, modeChanges, 'no unadvertised effort is sent to the engine');
+      await select('#model-select', 'grok-4.6');
+      assert.equal(await page.locator('#mode-select').isDisabled(), false);
+      assert.equal(await page.locator('#mode-select option').count(), 4);
+    });
     await stage('no renderer errors', async () => assert.deepEqual(errors, []));
     await page.screenshot({ path: path.join(testRoot, 'complete.png'), animations: 'disabled' });
     await stage('close window', async () => {

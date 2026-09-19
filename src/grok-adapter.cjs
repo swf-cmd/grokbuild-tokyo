@@ -299,6 +299,7 @@ class GrokAdapter extends EventEmitter {
       description: model.description || '',
       contextTokens: model._meta?.totalContextTokens,
       reasoningEffort: model._meta?.reasoningEffort,
+      supportsReasoningEffort: typeof model._meta?.supportsReasoningEffort === 'boolean' ? model._meta.supportsReasoningEffort : undefined,
       // An absent catalog is unknown; only an explicit [] means no effort choices.
       reasoningEfforts: Array.isArray(model._meta?.reasoningEfforts) ? model._meta.reasoningEfforts : undefined,
     })).filter(model => model.id);

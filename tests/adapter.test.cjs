@@ -312,6 +312,30 @@ test('model metadata distinguishes undiscovered reasoning choices from an explic
   assert.equal(Object.hasOwn(session.models[0], 'reasoningEfforts'), false, 'session choices do not imply a model-wide catalog');
 });
 
+test('capability-only legacy models preserve strict support flags without inventing reasoning choices', () => {
+  const adapter = new GrokAdapter();
+  for (const [id, metadata, expectedSupport] of [
+    ['legacy', { supportsReasoningEffort: true, reasoningEffort: 'high', totalContextTokens: 500000, agentType: 'grok-build-plan' }, true],
+    ['unsupported', { supportsReasoningEffort: false }, false],
+    ['unknown', {}, undefined],
+    ['string-flag', { supportsReasoningEffort: 'true' }, undefined],
+    ['numeric-flag', { supportsReasoningEffort: 1 }, undefined],
+    ['empty-catalog', { supportsReasoningEffort: true, reasoningEfforts: [] }, true],
+  ]) {
+    const session = adapter._rememberSession({ models: {
+      currentModelId: id,
+      availableModels: [{ modelId: id, _meta: metadata }],
+    } }, `${id}-session`, adapter.cwd);
+    assert.equal(session.models[0].supportsReasoningEffort, expectedSupport, id);
+    assert.equal(adapter.getInfo().models[0].supportsReasoningEffort, expectedSupport, id);
+    assert.equal(Object.hasOwn(session.models[0], 'supportsReasoningEffort'), expectedSupport !== undefined, id);
+    assert.deepEqual(session.modes, [], `${id}: capability alone does not advertise supported wire values`);
+    assert.equal(session.mode, '', `${id}: no unverified selection is invented`);
+    if (id === 'empty-catalog') assert.deepEqual(session.models[0].reasoningEfforts, []);
+    else assert.equal(Object.hasOwn(session.models[0], 'reasoningEfforts'), false, id);
+  }
+});
+
 test('initialization rejects incompatible protocol versions before any session can start', async t => {
   const { adapter, requests } = await fixture(t, { protocol: 2 });
   await assert.rejects(adapter.start(), { code: 'UNSUPPORTED_PROTOCOL' });

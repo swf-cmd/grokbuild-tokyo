@@ -9,6 +9,8 @@
   'use strict';
   return {
   "zh-CN": {
+    "请更新 Grok CLI": "请更新 Grok CLI",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。",
     "无法确认 Grok 进程已停止，请重试关闭。": "无法确认 Grok 进程已停止，请重试关闭。",
     "附件": "附件",
     "保存附件": "保存附件",
@@ -54,6 +56,8 @@
     "渋谷 · RAINY NIGHT": "涩谷 · 雨夜"
   },
   "ja": {
+    "请更新 Grok CLI": "Grok CLI を更新してください",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "現在の Grok CLI では推論の強度を選択できません。grok update を実行してから再接続してください。",
     "无法确认 Grok 进程已停止，请重试关闭。": "Grok プロセスの停止を確認できません。もう一度終了してください。",
     "附件": "添付ファイル",
     "保存附件": "添付ファイルを保存",
@@ -483,6 +487,8 @@
     "（待确认）": "（確認待ち）"
   },
   "en": {
+    "请更新 Grok CLI": "Please update Grok CLI",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "The current Grok CLI does not provide reasoning effort options. Run grok update, then reconnect.",
     "无法确认 Grok 进程已停止，请重试关闭。": "Could not confirm that the Grok process stopped. Please try closing it again.",
     "附件": "Attachment",
     "保存附件": "Save attachment",
@@ -912,6 +918,8 @@
     "（待确认）": " (pending confirmation)"
   },
   "ko": {
+    "请更新 Grok CLI": "Grok CLI를 업데이트하세요",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "현재 Grok CLI에서는 추론 강도를 선택할 수 없습니다. grok update를 실행한 후 다시 연결하세요.",
     "无法确认 Grok 进程已停止，请重试关闭。": "Grok 프로세스가 중지되었는지 확인할 수 없습니다. 다시 종료해 주세요.",
     "附件": "첨부 파일",
     "保存附件": "첨부 파일 저장",
@@ -1341,6 +1349,8 @@
     "（待确认）": "(확인 대기)"
   },
   "es": {
+    "请更新 Grok CLI": "Actualiza Grok CLI",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "La versión actual de Grok CLI no ofrece opciones de esfuerzo de razonamiento. Ejecuta grok update y vuelve a conectarte.",
     "无法确认 Grok 进程已停止，请重试关闭。": "No se pudo confirmar que el proceso de Grok se haya detenido. Intenta cerrarlo de nuevo.",
     "附件": "Archivo adjunto",
     "保存附件": "Guardar archivo adjunto",
@@ -1770,6 +1780,8 @@
     "（待确认）": "(pendiente de confirmar)"
   },
   "de": {
+    "请更新 Grok CLI": "Bitte Grok CLI aktualisieren",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "Die aktuelle Version von Grok CLI bietet keine Optionen für den Denkaufwand. Führe grok update aus und verbinde dich erneut.",
     "无法确认 Grok 进程已停止，请重试关闭。": "Es konnte nicht bestätigt werden, dass der Grok-Prozess beendet wurde. Versuche erneut, ihn zu schließen.",
     "附件": "Anhang",
     "保存附件": "Anhang speichern",
@@ -2199,6 +2211,8 @@
     "（待确认）": "(Bestätigung ausstehend)"
   },
   "fr": {
+    "请更新 Grok CLI": "Veuillez mettre à jour Grok CLI",
+    "当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。": "La version actuelle de Grok CLI ne propose pas d’options d’effort de raisonnement. Exécutez grok update, puis reconnectez-vous.",
     "无法确认 Grok 进程已停止，请重试关闭。": "Impossible de confirmer l'arrêt du processus Grok. Réessayez de le fermer.",
     "附件": "Pièce jointe",
     "保存附件": "Enregistrer la pièce jointe",
