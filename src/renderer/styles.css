@@ -201,3 +201,19 @@ dialog{color:var(--text);background:#121b1e;border:1px solid #a8b29a28;border-ra
   .keyboard-hint { display: none; }
   .attachment-draft { width: 196px; }
 }
+
+/* First-run sign-in stays next to the composer and remains visible with history. */
+.signin-notice { display: flex; align-items: center; gap: 18px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid #d4eb8950; border-radius: 9px; background: #172a24; }
+.signin-notice > div:first-child { flex: 1; min-width: 0; }
+.signin-notice strong { color: #dce9bd; font-size: 13px; font-weight: 500; }
+.signin-notice p { color: #a8bbaa; font-size: 11px; line-height: 1.65; margin: 5px 0 0; }
+.signin-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 0 auto; }
+.signin-actions button { min-height: 34px; font-size: 11px; }
+@media (max-width: 1120px) { .signin-notice { align-items: flex-start; flex-direction: column; gap: 10px; } }
+
+/* Keep protocol-delimited progress visibly separate from the response. */
+.response-commentary { margin: 0 0 16px; border: 1px solid #a5b79426; border-radius: 7px; background: #0c181633; color: #a2b2a4; }
+.response-commentary > summary { padding: 10px 13px; color: #a9b99c; font-size: 11px; cursor: pointer; }
+.response-commentary > .response-content { padding: 0 13px 10px; }
+.response-label { color: var(--lime); font-size: 11px; font-weight: 500; margin: 0 0 10px; }
+.response-answer + .response-commentary { margin-top: 16px; }

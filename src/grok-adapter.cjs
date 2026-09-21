@@ -482,17 +482,32 @@ class GrokAdapter extends EventEmitter {
     const common = { sessionId, replay: this.loading.has(sessionId) };
     const turn = this.active.get(sessionId);
     const sessionUpdate = update.sessionUpdate;
+    // Grok restarts streamStartMs for each model response inside a tool-use
+    // turn. Its TUI also closes the text block when a tool starts. Preserve
+    // those boundaries instead of joining progress prose to the final reply.
+    const streamStartMs = params._meta?.streamStartMs;
+    if (turn && !common.replay && Number.isSafeInteger(streamStartMs)) {
+      if (turn.streamStartMs !== undefined && turn.streamStartMs !== streamStartMs) this._responseBoundary(turn, common);
+      turn.streamStartMs = streamStartMs;
+    }
     if (['agent_message_chunk', 'agent_thought_chunk', 'user_message_chunk'].includes(sessionUpdate)) {
       const text = textFromContent(update.content);
       const type = sessionUpdate === 'agent_thought_chunk' ? 'thought' : 'text';
       const role = sessionUpdate === 'user_message_chunk' ? 'user' : 'assistant';
-      if (turn && type === 'text' && role === 'assistant') turn.text += text;
-      if (text) this._event({ ...common, type, text, delta: true, role });
+      let segmentStart = false;
+      if (turn && !common.replay && text && type === 'text' && role === 'assistant') {
+        segmentStart = turn.textBoundaryPending === true;
+        turn.text += `${segmentStart && turn.text ? '\n\n' : ''}${text}`;
+        turn.textSegmentOpen = true;
+        turn.textBoundaryPending = false;
+      }
+      if (text) this._event({ ...common, type, text, delta: true, role, ...(segmentStart ? { segmentStart: true } : {}) });
       if (type === 'text') {
         for (const image of imagesFromContent(update.content)) this._event({ ...common, type: 'image', image, role });
         for (const attachment of attachmentsFromContent(update.content)) this._event({ ...common, type: 'attachment', attachment, role });
       }
     } else if (sessionUpdate === 'tool_call' || sessionUpdate === 'tool_call_update') {
+      if (turn && !common.replay && sessionUpdate === 'tool_call') this._responseBoundary(turn, common);
       const event = { ...common, type: 'tool', toolCallId: update.toolCallId, update: sessionUpdate === 'tool_call_update' };
       for (const key of ['title', 'status', 'kind', 'content', 'rawInput', 'rawOutput', 'locations']) {
         if (Object.hasOwn(update, key)) event[key] = update[key];
@@ -513,6 +528,13 @@ class GrokAdapter extends EventEmitter {
     } else if (sessionUpdate === 'usage_update') {
       this._event({ ...common, type: 'status', status: 'usage', usage: update });
     }
+  }
+
+  _responseBoundary(turn, common) {
+    if (!turn.textSegmentOpen) return;
+    turn.textSegmentOpen = false;
+    turn.textBoundaryPending = true;
+    this._event({ ...common, type: 'response-boundary' });
   }
 
   async _promptContent(text, attachments) {

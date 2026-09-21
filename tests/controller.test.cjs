@@ -301,6 +301,53 @@ test('streamed assistant text and tool updates persist without echoing user or r
   assert.equal(controller.active, null);
 });
 
+test('response segments keep progress separate from the answer across streaming, persistence and export', async t => {
+  const { controller, session, adapter } = await started(t);
+  const events = [];
+  controller.on('event', event => events.push(event));
+  await controller.send({ sessionId: session.id, text: 'Inspect the fixture' });
+  const emit = event => adapter.emit('event', { sessionId: session.id, ...event });
+  emit({ type: 'thought', text: 'Reasoning stays separate.' });
+  emit({ type: 'text', text: 'Checking ' });
+  emit({ type: 'text', text: 'the files.' });
+  emit({ type: 'response-boundary', sessionId: 'unrelated' });
+  emit({ type: 'response-boundary', replay: true });
+  assert.deepEqual(session.messages[1].responseSegments, [{ text: 'Checking the files.', kind: 'response' }]);
+  emit({ type: 'response-boundary' });
+  emit({ type: 'tool', toolCallId: 'read-1', title: 'Read file', status: 'completed' });
+  assert.deepEqual(session.messages[1].responseSegments, [{ text: 'Checking the files.', kind: 'commentary' }]);
+  emit({ type: 'thought', text: 'More reasoning.' });
+  emit({ type: 'text', text: 'The ', segmentStart: true });
+  emit({ type: 'text', text: 'answer.' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  const expected = [{ text: 'Checking the files.', kind: 'commentary' }, { text: 'The answer.', kind: 'response' }];
+  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  assert.deepEqual(saved.sessions[0].messages[1].responseSegments, expected);
+  assert.equal(saved.sessions[0].messages[1].text, 'Checking the files.\n\nThe answer.');
+  assert.equal(saved.sessions[0].messages[1].thought, 'Reasoning stays separate.More reasoning.');
+  assert.equal(events.filter(event => event.type === 'response-boundary').length, 1);
+  assert.equal(events.find(event => event.type === 'text' && event.segmentStart)?.text, 'The ');
+  const reloaded = fixture(t, saved).controller;
+  assert.deepEqual(reloaded.getSession(session.id).messages[1].responseSegments, expected);
+  assert.match(reloaded.exportMarkdown(session.id), /Checking the files\.\n\nThe answer\./);
+  emit({ type: 'response-boundary' });
+  assert.equal(events.filter(event => event.type === 'response-boundary').length, 1, 'late boundaries must not mutate a finished turn');
+});
+
+test('a response ending at a tool boundary remains progress when no final answer arrives', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'Inspect' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'Checking now.' });
+  adapter.emit('event', { sessionId: session.id, type: 'response-boundary' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'cancelled' });
+  await controller.turnPromise;
+  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages[1];
+  assert.equal(saved.status, 'cancelled');
+  assert.deepEqual(saved.responseSegments, [{ text: 'Checking now.', kind: 'commentary' }]);
+  assert.equal(saved.text, 'Checking now.');
+});
+
 test('a second send is rejected while an existing conversation is being restored', async t => {
   const { controller, session, adapter } = await started(t);
   controller.loaded.clear();
@@ -942,10 +989,37 @@ test('reconnect remains connected when an old conversation cannot be restored', 
   assert.ok(events.some(event => event.type === 'error' && event.sessionId === session.id && /old workspace/.test(event.message)));
 });
 
+test('unsigned-in startup leaves login available without starting the CLI or creating a conversation', async t => {
+  for (const profile of ['local', 'separate']) {
+    await t.test(profile, async t => {
+      const { controller, instances } = fixture(t);
+      if (profile === 'separate') {
+        // Credentials in the local account cannot authenticate another profile.
+        signIn(controller, { id: 'local' });
+        const account = await controller.addAccount({ name: 'Separate' });
+        controller.activeAccountId = account.id;
+      }
+      const events = [];
+      controller.on('event', event => events.push(event));
+      const initial = await controller.bootstrap();
+      assert.equal(initial.connected, false);
+      assert.equal(initial.error, null);
+      assert.equal(initial.accounts.find(account => account.id === initial.activeAccountId).signedIn, false);
+      assert.equal(instances.length, 0);
+      assert.deepEqual(initial.sessions, []);
+      assert.equal(controller.operation, null);
+      assert.equal(controller.connecting, undefined);
+      assert.equal(events.some(event => event.type === 'error' || event.status === 'connecting'), false);
+      assert.equal((await controller.addAccount({ name: 'Ready for login' })).name, 'Ready for login', 'startup must release the account-operation lock');
+    });
+  }
+});
+
 test('bootstrap and reconnect recover model choices using a new default-directory session when stale history fails', async t => {
   for (const method of ['bootstrap', 'reconnect']) {
     await t.test(method, async t => {
       const { controller, instances } = fixture(t, { settings: {}, sessions: [{ id: 'old', title: 'Saved', cwd: 'missing-folder', messages: [] }] });
+      signIn(controller, { id: 'local' });
       const originalStart = controller.Adapter.prototype.start;
       const originalNew = controller.Adapter.prototype.newSession;
       controller.Adapter.prototype.start = async function () { this.info.models = []; return originalStart.call(this); };
@@ -971,6 +1045,7 @@ test('startup exposes saved preferences and history while slow engine steps keep
         settings: { language: 'ja', musicEnabled: false, musicVolume: 25, rainEnabled: false },
         sessions: [{ id: 'saved', title: 'Saved', cwd: 'fixture-workspace', messages: [{ role: 'user', text: 'Existing history' }] }],
       }, { useAppLanguage: true });
+      signIn(controller, { id: 'local' });
       const initial = controller.initialState();
       assert.equal(initial.settings.language, 'ja');
       assert.equal(initial.settings.musicEnabled, false);
@@ -1019,6 +1094,7 @@ test('restoring older startup history allows preference saves while reserving th
     settings: {},
     sessions: ['latest', 'older'].map(id => ({ id, title: id, cwd: 'fixture-workspace', messages: [{ role: 'user', text: `${id} history` }] })),
   });
+  signIn(controller, { id: 'local' });
   await controller.bootstrap();
   const adapter = instances[0];
   const older = controller.getSession('older');

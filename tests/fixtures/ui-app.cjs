@@ -11,6 +11,13 @@ const root = process.env.TOKYO_TEST_ROOT;
 if (!root || !path.isAbsolute(root)) throw new Error('An isolated TOKYO_TEST_ROOT is required');
 process.env.GROK_HOME = path.join(root, 'default-grok');
 for (const key of ['GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete process.env[key];
+// Most UI scenarios exercise an already authenticated installation. Keep that
+// state explicit, isolated and separate from first-run onboarding scenarios.
+const defaultAuth = path.join(process.env.GROK_HOME, 'auth.json');
+if (process.env.TOKYO_TEST_SIGNED_OUT !== '1' && !fs.existsSync(defaultAuth)) {
+  fs.mkdirSync(path.dirname(defaultAuth), { recursive: true });
+  fs.writeFileSync(defaultAuth, JSON.stringify({ 'https://auth.x.ai': { key: 'fixture-not-a-real-credential', auth_mode: 'oidc', email: 'local@example.test' } }));
+}
 const sourceRoot = process.env.TOKYO_UI_SOURCE_ROOT || path.resolve(__dirname, '../..');
 const test = globalThis.__tokyoUITest = { calls: [], dialogs: [], external: [], saved: [], adapters: [], records: new Map(), nextSession: 0 };
 // Optional deterministic gates let startup tests hold a CLI operation forever

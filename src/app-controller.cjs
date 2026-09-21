@@ -354,6 +354,9 @@ class AppController extends EventEmitter {
   async bootstrap() {
     return this.idleOperation(this.t('初始化 Grok'), async () => {
       let error = this.loadError;
+      // First launch has no credentials. Keep login available immediately instead
+      // of locking it behind an ACP startup that may wait for authentication.
+      if (!this.accountManager.summary(this.accounts.find(account => account.id === this.activeAccountId)).signedIn) return this.snapshot(error);
       try {
         await this._connect();
         if (!this.visibleSessions().length) await this._createSession({});
@@ -475,7 +478,7 @@ class AppController extends EventEmitter {
     const now = Date.now();
     const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
     session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
-    const message = { id: randomUUID(), role: 'assistant', text: '', thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
+    const message = { id: randomUUID(), role: 'assistant', text: '', responseSegments: [], thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
     session.messages.push(message);
     if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
       session.title = (text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ').slice(0, 32);
@@ -532,7 +535,7 @@ class AppController extends EventEmitter {
     const current = this.active;
     const message = current?.message;
     const isPlan = event.type === 'status' && event.status === 'plan';
-    if ((['text', 'thought', 'tool', 'image', 'attachment'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
+    if ((['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
     if (message && (!event.sessionId || event.sessionId === current.sessionId)) {
       if (isPlan) {
         // ACP plans replace the previous plan, including an explicitly empty one.
@@ -557,8 +560,21 @@ class AppController extends EventEmitter {
         message.attachments.push(attachment);
         if (event.type !== 'attachment') this.emitEvent({ type: 'attachment', sessionId: current.sessionId, attachment });
       };
+      if (event.type === 'response-boundary') {
+        const lastSegment = message.responseSegments?.at(-1);
+        if (lastSegment) lastSegment.kind = 'commentary';
+      }
       if (event.type === 'text') {
-        message.text += event.text || '';
+        const text = event.text || '';
+        message.responseSegments ||= [];
+        if (text) {
+          const lastSegment = message.responseSegments.at(-1);
+          if (!lastSegment || event.segmentStart) {
+            if (lastSegment) lastSegment.kind = 'commentary';
+            message.responseSegments.push({ text, kind: 'response' });
+          } else lastSegment.text += text;
+          message.text += `${event.segmentStart && message.text ? '\n\n' : ''}${text}`;
+        }
         for (const attachment of attachmentsFromText(message.text)) addAttachment({ ...attachment, origin: 'assistant' });
       }
       if (event.type === 'attachment') {

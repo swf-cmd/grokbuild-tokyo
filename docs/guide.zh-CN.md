@@ -21,7 +21,7 @@ npm ci
 npm start
 ```
 
-Windows 默认在当前用户的 `%USERPROFILE%\.grok\bin\grok.exe` 查找 CLI，Mac 默认使用 `~/.grok/bin/grok`。若安装在别处，打开左下角设置，选择对应可执行文件（Mac 上为不带 `.exe` 后缀的 `grok`）。本机账户沿用 CLI 的登录和配置；未登录时可在“账户切换”中登录。
+Windows 默认在当前用户的 `%USERPROFILE%\.grok\bin\grok.exe` 查找 CLI，Mac 默认使用 `~/.grok/bin/grok`。若安装在别处，打开左下角设置，选择对应可执行文件（Mac 上为不带 `.exe` 后缀的 `grok`）。本机账户沿用 CLI 的登录和配置。尚未登录时，点击输入框旁的“登录 Grok ↗”，再打开浏览器登录页面并核对验证码。可直接使用默认账户登录，无需先添加账户；添加其他账户为可选操作。完成授权后自动连接，并保留已写好的草稿。若需选择 CLI 可执行文件，点击“设置 Grok CLI”。
 
 Windows 默认工作目录为源码项目中的 `Workspace`（打包运行时位于 `App` 旁边）；Mac 默认使用 `~/Library/Application Support/Grokbuild Tokyo/Workspace`，首次启动自动创建。要处理已有项目，在设置中选择该目录，再新建会话；已有会话继续使用自己的原始工作目录。
 
@@ -70,6 +70,8 @@ Mac 版共用 Windows 的界面、七种语言、账户管理、聊天、工具�
 ## 聊天、图片与附件
 
 支持流式回复、Markdown 和代码块、复制、对话搜索、重命名、导出 Markdown、工具进度、执行计划、逐项授权及停止生成。执行计划随 Grok 更新，并与聊天一起保存和导出；回复长度/请求次数达到上限或被拒绝时保留明确提示。Enter 发送；Shift+Enter 换行；Windows 使用 Ctrl+N 新会话、Ctrl+, 设置；Mac 对应使用 Cmd+N、Cmd+,。
+
+“思考过程”折叠区显示 CLI 单独提供的思考内容。CLI 标记新回复或开始工具调用时，之前的回复文字归入可折叠的“过程说明”，后续回复独立显示，完成后标为“回答”。新消息会保存这些分段边界；旧历史或 CLI 在同一段中混写的内容保持原样，不猜测拆分。
 
 点击输入框旁的回形针选择图片或文件，也可将文件拖入消息输入区，或粘贴剪贴板图片。发送前可预览或移除附件，支持只发送附件。每条消息最多 10 个文件，单个不超过 20 MB，合计不超过 50 MB。未发送的附件草稿在本次运行中按会话和账户分别保留。
 
@@ -125,6 +127,7 @@ npm test
 npm run test:ui
 npm run test:security
 npm run test:accounts
+npm run test:onboarding
 npm run test:attachments
 npm run test:i18n
 npm run test:time
@@ -132,6 +135,7 @@ npm run build
 node scripts/verify-package.cjs
 node tests/ui-security.cjs --packaged
 node scripts/images-accounts-smoke.cjs --packaged
+node tests/onboarding-ui.cjs --packaged
 node tests/i18n-ui.cjs --packaged
 node tests/ui-attachments.cjs --packaged
 ```

@@ -106,6 +106,55 @@ test('streams split UTF-8 ACP text and correlates tool updates', async t => {
   await assert.rejects(adapter.setMode({ sessionId: session.sessionId, mode: 'made-up' }), { code: 'INVALID_MODE' });
 });
 
+test('preserves response boundaries from tools and Grok stream metadata without mixing thought chunks', () => {
+  for (const boundary of ['tool', 'stream', 'both']) {
+    const adapter = new GrokAdapter();
+    const events = [];
+    const turn = { text: '' };
+    adapter.active.set('session', turn);
+    adapter.on('event', event => events.push(event));
+    const update = (sessionUpdate, text, streamStartMs = 100) => adapter._sessionUpdate({
+      sessionId: 'session',
+      ...(boundary === 'tool' ? {} : { _meta: { streamStartMs } }),
+      update: { sessionUpdate, ...(text === undefined ? {} : { content: { type: 'text', text } }), toolCallId: 'tool-1' },
+    });
+    update('agent_thought_chunk', 'First reasoning.');
+    update('agent_message_chunk', 'Checking ');
+    update('agent_message_chunk', 'the files.');
+    if (boundary !== 'stream') {
+      update('tool_call');
+      update('tool_call_update');
+    }
+    update('agent_thought_chunk', 'Second reasoning.', 200);
+    update('agent_message_chunk', '', 200);
+    update('agent_message_chunk', 'The ', 200);
+    update('agent_message_chunk', 'answer.', 200);
+    // A late partial tool update does not interrupt a response already streaming.
+    update('tool_call_update', undefined, 200);
+    update('agent_message_chunk', ' Done.', 200);
+    assert.equal(turn.text, 'Checking the files.\n\nThe answer. Done.', boundary);
+    assert.equal(events.filter(event => event.type === 'response-boundary').length, 1, boundary);
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => [event.text, !!event.segmentStart]), [
+      ['Checking ', false], ['the files.', false], ['The ', true], ['answer.', false], [' Done.', false],
+    ], boundary);
+    assert.equal(events.filter(event => event.type === 'thought').map(event => event.text).join(''), 'First reasoning.Second reasoning.', boundary);
+  }
+});
+
+test('does not invent response boundaries or move unmarked Grok text into thoughts', () => {
+  const adapter = new GrokAdapter();
+  const events = [];
+  const turn = { text: '' };
+  adapter.active.set('session', turn);
+  adapter.on('event', event => events.push(event));
+  for (const text of ['Let me think. ', 'The answer is 42.']) {
+    adapter._sessionUpdate({ sessionId: 'session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } });
+  }
+  assert.equal(turn.text, 'Let me think. The answer is 42.');
+  assert.deepEqual(events.map(event => event.type), ['text', 'text']);
+  assert.equal(events.some(event => event.segmentStart), false);
+});
+
 test('permission options are explicit, validated, and resolved once', async t => {
   const { adapter } = await fixture(t);
   const { sessionId } = await adapter.newSession();

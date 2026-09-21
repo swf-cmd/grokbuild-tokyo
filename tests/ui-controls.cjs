@@ -95,6 +95,46 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       finally { await desktop.evaluate(({ clipboard }, value) => clipboard.writeText(value), previous); }
       await page.locator('.message-body a').first().click(); assert.deepEqual(await desktop.evaluate(() => globalThis.__tokyoUITest.external), ['https://example.com/test']);
     });
+    await stage('protocol response boundaries separate progress from the final answer and survive reload', async () => {
+      await page.locator('#prompt').fill('WAIT segmented response'); await page.locator('#send-button').click();
+      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await desktop.evaluate(() => {
+        const adapter = globalThis.__tokyoUITest.adapter;
+        const sessionId = [...adapter.pending.keys()][0];
+        for (const event of [
+          { type: 'thought', text: 'Separate thought channel' },
+          { type: 'text', text: 'Progress before tool. **Checking** the project.' },
+          { type: 'response-boundary' },
+          { type: 'tool', toolCallId: 'segmented-tool', title: 'Check project', status: 'completed' },
+          { type: 'text', text: 'Final **answer** only.', segmentStart: true },
+        ]) adapter.emit('event', { sessionId, ...event });
+      });
+      const message = page.locator('.message.assistant').last();
+      await message.locator('.response-commentary').waitFor();
+      assert.equal(await message.locator('.response-commentary').getAttribute('open'), null);
+      assert.equal(await message.locator('.response-commentary summary').textContent(), '过程说明');
+      assert.equal(await message.locator('.response-answer .response-label').textContent(), '回复');
+      assert.equal(await message.locator('.response-answer .response-content').textContent(), 'Final answer only.\n');
+      await message.locator('.response-commentary summary').click();
+      assert.match(await message.locator('.response-commentary').textContent(), /Progress before tool/);
+      await desktop.evaluate(() => {
+        const adapter = globalThis.__tokyoUITest.adapter;
+        for (const resolve of adapter.pending.values()) resolve({ stopReason: 'end_turn' });
+        adapter.pending.clear();
+      });
+      await idle();
+      await page.waitForFunction(() => document.querySelector('.message.assistant:last-child .response-label')?.textContent === '回答');
+      const saved = readState().sessions[0].messages.at(-1);
+      assert.deepEqual(saved.responseSegments.map(segment => segment.kind), ['commentary', 'response']);
+      assert.equal(saved.text, 'Progress before tool. **Checking** the project.\n\nFinal **answer** only.');
+      assert.equal(await message.locator('.response-commentary').getAttribute('open'), '');
+      await page.screenshot({ path: path.join(testRoot, 'segmented-response.png'), animations: 'disabled' });
+      await page.reload(); await ready();
+      await page.locator('.session-select').first().click();
+      await page.locator('.message.assistant .response-commentary').waitFor();
+      assert.equal(await page.locator('.message.assistant').last().locator('.response-answer .response-content').textContent(), 'Final answer only.\n');
+      assert.equal(await page.locator('.message.assistant').last().locator('.thought-content').textContent(), 'Separate thought channel');
+    });
     await stage('topbar and menu export write Markdown; chooser cancel is harmless', async () => {
       await queueDialog({ canceled: true }); await page.locator('#export-button').click();
       const file = path.join(testRoot, 'topbar-export.md'); await queueDialog({ canceled: false, filePath: file }); await page.locator('#export-button').click();

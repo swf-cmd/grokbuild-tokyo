@@ -21,7 +21,7 @@ npm ci
 npm start
 ```
 
-By default, the client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows or `~/.grok/bin/grok` on Mac. If your CLI is elsewhere, open settings in the lower-left corner and select the executable (`grok` without a `.exe` extension on Mac). The local account uses the CLI's existing login and configuration; open **Switch account** to sign in if needed.
+By default, the client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows or `~/.grok/bin/grok` on Mac. If your CLI is elsewhere, open settings in the lower-left corner and select the executable (`grok` without a `.exe` extension on Mac). The local account uses the CLI's existing login and configuration. If no login is saved, choose **Sign in to Grok ↗** beside the composer, then open the browser login page and verify the code. You can sign in directly with the default account; adding another account is optional. The client connects automatically after authorization and keeps your draft. Use **Set up Grok CLI** if you need to select the executable.
 
 The default working directory is `Workspace` inside the source project on Windows (beside `App` when packaged), or `~/Library/Application Support/Grokbuild Tokyo/Workspace` on Mac, created on first launch. To work on an existing project, select its folder in settings and start a new conversation. Existing conversations keep their original working directories.
 
@@ -70,6 +70,8 @@ If the history file is corrupt, account directories whose deletion status cannot
 ## Chat, images, and attachments
 
 The client supports streaming replies, Markdown and code blocks, copying, conversation search, renaming, Markdown export, tool progress, execution plans, individual permission prompts, and stopping generation. Execution plans update with Grok and are saved and exported with the conversation. Explicit notices remain visible when a reply or request limit is reached or a request is refused. Press **Enter** to send, **Shift+Enter** for a new line, **Ctrl+N** on Windows or **Cmd+N** on Mac for a new conversation, and **Ctrl+,** on Windows or **Cmd+,** on Mac for settings.
+
+The **Thinking** disclosure contains the CLI's separate thought channel. When the CLI marks a new response or starts a tool, preceding response text appears in a collapsible **Progress notes** section and the subsequent response is shown separately as **Answer** when complete. These boundaries are saved with new messages. Older history or text that the CLI mixes within one response is preserved without guessing where to split it.
 
 Use the paperclip beside the composer to select images or files, drag files onto the message composer, or paste clipboard images. Preview or remove attachments before sending; a message can contain attachments without text. Each message allows up to **10 files**, **20 MB per file**, and **50 MB in total**. During the current app run, unsent attachment drafts are preserved separately by conversation and account.
 
@@ -125,6 +127,7 @@ npm test
 npm run test:ui
 npm run test:security
 npm run test:accounts
+npm run test:onboarding
 npm run test:attachments
 npm run test:i18n
 npm run test:time
@@ -132,6 +135,7 @@ npm run build
 node scripts/verify-package.cjs
 node tests/ui-security.cjs --packaged
 node scripts/images-accounts-smoke.cjs --packaged
+node tests/onboarding-ui.cjs --packaged
 node tests/i18n-ui.cjs --packaged
 node tests/ui-attachments.cjs --packaged
 ```

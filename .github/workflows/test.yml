@@ -26,6 +26,7 @@ jobs:
       - run: npm run test:attachments
       - run: npm run test:i18n
       - run: npm run test:startup
+      - run: npm run test:onboarding
       - run: npm run test:audio
       - run: npm run test:time
       - run: npm run build
@@ -35,6 +36,7 @@ jobs:
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
       - run: node tests/startup-ui.cjs --packaged
+      - run: node tests/onboarding-ui.cjs --packaged
       - run: npm run test:audio -- --packaged
       - run: node tests/ui-attachments.cjs --packaged
       - run: node tests/time-ui.cjs --packaged
@@ -51,6 +53,8 @@ jobs:
             work/i18n-qa/run-*/*.png
             work/i18n-qa/run-*/results.json
             work/ui-attachments/run-*/*.png
+            work/onboarding-qa/run-*/*.png
+            work/onboarding-qa/run-*/results.json
           retention-days: 7
           if-no-files-found: ignore
 
@@ -81,6 +85,7 @@ jobs:
       - run: npm run test:attachments
       - run: npm run test:i18n
       - run: npm run test:startup
+      - run: npm run test:onboarding
       - run: npm run test:audio
       - run: npm run test:time
       # Run the universal app natively on each CPU family, without Rosetta.
@@ -91,6 +96,7 @@ jobs:
       - run: node scripts/images-accounts-smoke.cjs --packaged
       - run: node tests/i18n-ui.cjs --packaged
       - run: node tests/startup-ui.cjs --packaged
+      - run: node tests/onboarding-ui.cjs --packaged
       - run: npm run test:audio -- --packaged
       - run: node tests/ui-attachments.cjs --packaged
       - run: node tests/time-ui.cjs --packaged
@@ -116,5 +122,7 @@ jobs:
             work/i18n-qa/run-*/*.png
             work/i18n-qa/run-*/results.json
             work/ui-attachments/run-*/*.png
+            work/onboarding-qa/run-*/*.png
+            work/onboarding-qa/run-*/results.json
           retention-days: 7
           if-no-files-found: ignore

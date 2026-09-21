@@ -33,7 +33,7 @@
       <div class="history-search" id="history-search" hidden><input id="session-search" type="search" placeholder="搜索对话…" aria-label="搜索对话" data-i18n-aria-label="搜索对话" data-i18n-placeholder="搜索对话…"></div>
       <nav class="session-list" id="session-list" aria-label="最近对话" data-i18n-aria-label="最近对话"><div class="history-empty" data-i18n="新的故事，从这里开始。">新的故事，从这里开始。</div></nav>
       <div class="sidebar-bottom">
-        <button class="account-button" id="account-button" aria-label="账户切换" data-i18n-aria-label="账户切换"><span class="account-avatar" aria-hidden="true">◎</span><span><strong id="account-name" data-i18n="本机 Grok 账户">本机 Grok 账户</strong><small data-i18n="账户切换">账户切换</small></span><span aria-hidden="true">⇄</span></button>
+        <button class="account-button" id="account-button" aria-label="账户切换" data-i18n-aria-label="账户切换"><span class="account-avatar" aria-hidden="true">◎</span><span><strong id="account-name" data-i18n="本机 Grok 账户">本机 Grok 账户</strong><small id="account-status" data-i18n="账户切换">账户切换</small></span><span aria-hidden="true">⇄</span></button>
         <div class="night-note"><span class="night-note-icon">☾</span><p data-i18n="Good ideas&#10;don&#x27;t keep office hours." class="i18n-multiline">Good ideas
 don't keep office hours.</p><span class="night-note-line"></span></div>
         <button class="settings-button" id="settings-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="m9 3-.7 2.3-2 .9L4 5.7 2.5 8.3l1.7 1.7-.2 2.2-1.5 1.9L4 16.7l2.4-.4 1.8 1.2.8 2.5h3l.8-2.5 1.8-1.2 2.4.4 1.5-2.6-1.5-1.9-.2-2.2 1.7-1.7L17 5.7l-2.3.5-2-.9L12 3Z"/><circle cx="10.5" cy="11.5" r="3"/></svg><span data-i18n="偏好设置">偏好设置</span><kbd>Ctrl ,</kbd></button>
@@ -67,6 +67,10 @@ don't keep office hours.</p><span class="night-note-line"></span></div>
       </section>
 
       <div class="composer-region">
+        <section id="signin-notice" class="signin-notice" hidden aria-labelledby="signin-title">
+          <div><strong id="signin-title" data-i18n="登录 Grok，开始对话">登录 Grok，开始对话</strong><p id="signin-description" data-i18n="当前账户尚未登录。请在浏览器中完成登录，随后回到这里继续。">当前账户尚未登录。请在浏览器中完成登录，随后回到这里继续。</p></div>
+          <div class="signin-actions"><button id="signin-button" type="button" class="primary-button" data-i18n="登录 Grok ↗">登录 Grok ↗</button><button id="signin-settings" type="button" class="secondary-button" data-i18n="设置 Grok CLI">设置 Grok CLI</button></div>
+        </section>
         <div class="permission-panel" id="permission-panel" hidden aria-live="polite"></div>
         <div class="activity-strip" id="activity-strip" hidden><span class="activity-spinner"></span><span id="activity-text" data-i18n="Grokbuild 正在思考">Grokbuild 正在思考</span><span class="activity-duration" id="activity-duration"></span></div>
         <form class="composer" id="composer-form">
@@ -122,16 +126,16 @@ don't keep office hours.</p><span class="night-note-line"></span></div>
   <dialog id="accounts-dialog" class="accounts-dialog" aria-labelledby="accounts-title">
     <div class="dialog-header"><div><span class="dialog-eyebrow" data-i18n="YOUR ACCOUNTS">YOUR ACCOUNTS</span><h2 id="accounts-title" data-i18n="账户管理">账户管理</h2></div><button type="button" class="icon-button dialog-close" data-close-dialog="accounts-dialog" aria-label="关闭账户管理" data-i18n-aria-label="关闭账户管理">×</button></div>
     <div class="accounts-body">
-      <p class="account-help" data-i18n="每个账户保留自己的登录状态和对话。新增账户在浏览器中完成 Grok 登录。">每个账户保留自己的登录状态和对话。新增账户在浏览器中完成 Grok 登录。</p>
+      <p id="account-help" class="account-help" data-i18n="每个账户保留自己的登录状态和对话。新增账户在浏览器中完成 Grok 登录。">每个账户保留自己的登录状态和对话。新增账户在浏览器中完成 Grok 登录。</p>
       <div id="account-list" class="account-list" aria-label="已保存的账户" data-i18n-aria-label="已保存的账户"></div>
-      <div class="account-login-actions"><button id="account-login" type="button" class="secondary-button" data-i18n="登录当前账户">登录当前账户</button><span id="account-feedback" role="status" aria-live="polite"></span></div>
+      <div class="account-login-actions"><button id="account-login" type="button" class="primary-button" data-i18n="登录当前账户">登录当前账户</button><span id="account-feedback" role="status" aria-live="polite"></span></div>
       <section id="account-login-panel" class="account-login-panel" hidden aria-label="浏览器登录" data-i18n-aria-label="浏览器登录">
         <p id="account-login-status" role="status" aria-live="polite"></p>
         <div id="account-code-row" class="account-code-row" hidden><span data-i18n="核对验证码">核对验证码</span><strong id="account-login-code"></strong><button id="account-copy-code" type="button" class="secondary-button" data-i18n="复制">复制</button></div>
-        <p class="field-help" data-i18n="请在浏览器中选择要使用的账户，并确认验证码与这里一致。">请在浏览器中选择要使用的账户，并确认验证码与这里一致。</p>
+        <p class="field-help" data-i18n="打开登录页面，在浏览器中登录并核对验证码。完成授权后，客户端会自动连接。">打开登录页面，在浏览器中登录并核对验证码。完成授权后，客户端会自动连接。</p>
         <div class="account-login-actions"><button id="account-open-login" type="button" class="primary-button" hidden data-i18n="打开登录页面 ↗">打开登录页面 ↗</button><button id="account-cancel-login" type="button" class="secondary-button" data-i18n="取消登录">取消登录</button></div>
       </section>
-      <form id="add-account-form" class="add-account-form"><label class="field-label" for="account-name-input" data-i18n="添加账户">添加账户</label><div class="input-with-button"><input id="account-name-input" maxlength="120" required placeholder="账户名称，例如：工作账户" autocomplete="off" aria-describedby="account-feedback" data-i18n-placeholder="账户名称，例如：工作账户"><button type="submit" id="add-account-button" data-i18n="添加并登录 ↗">添加并登录 ↗</button></div></form>
+      <form id="add-account-form" class="add-account-form"><label class="field-label" for="account-name-input" data-i18n="添加其他账户（可选）">添加其他账户（可选）</label><div class="input-with-button"><input id="account-name-input" maxlength="120" required placeholder="账户名称，例如：工作账户" autocomplete="off" aria-describedby="account-feedback" data-i18n-placeholder="账户名称，例如：工作账户"><button type="submit" id="add-account-button" data-i18n="添加并登录 ↗">添加并登录 ↗</button></div></form>
     </div>
   </dialog>
   <dialog id="account-rename-dialog" class="small-dialog" aria-labelledby="account-rename-title">

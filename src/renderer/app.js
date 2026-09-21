@@ -22,6 +22,7 @@
     accountRenameId: null, accountDeleteId: null, accountCancelPending: false,
   };
   const activeSession = () => state.sessions.find(s => s.id === state.activeId);
+  const needsSignIn = () => state.accounts.find(account => account.id === state.activeAccountId)?.signedIn === false;
   const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
   const clearPermissions = id => { for (const [key, permission] of state.permissions) if (permission.sessionId === id) state.permissions.delete(key); };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -75,7 +76,13 @@
   }
 
   function normalizeSession(session) {
-    return { ...session, messages: (session.messages || []).map(message => ({ ...message, id: message.id || uid(), role: message.role || 'assistant', text: safeText(message.text ?? message.content), thought: safeText(message.thought), tools: message.tools || [] })) };
+    return { ...session, messages: (session.messages || []).map(message => {
+      const text = safeText(message.text ?? message.content);
+      const segments = message.responseSegments;
+      const validSegments = Array.isArray(segments) && segments.every(segment => segment && typeof segment.text === 'string' && ['response', 'commentary'].includes(segment.kind))
+        && segments.map(segment => segment.text).join('\n\n') === text;
+      return { ...message, id: message.id || uid(), role: message.role || 'assistant', text, responseSegments: validSegments ? segments : undefined, thought: safeText(message.thought), tools: message.tools || [] };
+    }) };
   }
 
   function upsertSession(session) {
@@ -152,12 +159,12 @@
   function renderConnection() {
     const pending = state.initializing || state.startingEngine || state.connectionStatus === 'connecting';
     const online = state.connected && !state.initializing && !state.startingEngine;
-    const label = online ? t('引擎已连接') : pending ? t('连接中') : t('引擎未连接');
+    const label = !pending && needsSignIn() ? t('尚未登录') : online ? t('引擎已连接') : pending ? t('连接中') : t('引擎未连接');
     const dotClass = `connection-dot ${online ? 'online' : pending ? 'connecting' : 'offline'}`;
     for (const id of ['sidebar-dot', 'connection-dot', 'settings-dot']) $(id).className = dotClass;
     $('connection-label').textContent = label;
-    $('sidebar-status').textContent = online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
-    $('connection-button').title = state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
+    $('sidebar-status').textContent = !pending && needsSignIn() ? t('登录 Grok，开始对话') : online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
+    $('connection-button').title = needsSignIn() ? t('登录 Grok ↗') : state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
     $('settings-engine-status').textContent = online ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : pending ? t('正在连接本地引擎') : diagnostic(state.lastError) || t('Grokbuild 未连接，请检查文件路径与登录状态');
     $('settings-engine-status').title = $('settings-engine-status').textContent;
     $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : t('本地');
@@ -473,7 +480,7 @@
     document.querySelector('.main-panel').classList.toggle('has-messages', hasMessages);
     $('breadcrumb-title').textContent = session ? sessionTitle(session) : t('新对话');
     $('export-button').disabled = !session || !messages.length;
-    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId));
+    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId || item.dataset.responseId));
     const previousPlans = new Set([...$('messages').querySelectorAll('[data-plan-id]')].map(item => item.dataset.planId));
     const container = $('messages');
     const previousImages = new Map([...container.querySelectorAll('.chat-image')].map(figure => [figure.imageKey, figure]));
@@ -503,7 +510,26 @@
       if (message.plan?.length) article.append(createPlan(message.plan, message.id, openDetails, previousPlans));
       const body = document.createElement('div'); body.className = 'message-body';
       if (message.role === 'user') body.textContent = message.text;
-      else body.innerHTML = markdown(message.text);
+      else {
+        // Only protocol boundaries distinguish progress from the answer. Older
+        // history and text mixed upstream remain intact without content guessing.
+        const segments = message.responseSegments?.length ? message.responseSegments : [{ text: message.text, kind: 'response' }];
+        const hasContext = message.thought || message.tools?.length || segments.some(segment => segment.kind === 'commentary');
+        segments.forEach((segment, segmentIndex) => {
+          if (!segment.text) return;
+          const content = document.createElement('div'); content.className = 'response-content'; content.innerHTML = markdown(segment.text);
+          if (segment.kind === 'commentary') {
+            const details = document.createElement('details'); details.className = 'response-commentary'; details.dataset.responseId = `${message.id}-response-${segmentIndex}`;
+            details.open = openDetails.has(details.dataset.responseId);
+            const summary = document.createElement('summary'); summary.textContent = t('过程说明');
+            details.append(summary, content); body.append(details);
+          } else {
+            const answer = document.createElement('section'); answer.className = 'response-answer';
+            if (hasContext) { const label = document.createElement('div'); label.className = 'response-label'; label.textContent = message.status === 'complete' ? t('回答') : t('回复'); answer.append(label); }
+            answer.append(content); body.append(answer);
+          }
+        });
+      }
       mountImages(body, message, session, previousImages);
       mountAttachments(body, message, session);
       const last = index === messages.length - 1;
@@ -552,9 +578,10 @@
     for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
     for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
     $('prompt').disabled = state.sending;
-    $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : state.busy.size ? t('另一段对话正在运行，可以先写下你的想法…') : t('在雨声中，开始你的下一个想法…');
+    $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : needsSignIn() ? t('请先登录 Grok，也可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : state.busy.size ? t('另一段对话正在运行，可以先写下你的想法…') : t('在雨声中，开始你的下一个想法…');
     $('activity-strip').hidden = !busy;
     if (busy) updateActivity();
+    renderSignInNotice();
   }
 
   function updateActivity() {
@@ -781,7 +808,7 @@
       const login = event.login;
       state.login = login && ['starting', 'waiting', 'cancelling'].includes(login.status) ? login : null;
       if (login && ['succeeded', 'failed', 'cancelled'].includes(login.status)) state.loginTerminal = login.status;
-      renderAccounts(); renderComposerState(); renderSelects();
+      renderAccounts(); renderConnection();
       if (login?.status === 'succeeded') {
         $('account-feedback').textContent = t('登录成功，正在连接…');
         if (state.accountAction) state.loginCompletedAccount = login.accountId;
@@ -843,12 +870,35 @@
       else toast(t('对话“{title}”需要你的授权。', { title: sessionTitle(state.sessions.find(item => item.id === sessionId) || {}) }), false, 8000);
       return;
     }
+    if (event.type === 'response-boundary') {
+      const message = getStreamMessage(sessionId); if (!message) return;
+      message.responseSegments ||= message.text ? [{ text: message.text, kind: 'response' }] : [];
+      const segment = message.responseSegments.at(-1);
+      if (segment) segment.kind = 'commentary';
+      if (sessionId === state.activeId) queueMessages();
+      return;
+    }
     if (['text', 'thought', 'tool', 'image', 'attachment'].includes(event.type)) {
       const message = getStreamMessage(sessionId); if (!message) return;
       const wasBusy = state.busy.has(sessionId);
       state.busy.add(sessionId);
       if (!wasBusy) { renderSelects(); renderComposerState(); }
-      if (event.type === 'text') message.text = event.delta === false ? safeText(event.text) : message.text + safeText(event.text);
+      if (event.type === 'text') {
+        const text = safeText(event.text);
+        if (event.delta === false) {
+          message.text = text;
+          message.responseSegments = text ? [{ text, kind: 'response' }] : [];
+        } else if (text) {
+          message.responseSegments ||= message.text ? [{ text: message.text, kind: 'response' }] : [];
+          let segment = message.responseSegments.at(-1);
+          if (!segment || event.segmentStart || segment.kind === 'commentary') {
+            if (segment) segment.kind = 'commentary';
+            segment = { text: '', kind: 'response' }; message.responseSegments.push(segment);
+          }
+          segment.text += text;
+          message.text = message.responseSegments.map(item => item.text).join('\n\n');
+        }
+      }
       if (event.type === 'thought') message.thought = event.delta === false ? safeText(event.text) : message.thought + safeText(event.text);
       if (event.type === 'image' && event.image?.src) {
         message.images ||= [];
@@ -883,16 +933,21 @@
     const current = state.accounts.find(a => a.id === state.activeAccountId);
     $('account-name').textContent = accountName(current);
     $('account-button').title = current?.email || accountName(current);
+    $('account-status').textContent = state.login ? t('继续登录') : needsSignIn() ? t('尚未登录') : t('账户切换');
+    $('account-button').setAttribute('aria-label', state.login ? t('继续登录') : needsSignIn() ? t('登录 Grok ↗') : t('账户切换'));
+    $('account-help').textContent = state.accounts.some(account => account.signedIn)
+      ? t('每个账户保留自己的登录状态和对话。新增账户在浏览器中完成 Grok 登录。')
+      : t('首次使用：点击下方按钮，在浏览器中登录 Grok，无需先添加账户。');
     $('account-list').replaceChildren();
     const locked = accountsLocked();
     for (const account of state.accounts) {
       const row = document.createElement('div'); row.className = 'account-row'; row.dataset.accountId = account.id;
       const selected = account.id === state.activeAccountId; row.classList.toggle('selected', selected);
       const info = document.createElement('div'); info.className = 'account-info'; const name = document.createElement('strong'); name.textContent = accountName(account);
-      const detail = document.createElement('small'); detail.textContent = account.email || (account.signedIn ? t('登录已保存') : account.kind === 'local' ? t('沿用本机 Grok 登录与配置') : t('尚未登录'));
+      const detail = document.createElement('small'); detail.textContent = account.email || (account.signedIn ? t('登录已保存') : t('尚未登录'));
       info.append(name, detail);
       if (account.kind === 'local') {
-        const note = document.createElement('small'); note.className = 'account-local-note'; note.textContent = t('默认账户不可移除，保留本机 Grok 登录与配置。'); info.append(note);
+        const note = document.createElement('small'); note.className = 'account-local-note'; note.textContent = account.signedIn ? t('默认账户不可移除，保留本机 Grok 登录与配置。') : t('这是默认账户位置，尚未登录。可直接登录，无需新增账户。'); info.append(note);
       }
       const actions = document.createElement('div'); actions.className = 'account-row-actions';
       const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary-button'; button.dataset.accountAction = 'switch'; button.textContent = selected ? t('当前账户 ✓') : t('切换'); button.disabled = selected || locked;
@@ -922,6 +977,25 @@
     $('account-cancel-login').textContent = state.accountCancelPending ? t('正在取消…') : state.login?.status === 'cancelling' ? t('重试取消登录') : t('取消登录');
     $('account-open-login').disabled = state.accountCancelPending || state.login?.status === 'cancelling'; $('account-copy-code').disabled = state.accountCancelPending || state.login?.status === 'cancelling';
     if (state.busy.size) $('account-feedback').textContent = t('请先停止生成或等待回复完成，再切换账户。');
+    renderSignInNotice();
+  }
+
+  function renderSignInNotice() {
+    $('signin-notice').hidden = state.initializing || (!needsSignIn() && !state.login);
+    $('signin-button').textContent = state.login ? t('继续登录') : t('登录 Grok ↗');
+    $('signin-button').disabled = state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.busy.size > 0;
+    $('signin-settings').disabled = $('settings-button').disabled;
+    $('signin-description').textContent = state.login ? t('打开登录页面，在浏览器中登录并核对验证码。完成授权后，客户端会自动连接。')
+      : t('当前账户尚未登录。请在浏览器中完成登录，随后回到这里继续。');
+  }
+
+  async function showAccounts(startLogin = false) {
+    if (document.querySelector('dialog[open]')) return;
+    const result = await call('listAccounts');
+    state.accounts = result.accounts; state.login = result.login;
+    $('account-feedback').textContent = ''; renderAccounts(); renderConnection(); $('accounts-dialog').showModal();
+    if (startLogin && needsSignIn() && !accountsLocked()) await accountWork(startAccountLogin);
+    else if (!accountsLocked()) $('account-login').focus();
   }
 
   function accountsLocked() {
@@ -1099,12 +1173,9 @@
   }
 
   function installListeners() {
-    $('account-button').addEventListener('click', () => guarded(async () => {
-      if (document.querySelector('dialog[open]')) return;
-      const result = await call('listAccounts');
-      state.accounts = result.accounts; state.login = result.login;
-      $('account-feedback').textContent = ''; renderAccounts(); $('accounts-dialog').showModal();
-    }));
+    $('account-button').addEventListener('click', () => { void guarded(() => showAccounts()); });
+    $('signin-button').addEventListener('click', () => { void guarded(() => showAccounts(true)); });
+    $('signin-settings').addEventListener('click', showSettings);
     $('account-login').addEventListener('click', () => { void accountWork(startAccountLogin); });
     $('add-account-form').addEventListener('submit', event => {
       event.preventDefault();
@@ -1201,7 +1272,7 @@
       state.selectedMode = mode; renderSelects(); renderComposerState();
     });
     $('settings-button').addEventListener('click', showSettings);
-    $('connection-button').addEventListener('click', () => guarded(reconnect));
+    $('connection-button').addEventListener('click', () => guarded(() => needsSignIn() ? showAccounts() : reconnect()));
     $('settings-reconnect').addEventListener('click', () => { void savePreferences(true); });
     $('settings-form').addEventListener('input', updateSettingsReconnect);
     for (const id of ['rain-input', 'music-input', 'music-volume']) $(id).addEventListener('input', applyAmbience);
