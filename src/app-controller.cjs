@@ -44,6 +44,8 @@ class AppController extends EventEmitter {
     this.operation = null;
     this.closing = false;
     this.connected = false;
+    this.modelCatalogRevision = 0;
+    this.modelRefreshes = new Map();
     this.loadError = null;
     this.accountRecoveryError = null;
     const hasSavedHistory = fs.existsSync(this.file);
@@ -278,7 +280,41 @@ class AppController extends EventEmitter {
     this.operation = operation;
     operation.promise = Promise.resolve().then(action);
     try { return await operation.promise; }
-    finally { if (this.operation === operation) this.operation = null; }
+    finally {
+      if (this.operation === operation) this.operation = null;
+      this.scheduleModelRefresh();
+    }
+  }
+  scheduleModelRefresh() {
+    if (this.closing || !this.connected || this.active || this.operation || this.modelRefreshTimer) return;
+    if (![...this.loaded].some(id => (this.modelRefreshes.get(id) || 0) < this.modelCatalogRevision)) return;
+    this.modelRefreshTimer = setTimeout(() => {
+      this.modelRefreshTimer = null;
+      void this.refreshModels().catch(error => this.emitEvent({ type: 'error', message: error.message }));
+    }, 0);
+  }
+  async refreshModels() {
+    if (this.closing || !this.connected || this.active || this.operation) return;
+    return this.idleOperation(this.t('载入会话'), async () => {
+      const revision = this.modelCatalogRevision;
+      const adapter = this.adapter;
+      for (const session of this.visibleSessions()) {
+        if (this.closing || !this.connected || this.adapter !== adapter) break;
+        if (!this.loaded.has(session.id) || (this.modelRefreshes.get(session.id) || 0) >= revision) continue;
+        // Bound failures to one attempt per catalog revision. A global catalog
+        // is not permission to widen a session-specific model allowlist.
+        this.modelRefreshes.set(session.id, revision);
+        if (adapter.getInfo().capabilities?.loadSession !== true) continue;
+        try {
+          const restored = await adapter.loadSession({ sessionId: session.id, cwd: session.cwd, force: true });
+          if (this.closing || !this.connected || this.adapter !== adapter || !this.loaded.has(session.id)) break;
+          this.syncSession(session, restored);
+          this.publishSession(session);
+        } catch (error) {
+          this.emitEvent({ type: 'error', sessionId: session.id, message: error.message });
+        }
+      }
+    }, { allowInterfaceSettings: true });
   }
   engineSession(id) {
     try { return this.adapter?.getSession?.(id); } catch { return undefined; }
@@ -298,6 +334,10 @@ class AppController extends EventEmitter {
   }
   invalidateConnection() {
     this.connected = false;
+    clearTimeout(this.modelRefreshTimer);
+    this.modelRefreshTimer = null;
+    this.modelCatalogRevision = 0;
+    this.modelRefreshes.clear();
     this.loaded.clear();
     this.permissions.clear();
     for (const session of this.visibleSessions()) {
@@ -473,8 +513,8 @@ class AppController extends EventEmitter {
     try {
       for (const item of selected) await resolveAttachment(item.src, [this.attachmentDirectory()], this.t);
       await this._ensureLoaded(session);
-    } catch (e) { this.active = null; throw e; }
-    if (turn.cancelled) { this.active = null; this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
+    } catch (e) { this.active = null; this.scheduleModelRefresh(); throw e; }
+    if (turn.cancelled) { this.active = null; this.scheduleModelRefresh(); this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
     const now = Date.now();
     const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
     session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
@@ -492,6 +532,7 @@ class AppController extends EventEmitter {
       session.titleIsDefault = previous.titleIsDefault;
       session.updatedAt = previous.updatedAt;
       this.active = null;
+      this.scheduleModelRefresh();
       throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
     }
     this.active.message = message;
@@ -516,6 +557,7 @@ class AppController extends EventEmitter {
         catch (error) { this.emitEvent({ type: 'error', sessionId, message: this.t('保存失败：{error}', { error: error.message }) }); }
         this.emitEvent({ type: 'session-updated', sessionId, session });
         this.emitEvent({ type: 'status', sessionId, status: message.status === 'cancelled' ? 'cancelled' : 'idle' });
+        this.scheduleModelRefresh();
       }
     })();
     return { accepted: true };
@@ -523,6 +565,13 @@ class AppController extends EventEmitter {
   handleEvent(event) {
     if (event.replay || (['text', 'image', 'attachment'].includes(event.type) && event.role === 'user')) return;
     if (event.type === 'status' && event.status === 'disconnected') this.invalidateConnection();
+    if (event.type === 'status' && event.status === 'models_changed') {
+      if (Number.isSafeInteger(event.revision) && event.revision > this.modelCatalogRevision) {
+        this.modelCatalogRevision = event.revision;
+        this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: this.connected });
+        this.scheduleModelRefresh();
+      }
+    }
     if (event.type === 'status' && ['model_changed', 'mode_changed'].includes(event.status)) {
       const session = this.visibleSessions().find(item => item.id === event.sessionId);
       if (session) {
@@ -732,6 +781,8 @@ class AppController extends EventEmitter {
   }
   async close() {
     this.closing = true;
+    clearTimeout(this.modelRefreshTimer);
+    this.modelRefreshTimer = null;
     let failure;
     const initialLogin = this.accountManager.pending;
     try { await this.accountManager.cancelLogin(); } catch (error) { failure = error; }

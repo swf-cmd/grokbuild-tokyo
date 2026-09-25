@@ -93,6 +93,8 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或生成工具返回�
 
 模型和思考强度沿用 CLI 返回的顺序、ID 和支持范围，常见推理档位名称按界面语言显示，未知自定义名称保留原文。客户端在引擎确认并回读后显示切换结果，恢复历史时重新同步。无法确认的选择显示“待确认”。
 
+已连接的 CLI 通知模型列表变化时，新对话的可选模型会自动更新。如果 CLI 支持会话恢复，已载入的会话会在当前回复或设置操作结束后刷新各自的可选模型，并以 CLI 为该会话确认的选项和当前选择为准。刷新保留未发送的草稿，无需重启引擎或发送消息。模型是否可用仍取决于 CLI 和账户。
+
 旧 CLI 的第三档 `grok-4` 显示为 **Grok 4.3 (grok-4)**：2026-09-07 在 Windows 上使用本机 CLI 1.0.13 实测，选择和请求 ID 为 `grok-4`，实际回复的 `usage.modelUsage` 与已保存的 `model_id` 均为 `grok-4.3`。客户端保留原请求 ID；新版 CLI 明确提供的名称优先，当前会话可确认的实际用量模型也会更新显示。[官方旧模型迁移说明](https://docs.x.ai/developers/migration/may-15-retirement)提供了 Grok 4 家族迁移到 4.3 的背景。
 
 兼容的旧版 CLI 使用 `session/set_model` 的 `_meta.reasoningEffort` 切换推理档位并载入会话回读；支持 `session/set_config_option` 的 CLI 使用该接口。`session/set_mode` 不作为推理档位切换接口。

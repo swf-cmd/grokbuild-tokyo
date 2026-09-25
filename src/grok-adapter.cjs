@@ -77,6 +77,9 @@ class GrokAdapter extends EventEmitter {
     this.active = new Map();
     this.loading = new Set();
     this.sessionLoads = new Map();
+    this.modelCatalogModels = null;
+    this.modelCatalogFingerprint = null;
+    this.modelCatalogRevision = 0;
     this.nextId = 0;
     this.ready = false;
     this.closed = false;
@@ -90,7 +93,9 @@ class GrokAdapter extends EventEmitter {
   }
 
   getInfo() {
-    return JSON.parse(JSON.stringify({ ...this.info, connected: this.ready, executable: this.executable, cwd: this.cwd }));
+    // A restored session may have a narrower allowlist. Keep its choices local
+    // while new conversations continue to see the latest transport catalog.
+    return JSON.parse(JSON.stringify({ ...this.info, models: this.modelCatalogModels ?? this.info.models, connected: this.ready, executable: this.executable, cwd: this.cwd }));
   }
 
   async start() {
@@ -197,7 +202,6 @@ class GrokAdapter extends EventEmitter {
       this.info.version = result.agentInfo?.version || result._meta?.agentVersion || '';
       this.info.agentName = result.agentInfo?.title || result.agentInfo?.name || 'Grok Build';
       this.info.authMethods = (result.authMethods || []).map(({ id, name }) => ({ id, name }));
-      this._updateModels(result._meta?.modelState);
       if (this.closed) throw failure(this.t('Grok 连接已关闭，请重新连接。'), 'CLOSED');
       if (this.process !== child || disconnected) throw failure(this.t('Grok 尚未连接，请重新连接。'), 'NOT_CONNECTED');
       this.ready = true;
@@ -250,7 +254,14 @@ class GrokAdapter extends EventEmitter {
       this.pending.delete(message.id);
       clearTimeout(request.timer);
       if (message.error) request.reject(failure(this.safeMessage(message.error.message), message.error.code));
-      else request.resolve(message.result ?? {});
+      else {
+        // Consume the initial catalog in wire order. A newer notification can
+        // follow this response in the same stdout chunk, before await resumes.
+        try {
+          if (request.method === 'initialize') this._receiveModelCatalog(message.result?._meta?.modelState);
+        } catch (error) { request.reject(error); return; }
+        request.resolve(message.result ?? {});
+      }
       return;
     }
     const params = message.params || {};
@@ -285,14 +296,29 @@ class GrokAdapter extends EventEmitter {
     if (message.method === 'session/update' || message.method === 'x.ai/session/update' || message.method === '_x.ai/session/update') {
       this._sessionUpdate(params);
     } else if (message.method === '_x.ai/models/update' || message.method === 'x.ai/models/update') {
-      this._updateModels(params.modelState || params.models || params);
+      this._receiveModelCatalog(params.modelState || params.models || params, true);
     }
+  }
+
+  _receiveModelCatalog(state, notify = false) {
+    const available = state?.availableModels || (Array.isArray(state) ? state : null);
+    this._updateModels(state);
+    if (!Array.isArray(available)) return;
+    this.modelCatalogModels = this.info.models;
+    // Session menus can be narrower than the account catalog. Track only the
+    // transport catalog here, so restoring one cannot make an identical push
+    // look new and start a repeated session/load cycle.
+    const fingerprint = JSON.stringify(this.info.models);
+    if (fingerprint === this.modelCatalogFingerprint) return;
+    this.modelCatalogFingerprint = fingerprint;
+    this.info.modelCatalogRevision = ++this.modelCatalogRevision;
+    if (notify) this._event({ type: 'status', status: 'models_changed', revision: this.modelCatalogRevision, info: this.getInfo() });
   }
 
   _updateModels(state) {
     if (!state || typeof state !== 'object') return;
     const available = state.availableModels || (Array.isArray(state) ? state : null);
-    if (available) this.info.models = available.map(model => labelModel({
+    if (Array.isArray(available)) this.info.models = available.map(model => labelModel({
       id: model.modelId || model.id,
       modelId: model.modelId || model.id,
       name: model.name || model.modelId || model.id,

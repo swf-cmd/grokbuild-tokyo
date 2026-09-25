@@ -49,7 +49,7 @@ function fixture(t, saved, { useAppLanguage = false } = {}) {
       this.sessions = new Map();
       this.configurations = [];
       this.closeCount = 0;
-      this.info = { models: [{ id: 'grok-test', name: 'Grok Test' }], modes: [{ id: 'balanced', name: 'Balanced' }], currentModelId: 'grok-test', currentModeId: 'balanced' };
+      this.info = { capabilities: { loadSession: true }, models: [{ id: 'grok-test', name: 'Grok Test' }], modes: [{ id: 'balanced', name: 'Balanced' }], currentModelId: 'grok-test', currentModeId: 'balanced' };
     }
     getInfo() { return this.info; }
     getSession(id) { const session = this.sessions.get(id); return session && structuredClone(session); }
@@ -110,6 +110,101 @@ async function started(t, options) {
   result.adapter = result.instances[0];
   return result;
 }
+
+test('late model catalog refreshes loaded session choices once without changing its selection', async t => {
+  const { controller, session, adapter } = await started(t);
+  const events = []; controller.on('event', event => events.push(structuredClone(event)));
+  const models = [...adapter.info.models, { id: 'grok-4.7', name: 'Grok 4.7' }];
+  adapter.info.models = models;
+  adapter.loadResult = { models, model: session.model, mode: session.mode };
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  assert.deepEqual(adapter.loads, [{ sessionId: session.id, cwd: session.cwd, force: true }]);
+  assert.deepEqual(session.models, models);
+  assert.equal(session.model, 'grok-test');
+  assert.equal(session.mode, 'balanced');
+  assert.equal(events.some(event => event.type === 'session-updated' && event.session.models.some(model => model.id === 'grok-4.7')), true);
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 1);
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(adapter.configurations.length, 0);
+});
+
+test('catalog refresh waits for a running turn and respects the session model allowlist', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'test' });
+  adapter.info.models.push({ id: 'grok-4.7', name: 'Grok 4.7' });
+  adapter.loadResult = { models: [{ id: 'grok-test', name: 'Grok Test' }] };
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 0);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 1);
+  assert.deepEqual(session.models.map(model => model.id), ['grok-test']);
+  assert.equal(session.modelSelectionVerified, true);
+});
+
+test('catalog update during startup refreshes the session after it finishes loading', async t => {
+  const { controller, instances } = fixture(t);
+  await controller.connect();
+  const adapter = instances[0];
+  adapter.newGate = deferred();
+  const creating = controller.createSession();
+  await new Promise(resolve => setImmediate(resolve));
+  const models = [...adapter.info.models, { id: 'grok-4.7', name: 'Grok 4.7' }];
+  adapter.info.models = models;
+  adapter.loadResult = { models };
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 0);
+  adapter.newGate.resolve();
+  const session = await creating;
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 1);
+  assert.deepEqual(session.models, models);
+});
+
+test('failed catalog readback keeps verified choices and does not retry indefinitely', async t => {
+  const { controller, session, adapter } = await started(t);
+  const previous = structuredClone(session);
+  let attempts = 0;
+  adapter.loadSession = async () => { attempts++; throw new Error('temporary model refresh failure'); };
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  await controller.refreshModels();
+  assert.equal(attempts, 1);
+  assert.deepEqual(session, previous);
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 3 });
+  await controller.refreshModels();
+  assert.equal(attempts, 2);
+});
+
+test('disconnect during a catalog readback cannot re-verify an offline session', async t => {
+  const { controller, session, adapter } = await started(t);
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(adapter.loads.length, 1);
+  adapter.emit('event', { type: 'status', status: 'disconnected' });
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.equal(controller.connected, false);
+  assert.equal(session.modelSelectionVerified, false);
+  assert.equal(controller.loaded.size, 0);
+  assert.equal(controller.modelCatalogRevision, 0);
+});
+
+test('catalog discovery does not attempt unsupported session readback', async t => {
+  const { controller, adapter } = await started(t);
+  delete adapter.info.capabilities.loadSession;
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 0);
+});
 
 test('attachment-only turns preserve files, validate tokens and survive restart', async t => {
   const { root, controller, session, adapter } = await started(t);

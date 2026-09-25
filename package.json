@@ -28,6 +28,7 @@
     "test:attachments": "node tests/ui-attachments.cjs",
     "test:i18n": "node tests/i18n-ui.cjs",
     "test:startup": "node tests/startup-ui.cjs",
+    "test:models": "node tests/model-refresh-ui.cjs",
     "test:onboarding": "node tests/onboarding-ui.cjs",
     "test:time": "node tests/time-ui.cjs",
     "build": "node scripts/package.cjs",

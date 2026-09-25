@@ -51,12 +51,14 @@ npm run test:security
 npm run test:accounts
 npm run test:attachments
 npm run test:i18n
+npm run test:models
 npm run test:time
 npm run build
 node scripts/verify-package.cjs
 node tests/ui-security.cjs --packaged
 node scripts/images-accounts-smoke.cjs --packaged
 node tests/i18n-ui.cjs --packaged
+npm run test:models -- --packaged
 node tests/ui-attachments.cjs --packaged
 node tests/time-ui.cjs --packaged
 ```

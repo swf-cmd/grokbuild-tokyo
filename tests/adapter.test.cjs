@@ -30,7 +30,15 @@ let pendingPrompt;
 readline.createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line); const p=m.params||{};
  fs.appendFileSync('requests.ndjson',line+'\n');
- if(m.method==='initialize') send({id:m.id,result:{protocolVersion:Number(process.env.TEST_PROTOCOL||1),agentCapabilities:{loadSession:process.env.TEST_NO_LOAD!=='1'},_meta:{agentVersion:'test'}}});
+ if(m.method==='initialize') {
+   const result={protocolVersion:Number(process.env.TEST_PROTOCOL||1),agentCapabilities:{loadSession:process.env.TEST_NO_LOAD!=='1'},_meta:{agentVersion:'test'}};
+   if(process.env.TEST_CATALOG_INIT_RACE==='1') {
+     result._meta.modelState={currentModelId:model,availableModels:models.slice(0,1)};
+     // One pipe write deliberately puts the newer catalog before the client's
+     // initialize await continuation, reproducing the startup ordering race.
+     process.stdout.write([{jsonrpc:'2.0',id:m.id,result},{jsonrpc:'2.0',method:'_x.ai/models/update',params:{modelState:{currentModelId:model,availableModels:models}}}].map(x=>JSON.stringify(x)+'\n').join(''));
+   } else send({id:m.id,result});
+ }
  else if(m.method==='session/new') send({id:m.id,result:session()});
  else if(m.method==='session/load') {if(process.env.TEST_FAIL_READBACK==='1'&&configured){send({id:m.id,error:{code:-32000,message:'Readback failed'}});return;}setTimeout(()=>{update(p.sessionId,{sessionUpdate:'user_message_chunk',content:{type:'text',text:'earlier prompt'}});update(p.sessionId,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'earlier reply'}});send({id:m.id,result:session()});},Number(process.env.TEST_LOAD_DELAY||0));}
  else if(m.method==='session/set_config_option') {
@@ -81,6 +89,7 @@ async function fixture(t, settings = {}) {
     options.env.TEST_NO_LOAD = settings.noLoad ? '1' : '0';
     options.env.TEST_LOAD_DELAY = String(settings.loadDelay || 0);
     options.env.TEST_DESCENDANT = settings.descendant ? '1' : '0';
+    options.env.TEST_CATALOG_INIT_RACE = settings.catalogInitRace ? '1' : '0';
     return spawn(executable, ['agent'], options);
   } });
   t.after(async () => { await adapter.close(); assert(path.resolve(cwd).startsWith(base + path.sep)); await fs.rm(cwd, { recursive: true, force: true }); });
@@ -88,6 +97,45 @@ async function fixture(t, settings = {}) {
   adapter.on('event', event => events.push(event));
   return { adapter, events, cwd, requests: async () => (await fs.readFile(path.join(cwd, 'requests.ndjson'), 'utf8')).trim().split('\n').map(JSON.parse) };
 }
+
+test('a catalog notification beside initialize wins over the older initial catalog', async t => {
+  const { adapter, events } = await fixture(t, { catalogInitRace: true });
+  const info = await adapter.start();
+  assert.deepEqual(info.models.map(model => model.id), ['grok-test', 'grok-plain']);
+  assert.equal(info.modelCatalogRevision, 2);
+  const changes = events.filter(event => event.status === 'models_changed');
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].revision, 2);
+  assert.deepEqual(changes[0].info.models.map(model => model.id), ['grok-test', 'grok-plain']);
+});
+
+test('late catalogs publish revisions without expanding a session menu or repeating identical updates', () => {
+  const adapter = new GrokAdapter();
+  const initial = [{ modelId: 'grok-4.6', name: 'Grok 4.6' }];
+  const latest = [...initial, { modelId: 'grok-4.7', name: 'Grok 4.7' }];
+  adapter._receiveModelCatalog({ currentModelId: 'grok-4.6', availableModels: initial });
+  const sessionResult = { models: { currentModelId: 'grok-4.6', availableModels: initial } };
+  adapter._rememberSession(sessionResult, 'test-session', process.cwd());
+  const events = [];
+  adapter.on('event', event => events.push(event));
+  adapter._message({ method: 'x.ai/models/update', params: { modelState: { availableModels: latest } } });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].status, 'models_changed');
+  assert.equal(events[0].revision, 2);
+  assert.deepEqual(events[0].info.models.map(model => model.id), ['grok-4.6', 'grok-4.7']);
+  // The controller must read this session back before offering new choices.
+  assert.deepEqual(adapter.getSession('test-session').models.map(model => model.id), ['grok-4.6']);
+  adapter._rememberSession(sessionResult, 'test-session', process.cwd());
+  assert.deepEqual(adapter.getInfo().models.map(model => model.id), ['grok-4.6', 'grok-4.7'], 'session readback must not hide new-conversation choices from the transport catalog');
+  assert.deepEqual(adapter.getSession('test-session').models.map(model => model.id), ['grok-4.6'], 'the transport catalog must not widen a session allowlist');
+  adapter._message({ method: '_x.ai/models/update', params: { models: { availableModels: latest } } });
+  assert.equal(events.length, 1);
+  assert.equal(adapter.getInfo().modelCatalogRevision, 2);
+  adapter._message({ method: '_x.ai/models/update', params: { availableModels: [{ modelId: 'grok-4.7', name: 'Grok 4.7 Updated' }] } });
+  assert.equal(events.length, 2);
+  assert.equal(events[1].revision, 3);
+  assert.equal(events[1].info.models[0].name, 'Grok 4.7 Updated');
+});
 
 test('streams split UTF-8 ACP text and correlates tool updates', async t => {
   const { adapter, events } = await fixture(t);

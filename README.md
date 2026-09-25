@@ -37,8 +37,10 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 | **Separate account profiles** | Add, sign in, switch, rename and remove profiles with their own login state and history. |
 | **Images and files** | Select files, drop them onto the message composer, or paste images; preview image replies and save returned files. |
 | **Visibility into the work** | Follow tool progress and execution plans, respond to permission requests and stop generation. |
-| **Controls backed by the CLI** | Choose the models and reasoning levels exposed by your engine; configure subagents and a workspace. |
+| **Controls backed by the CLI** | Automatically updated model choices, CLI-provided reasoning levels, subagent settings and a workspace of your choice. |
 | **Seven interface languages** | English, 简体中文, 日本語, 한국어, Español, Deutsch and Français. |
+
+When the connected CLI announces a changed model list, new-conversation choices update automatically. Loaded conversations refresh their own available models once the current reply or settings operation finishes, if the CLI supports session restoration. Drafts stay in place, and refreshing requires neither a restart nor sending a message. Each conversation continues to use the model choices and selections confirmed by the CLI.
 
 Image input and file reading depend on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
 
@@ -147,6 +149,7 @@ Remote images can contact public image hosts. Read the [security policy](SECURIT
 ```powershell
 npm test
 npm run test:ui
+npm run test:models
 npm run test:security
 ```
 
