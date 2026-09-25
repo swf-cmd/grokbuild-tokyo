@@ -35,6 +35,9 @@ const readState = () => JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   const draft = 'First conversation draft written before signing in';
   try {
     await stage('first launch explains sign-in and does not start the engine or show an error', async () => {
+      // The static HTML starts with enabled buttons and a hidden notice. Wait
+      // for the renderer to load the signed-out state before checking readiness.
+      await page.locator('#signin-notice').waitFor({ state: 'visible' });
       await page.waitForFunction(() => !document.querySelector('#connection-button').disabled && !document.querySelector('#signin-button').disabled);
       assert.equal(fs.existsSync(authFile), false);
       assert.equal(await page.locator('#signin-notice').isVisible(), true);
