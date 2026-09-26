@@ -1,7 +1,8 @@
 'use strict';
 
 // Run the production main/preload/controller/renderer with an isolated, offline
-// engine fixture. A late catalog must update both menus without a restart or send.
+// engine fixture. Catalog refreshes must update menus without blocking a user's
+// first send, losing its attachments, or creating a duplicate turn.
 const { _electron } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,6 +18,8 @@ const sessionId = 'saved-model-refresh-session';
 for (const folder of [workspace, path.dirname(file)]) fs.mkdirSync(folder, { recursive: true });
 fs.writeFileSync(executable, 'Test fixture only; never executed.');
 fs.chmodSync(executable, 0o755);
+const documentFile = path.join(workspace, 'first-message.txt');
+fs.writeFileSync(documentFile, 'A local attachment for the first message.\n');
 fs.writeFileSync(file, JSON.stringify({
   version: 1,
   settings: { executable, workspace, language: 'en', rainEnabled: false, musicEnabled: false },
@@ -38,6 +41,13 @@ const readState = () => JSON.parse(fs.readFileSync(file, 'utf8'));
   page.on('pageerror', error => errors.push(error.message));
   const engineCalls = () => desktop.evaluate(() => globalThis.__tokyoUITest.calls.map(({ method, sessionId }) => ({ method, sessionId })));
   const ready = () => page.waitForFunction(() => !document.querySelector('#model-select').disabled && !document.querySelector('#connection-button').disabled);
+  const waitForLoad = async () => {
+    const deadline = Date.now() + 10000;
+    while (!await desktop.evaluate(() => globalThis.__tokyoUITest.gates.get('loadSession')?.entered === true)) {
+      assert.ok(Date.now() < deadline, 'late catalog must trigger a session readback');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
   const assertChoicesPreserved = async draft => {
     assert.equal(await page.locator('#model-select').inputValue(), 'grok-4.6');
     assert.equal(await page.locator('#mode-select').inputValue(), 'medium');
@@ -80,11 +90,7 @@ const readState = () => JSON.parse(fs.readFileSync(file, 'utf8'));
       const snapshot = await window.tokyo.initialState();
       return snapshot.info.models.some(model => model.id === 'grok-4.7');
     });
-    const deadline = Date.now() + 10000;
-    while (!await desktop.evaluate(() => globalThis.__tokyoUITest.gates.get('loadSession')?.entered === true)) {
-      assert.ok(Date.now() < deadline, 'late catalog must trigger a session readback');
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
+    await waitForLoad();
     assert.equal(await page.locator('#prompt').inputValue(), draft);
     await desktop.evaluate(() => globalThis.__tokyoUITest.release('loadSession'));
     await page.waitForFunction(() => document.querySelector('#model-select option[value="grok-4.7"]'));
@@ -114,6 +120,82 @@ const readState = () => JSON.parse(fs.readFileSync(file, 'utf8'));
     assert.deepEqual(readState().sessions[0].messages, []);
     assert.deepEqual(errors, []);
     console.log('PASS late model catalog updates existing and new conversation menus, preserves drafts and choices, and coalesces duplicate notifications without restarting or sending.');
+
+    await page.locator('.session-select').filter({ hasText: 'Saved model refresh session' }).click();
+    await ready();
+    await desktop.evaluate((_electron, file) => globalThis.__tokyoUITest.dialogs.push({ canceled: false, filePaths: [file] }), documentFile);
+    await page.locator('#attach-button').click();
+    await page.waitForFunction(() => document.querySelectorAll('.attachment-draft').length === 1 && !document.querySelector('.attachment-pending'));
+    await assertChoicesPreserved(draft);
+    await desktop.evaluate(({ ipcMain }) => {
+      const fixture = globalThis.__tokyoUITest;
+      // Record the real bridge's pending request so rejection cannot masquerade
+      // as a successful wait simply because no model prompt has happened yet.
+      const original = ipcMain._invokeHandlers.get('tokyo:send');
+      fixture.sendRequests = [];
+      ipcMain.removeHandler('tokyo:send');
+      ipcMain.handle('tokyo:send', async (...args) => {
+        const request = { settled: false };
+        fixture.sendRequests.push(request);
+        try { return await original(...args); }
+        finally { request.settled = true; }
+      });
+      fixture.hold('loadSession');
+      fixture.adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+    });
+    await waitForLoad();
+    await page.locator('#send-button').click();
+    const sendDeadline = Date.now() + 10000;
+    while (!await desktop.evaluate(() => globalThis.__tokyoUITest.sendRequests.length === 1)) {
+      assert.ok(Date.now() < sendDeadline, 'the first click must submit through the desktop bridge');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.sendRequests[0].settled), false,
+      'the first send must wait for the background readback instead of rejecting it');
+    assert.equal((await engineCalls()).filter(call => call.method === 'prompt').length, 0);
+    assert.equal(await page.locator('.toast.error').count(), 0);
+    assert.equal(await page.locator('#send-button').isDisabled(), true);
+    // An extra submit while waiting must not enqueue another turn.
+    await page.locator('#composer-form').dispatchEvent('submit');
+    assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.sendRequests.length), 1);
+    await desktop.evaluate(() => globalThis.__tokyoUITest.release('loadSession'));
+    await page.locator('.message.assistant').filter({ hasText: 'Fixture reply' }).waitFor();
+    await ready();
+    const delivered = await desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(call => call.method === 'prompt'));
+    assert.equal(delivered.length, 1, 'one click must send exactly one prompt after refresh');
+    assert.equal(delivered[0].text, draft);
+    assert.deepEqual(delivered[0].attachments.map(item => item.name), ['first-message.txt']);
+    const saved = readState().sessions.find(session => session.id === sessionId);
+    assert.equal(saved.messages.length, 2);
+    assert.equal(saved.messages[0].text, draft);
+    assert.deepEqual(saved.messages[0].attachments.map(item => item.name), ['first-message.txt']);
+    assert.equal(saved.model, 'grok-4.6');
+    assert.equal(saved.mode, 'medium');
+    assert.equal(await page.locator('#model-select').inputValue(), 'grok-4.6');
+    assert.equal(await page.locator('#mode-select').inputValue(), 'medium');
+    assert.equal(await page.locator('#prompt').inputValue(), '');
+    assert.equal(await page.locator('.attachment-draft').count(), 0);
+    assert.equal(await page.locator('.toast.error').count(), 0);
+    console.log('PASS first send waits for a background model readback and delivers its original text and attachment exactly once.');
+
+    await page.locator('#new-session').click();
+    await assertChoicesPreserved(newDraft);
+    const loadsBeforeCreation = (await engineCalls()).filter(call => call.method === 'loadSession').length;
+    await page.locator('#send-button').click();
+    await page.locator('.message.assistant').filter({ hasText: 'Fixture reply' }).waitFor();
+    await ready();
+    const afterCreation = await engineCalls();
+    assert.equal(afterCreation.filter(call => call.method === 'loadSession').length, loadsBeforeCreation,
+      'a session created with the known catalog must not immediately force-load itself');
+    assert.equal(afterCreation.filter(call => call.method === 'newSession').length, 1);
+    assert.equal(afterCreation.filter(call => call.method === 'prompt').length, 2);
+    const created = readState().sessions.find(session => session.id !== sessionId);
+    assert.equal(created.messages[0].text, newDraft);
+    assert.equal(created.model, 'grok-4.6');
+    assert.equal(created.mode, 'medium');
+    assert.equal(await page.locator('.toast.error').count(), 0);
+    assert.deepEqual(errors, []);
+    console.log('PASS a new conversation sends on its first click without a redundant model readback.');
   } catch (error) {
     await page.screenshot({ path: path.join(testRoot, 'failure.png'), animations: 'disabled' }).catch(() => {});
     throw error;

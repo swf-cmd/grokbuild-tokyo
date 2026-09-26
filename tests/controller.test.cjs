@@ -167,6 +167,122 @@ test('catalog update during startup refreshes the session after it finishes load
   assert.deepEqual(session.models, models);
 });
 
+test('a catalog already known when creating a session does not delay its first send with a redundant restore', async t => {
+  const { controller, instances } = fixture(t);
+  await controller.connect();
+  const adapter = instances[0];
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const session = await controller.createSession();
+  await controller.refreshModels();
+  assert.equal(adapter.loads.length, 0, 'session/new already returned choices for the known catalog');
+  assert.deepEqual(await controller.send({ sessionId: session.id, text: 'first message' }), { accepted: true });
+  assert.equal(adapter.prompts.length, 1);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+});
+
+test('restoring a session confirms the existing catalog without an immediate second restore', async t => {
+  const { controller, adapter, session } = await started(t);
+  controller.loaded.clear();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  await controller.ensureLoaded(session);
+  await controller.refreshModels();
+  assert.deepEqual(adapter.loads, [{ sessionId: session.id, cwd: session.cwd }]);
+});
+
+test('a catalog update during session restoration is still read back after restoration finishes', async t => {
+  const { controller, adapter, session } = await started(t);
+  controller.loaded.clear();
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const restoring = controller.ensureLoaded(session);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(adapter.loads.length, 1);
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 3 });
+  adapter.loadGate.resolve();
+  await restoring;
+  await controller.refreshModels();
+  assert.deepEqual(adapter.loads, [
+    { sessionId: session.id, cwd: session.cwd },
+    { sessionId: session.id, cwd: session.cwd, force: true },
+  ]);
+});
+
+test('first send waits for a background catalog restore and reserves the turn against duplicate sends', async t => {
+  const { controller, adapter } = await started(t);
+  const session = await controller.createSession();
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(adapter.loads.length, 1);
+  const sending = controller.send({ sessionId: session.id, text: 'first message' });
+  void sending.catch(() => {});
+  assert.equal(controller.active?.sessionId, session.id, 'waiting for a background restore must reserve the user turn');
+  await assert.rejects(controller.send({ sessionId: session.id, text: 'duplicate' }), /已有回复/);
+  await assert.rejects(controller.createSession(), /当前回复/);
+  await assert.rejects(controller.reconnect(), /当前回复/);
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(session.messages.length, 0, 'the message is saved only when it can be dispatched');
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.deepEqual(await sending, { accepted: true });
+  assert.equal(adapter.loads.length, 1, 'the pending send takes precedence over readback of the remaining sessions');
+  assert.equal(adapter.prompts.length, 1);
+  assert.equal(adapter.prompts[0].text, 'first message');
+  assert.equal(session.messages.filter(message => message.role === 'user').length, 1);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+});
+
+test('cancelling a first send waiting for a background catalog restore prevents later dispatch', async t => {
+  const { controller, adapter, session } = await started(t);
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  const sending = controller.send({ sessionId: session.id, text: 'cancel before sending' });
+  void sending.catch(() => {});
+  assert.deepEqual(await controller.cancel(session.id), { cancelled: true });
+  assert.equal(adapter.cancels.length, 0, 'there is no dispatched ACP prompt to cancel');
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.deepEqual(await sending, { accepted: false, cancelled: true });
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(session.messages.length, 0);
+  assert.equal(controller.active, null);
+});
+
+test('closing during a first send waiting for a background catalog restore never starts a prompt', async t => {
+  const loginGate = deferred();
+  t.after(() => { loginGate.resolve(); });
+  const { controller, adapter, session } = await started(t);
+  const cancelLogin = controller.accountManager.cancelLogin.bind(controller.accountManager);
+  controller.accountManager.cancelLogin = async () => { await loginGate.promise; return cancelLogin(); };
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  const sending = controller.send({ sessionId: session.id, text: 'do not send after close' });
+  void sending.catch(() => {});
+  assert.equal(controller.active?.sessionId, session.id);
+  const closing = controller.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.closing, true);
+  assert.equal(adapter.closeCount, 0, 'shutdown waits for the current restore to settle');
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.deepEqual(await sending, { accepted: false, cancelled: true });
+  assert.equal(adapter.prompts.length, 0, 'a delayed login cancellation must not leave the queued send dispatchable');
+  assert.equal(adapter.closeCount, 0, 'login cancellation is still pending');
+  loginGate.resolve();
+  await closing;
+  assert.equal(adapter.closeCount, 1);
+  assert.equal(adapter.prompts.length, 0);
+  assert.equal(session.messages.length, 0);
+  assert.equal(controller.active, null);
+});
+
 test('failed catalog readback keeps verified choices and does not retry indefinitely', async t => {
   const { controller, session, adapter } = await started(t);
   const previous = structuredClone(session);

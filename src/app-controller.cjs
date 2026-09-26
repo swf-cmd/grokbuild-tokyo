@@ -271,12 +271,12 @@ class AppController extends EventEmitter {
     }
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
-  async idleOperation(name, action, { allowInterfaceSettings = false } = {}) {
+  async idleOperation(name, action, { allowInterfaceSettings = false, background = false } = {}) {
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (this.active) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
     // Reserve synchronously, before the first await, so a send cannot race settings.
-    const operation = { name, allowInterfaceSettings };
+    const operation = { name, allowInterfaceSettings, background };
     this.operation = operation;
     operation.promise = Promise.resolve().then(action);
     try { return await operation.promise; }
@@ -299,7 +299,7 @@ class AppController extends EventEmitter {
       const revision = this.modelCatalogRevision;
       const adapter = this.adapter;
       for (const session of this.visibleSessions()) {
-        if (this.closing || !this.connected || this.adapter !== adapter) break;
+        if (this.closing || this.active || !this.connected || this.adapter !== adapter) break;
         if (!this.loaded.has(session.id) || (this.modelRefreshes.get(session.id) || 0) >= revision) continue;
         // Bound failures to one attempt per catalog revision. A global catalog
         // is not permission to widen a session-specific model allowlist.
@@ -314,7 +314,7 @@ class AppController extends EventEmitter {
           this.emitEvent({ type: 'error', sessionId: session.id, message: error.message });
         }
       }
-    }, { allowInterfaceSettings: true });
+    }, { allowInterfaceSettings: true, background: true });
   }
   engineSession(id) {
     try { return this.adapter?.getSession?.(id); } catch { return undefined; }
@@ -421,13 +421,17 @@ class AppController extends EventEmitter {
     await this._connect();
     cwd = cwd || this.settings.workspace;
     if (!isPathType(cwd, 'isDirectory')) throw new Error(this.t('请选择有效的工作目录'));
+    // The response already includes the catalog known when creation started.
+    // A notification received during the request still needs a later refresh.
+    const revision = this.modelCatalogRevision;
     const created = await this.adapter.newSession({ cwd, model, mode });
     const session = { id: created.sessionId, accountId: this.activeAccountId, title: '新会话', titleIsDefault: true, cwd, createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
     this.syncSession(session, created);
     this.sessions.unshift(session);
     this.loaded.add(session.id);
+    this.modelRefreshes.set(session.id, revision);
     try { this.save(); }
-    catch (error) { this.sessions = this.sessions.filter(item => item !== session); this.loaded.delete(session.id); throw error; }
+    catch (error) { this.sessions = this.sessions.filter(item => item !== session); this.loaded.delete(session.id); this.modelRefreshes.delete(session.id); throw error; }
     this.emitEvent({ type: 'session-updated', sessionId: session.id, session });
     this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: this.connected });
     return session;
@@ -445,9 +449,11 @@ class AppController extends EventEmitter {
       // Failed configuration verification can invalidate the adapter's cache even
       // though this controller previously loaded the conversation successfully.
       if (!this.loaded.has(session.id) || !engineState || engineState.loaded === false) {
+        const revision = this.modelCatalogRevision;
         const restored = await this.adapter.loadSession({ sessionId: session.id, cwd: session.cwd });
         this.syncSession(session, restored);
         this.loaded.add(session.id);
+        this.modelRefreshes.set(session.id, revision);
       } else this.syncSession(session, engineState);
     } catch (error) {
       session.modelSelectionVerified = false;
@@ -494,7 +500,8 @@ class AppController extends EventEmitter {
   async send({ sessionId, text = '', attachments = [] }) {
     if (this.active) throw new Error(this.t('已有回复正在生成'));
     if (this.closing) throw new Error(this.t('应用正在关闭'));
-    if (this.operation) throw new Error(this.t('正在{name}，请稍后再发送。', { name: this.operation.name }));
+    const backgroundOperation = this.operation;
+    if (backgroundOperation && !backgroundOperation.background) throw new Error(this.t('正在{name}，请稍后再发送。', { name: backgroundOperation.name }));
     if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS) throw new Error(this.t('每条消息最多添加 10 个附件'));
     if (typeof text !== 'string' || (!text.trim() && !attachments.length)) throw new Error(this.t('请输入内容'));
     if (text.length > 200000) throw new Error(this.t('消息过长，请缩短到 200,000 字以内'));
@@ -511,8 +518,14 @@ class AppController extends EventEmitter {
     const turn = { sessionId, message: null, cancelled: false };
     this.active = turn;
     try {
-      for (const item of selected) await resolveAttachment(item.src, [this.attachmentDirectory()], this.t);
-      await this._ensureLoaded(session);
+      // A catalog refresh can begin between createSession and this send IPC.
+      // Reserve the turn while it finishes so one click sends exactly once and
+      // cancellation, account changes and other sends cannot race the wait.
+      if (backgroundOperation) await backgroundOperation.promise;
+      if (!turn.cancelled) {
+        for (const item of selected) await resolveAttachment(item.src, [this.attachmentDirectory()], this.t);
+        await this._ensureLoaded(session);
+      }
     } catch (e) { this.active = null; this.scheduleModelRefresh(); throw e; }
     if (turn.cancelled) { this.active = null; this.scheduleModelRefresh(); this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
     const now = Date.now();
@@ -783,11 +796,12 @@ class AppController extends EventEmitter {
     this.closing = true;
     clearTimeout(this.modelRefreshTimer);
     this.modelRefreshTimer = null;
+    // Cancel pending sends before waiting on a possibly slow login shutdown.
+    if (this.active) this.active.cancelled = true;
+    if (this.active?.message) this.active.message.status = 'cancelled';
     let failure;
     const initialLogin = this.accountManager.pending;
     try { await this.accountManager.cancelLogin(); } catch (error) { failure = error; }
-    if (this.active) this.active.cancelled = true;
-    if (this.active?.message) this.active.message.status = 'cancelled';
     if (this.operation) await this.operation.promise.catch(() => {});
     if (this.connecting) await this.connecting.catch(() => {});
     if (this.accountManager.pending && this.accountManager.pending !== initialLogin) {
