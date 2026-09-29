@@ -272,6 +272,12 @@ class AppController extends EventEmitter {
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
   async idleOperation(name, action, { allowInterfaceSettings = false, background = false } = {}) {
+    // A catalog readback is not a user action. Like a send, user operations
+    // (starting a conversation, changing its model, adding files) wait for it
+    // instead of failing with a transient "busy" error.
+    while (!background && this.operation?.background && !this.closing && !this.active) {
+      await this.operation.promise.catch(() => {});
+    }
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (this.active) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
@@ -534,7 +540,8 @@ class AppController extends EventEmitter {
     const message = { id: randomUUID(), role: 'assistant', text: '', responseSegments: [], thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
     session.messages.push(message);
     if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
-      session.title = (text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ').slice(0, 32);
+      // Truncate by code point so an emoji at the limit never leaves a broken half.
+      session.title = Array.from((text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ')).slice(0, 32).join('');
       session.titleIsDefault = false;
     }
     session.updatedAt = now;
@@ -764,7 +771,7 @@ class AppController extends EventEmitter {
     const s = this.getSession(sessionId);
     const previous = s.title;
     const previousDefault = s.titleIsDefault;
-    s.title = title.trim().slice(0, 120);
+    s.title = Array.from(title.trim()).slice(0, 120).join('');
     s.titleIsDefault = false;
     try { this.save(); } catch (error) { s.title = previous; s.titleIsDefault = previousDefault; throw error; }
     return s;
