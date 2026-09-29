@@ -217,3 +217,28 @@ dialog{color:var(--text);background:#121b1e;border:1px solid #a8b29a28;border-ra
 .response-commentary > .response-content { padding: 0 13px 10px; }
 .response-label { color: var(--lime); font-size: 11px; font-weight: 500; margin: 0 0 10px; }
 .response-answer + .response-commentary { margin-top: 16px; }
+
+/* Parallel conversations: a quiet count beside the history heading. */
+.history-heading .running-badge { margin: 0 auto 0 9px; padding: 3px 7px; border-radius: 9px; background: #d4eb8914; border: 1px solid #d4eb8926; color: var(--lime); font-family: var(--mono); font-size: 9px; line-height: 1; white-space: nowrap; }
+.history-heading .running-badge[hidden] { display: none; }
+
+/* Account quota: one number, one bar, one line of context; details in the tooltip. */
+.quota-card { display: flex; flex-direction: column; gap: 7px; width: 100%; margin-bottom: 10px; padding: 10px 11px 11px; border: 1px solid #9daf8220; border-radius: 7px; background: #0c1417; text-align: left; }
+.quota-card[hidden] { display: none; }
+.quota-card:hover { background: #d4eb8908; border-color: #9daf8238; }
+.quota-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.quota-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #aebdaa; letter-spacing: .3px; }
+.quota-value { flex: none; font-family: var(--mono); font-size: 12px; color: #d9e8bd; }
+.quota-meter { position: relative; display: block; height: 4px; border-radius: 3px; background: #ffffff0f; overflow: hidden; }
+.quota-fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px; background: var(--lime); transition: width .4s ease; }
+.quota-detail { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: #74878b; }
+.quota-card[data-state="high"] .quota-fill { background: #e2c77e; }
+.quota-card[data-state="high"] .quota-value { color: #ecd796; }
+.quota-card[data-state="exhausted"] .quota-fill { background: var(--coral); }
+.quota-card[data-state="exhausted"] .quota-value, .quota-card[data-state="exhausted"] .quota-detail { color: #e8b3a2; }
+.quota-card[data-state="unavailable"] .quota-value { color: #6d7c80; }
+.quota-card[data-state="loading"] .quota-fill { width: 30% !important; opacity: .45; animation: quota-scan 1.4s ease-in-out infinite; }
+.quota-card.stale .quota-value, .quota-card.stale .quota-fill { opacity: .55; }
+.quota-card.refreshing .quota-value { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes quota-scan { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+@media (max-height: 720px) { .quota-card { padding: 8px 10px 9px; gap: 6px; margin-bottom: 8px; } }

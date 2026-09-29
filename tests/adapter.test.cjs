@@ -648,3 +648,60 @@ test('POSIX shutdown and unexpected CLI exit also stop owned tool descendants', 
     assert.equal(adapter.process, null);
   });
 });
+
+test('an unanswered stop stays pending until other conversations finish', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const adapter = new GrokAdapter();
+  const writes = [];
+  adapter.ready = true;
+  adapter.process = { stdin: { destroyed: false, writableEnded: false, write: line => writes.push(JSON.parse(line)) } };
+  let kills = 0;
+  adapter._kill = async () => { kills++; };
+  for (const sessionId of ['first', 'second']) adapter.sessions.set(sessionId, { sessionId, loaded: true });
+  let firstSettled = false;
+  const first = adapter.prompt({ sessionId: 'first', text: 'first task' }).finally(() => { firstSettled = true; });
+  const second = adapter.prompt({ sessionId: 'second', text: 'second task' });
+  await new Promise(setImmediate);
+  await adapter.cancel('first');
+  t.mock.timers.tick(10000);
+  await Promise.resolve();
+  assert.equal(firstSettled, false, 'the controller must not accept new sends before cancellation is confirmed');
+  assert.equal(kills, 0, 'restarting the engine would also abort the other conversation');
+  assert.equal(adapter.active.size, 2, 'an unanswered stop continues to reserve a turn');
+  await assert.rejects(adapter.prompt({ sessionId: 'first', text: 'next' }), { code: 'SESSION_BUSY' });
+  const request = sessionId => writes.find(item => item.method === 'session/prompt' && item.params.sessionId === sessionId);
+  adapter._message({ id: request('second').id, result: { stopReason: 'end_turn' } });
+  await second;
+  t.mock.timers.tick(1000);
+  assert.equal(kills, 1, 'the unresponsive stop restarts the engine once other conversations finish');
+  adapter._message({ id: request('first').id, result: { stopReason: 'cancelled' } });
+  assert.equal((await first).cancelled, true);
+});
+
+test('an unanswered stop preserves another session that is being restored or created', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const method of ['loadSession', 'newSession']) {
+    const adapter = new GrokAdapter();
+    const writes = [];
+    adapter.ready = true;
+    adapter.info.capabilities.loadSession = true;
+    adapter._validateCwd = async cwd => cwd;
+    adapter.process = { stdin: { destroyed: false, writableEnded: false, write: line => writes.push(JSON.parse(line)) } };
+    let kills = 0;
+    adapter._kill = async () => { kills++; };
+    adapter.sessions.set('first', { sessionId: 'first', loaded: true });
+    const first = adapter.prompt({ sessionId: 'first', text: 'first task' });
+    const other = adapter[method]({ sessionId: 'second' });
+    await new Promise(setImmediate);
+    await adapter.cancel('first');
+    t.mock.timers.tick(10000);
+    assert.equal(kills, 0, `${method} must survive another conversation's stop`);
+    const request = writes.find(item => item.method === (method === 'loadSession' ? 'session/load' : 'session/new'));
+    adapter._message({ id: request.id, result: { sessionId: 'second', configOptions: [] } });
+    await other;
+    t.mock.timers.tick(1000);
+    assert.equal(kills, 1);
+    adapter._message({ id: writes.find(item => item.method === 'session/prompt').id, result: { stopReason: 'cancelled' } });
+    await first;
+  }
+});

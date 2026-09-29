@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -41,7 +41,12 @@ else {
   app.on('second-instance', showWindow);
   app.on('activate', showWindow);
   app.whenReady().then(() => {
-    controller = new AppController({ root, home: os.homedir() });
+    // Quota reads use Chromium's network stack (system proxy settings) in an
+    // in-memory session with no cookies, cache or permissions of its own.
+    const quotaSession = session.fromPartition('tokyo-quota', { cache: false });
+    quotaSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    quotaSession.setPermissionCheckHandler(() => false);
+    controller = new AppController({ root, home: os.homedir(), quotaFetch: (url, init) => quotaSession.fetch(url, init) });
     // Only presentation preferences travel with the renderer startup. This lets
     // the first frame use the saved language without synchronous IPC or disk I/O.
     const initialPreferences = Object.fromEntries(['language', 'rainEnabled', 'musicEnabled', 'musicVolume'].map(key => [key, controller.settings[key]]));
@@ -57,6 +62,8 @@ else {
       return fn(...args);
     });
     for (const name of ['initialState', 'bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
+    // The renderer may only ask for a refresh; it cannot choose an account or URL.
+    handle('refreshQuota', () => controller.refreshQuota({ force: true }));
     handle('saveSettings', async patch => { const result = await controller.saveSettings(patch); installMenu(); return result; });
     // Dialogs opened from settings follow its language preview without saving it.
     const dialogTranslator = language => typeof language === 'string' && Object.hasOwn(languages, language) ? createI18n(language) : t;

@@ -19,6 +19,6 @@ contextBridge.exposeInMainWorld('tokyo', {
   send: invoke('send'), cancel: invoke('cancel'), permission: invoke('permission'),
   saveSettings: invoke('saveSettings'), chooseFolder: invoke('chooseFolder'), chooseExecutable: invoke('chooseExecutable'),
   renameSession: invoke('renameSession'), deleteSession: invoke('deleteSession'), exportSession: invoke('exportSession'),
-  reconnect: invoke('reconnect'), windowControl: invoke('windowControl'), openExternal: invoke('openExternal'), copyText: invoke('copyText'),
+  reconnect: invoke('reconnect'), refreshQuota: invoke('refreshQuota'), windowControl: invoke('windowControl'), openExternal: invoke('openExternal'), copyText: invoke('copyText'),
   onEvent: callback => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('tokyo:event', listener); return () => ipcRenderer.removeListener('tokyo:event', listener); }
 });

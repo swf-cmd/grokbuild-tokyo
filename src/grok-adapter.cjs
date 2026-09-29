@@ -75,6 +75,7 @@ class GrokAdapter extends EventEmitter {
     this.sessions = new Map();
     this.modelResolutions = new Map();
     this.active = new Map();
+    this.creating = 0;
     this.loading = new Set();
     this.sessionLoads = new Map();
     this.modelCatalogModels = null;
@@ -405,15 +406,18 @@ class GrokAdapter extends EventEmitter {
   }
 
   async newSession({ cwd = this.cwd, model, mode } = {}) {
-    await this.start();
-    cwd = await this._validateCwd(cwd);
-    const result = await this._request('session/new', { cwd, mcpServers: [] });
-    if (!result.sessionId) throw failure(this.t('Grok 没有返回会话 ID。'), 'INVALID_RESPONSE');
-    const session = this._rememberSession(result, result.sessionId, cwd);
-    if (model && model !== session.model) await this.setModel({ sessionId: session.sessionId, model });
-    if (mode && mode !== this.sessions.get(session.sessionId).mode) await this.setMode({ sessionId: session.sessionId, mode });
-    this._event({ type: 'status', status: 'idle', sessionId: session.sessionId });
-    return this.getSession(session.sessionId);
+    this.creating++;
+    try {
+      await this.start();
+      cwd = await this._validateCwd(cwd);
+      const result = await this._request('session/new', { cwd, mcpServers: [] });
+      if (!result.sessionId) throw failure(this.t('Grok 没有返回会话 ID。'), 'INVALID_RESPONSE');
+      const session = this._rememberSession(result, result.sessionId, cwd);
+      if (model && model !== session.model) await this.setModel({ sessionId: session.sessionId, model });
+      if (mode && mode !== this.sessions.get(session.sessionId).mode) await this.setMode({ sessionId: session.sessionId, mode });
+      this._event({ type: 'status', status: 'idle', sessionId: session.sessionId });
+      return this.getSession(session.sessionId);
+    } finally { this.creating--; }
   }
 
   async loadSession({ sessionId, cwd = this.cwd, force = false } = {}) {
@@ -610,7 +614,7 @@ class GrokAdapter extends EventEmitter {
     if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
     // Check again after the asynchronous connection/load to reject double sends.
     if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
-    const turn = { text: '', cancelled: false, cancelTimer: null, dispatched: false };
+    const turn = { sessionId, text: '', cancelled: false, cancelTimer: null, dispatched: false };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });
     try {
@@ -669,9 +673,22 @@ class GrokAdapter extends EventEmitter {
     this._event({ type: 'status', status: 'cancelling', sessionId });
     if (!turn.cancelTimer) {
       const child = this.process;
-      turn.cancelTimer = setTimeout(() => {
-        if (this.active.get(sessionId) === turn && this.process === child) this._kill(child);
-      }, 10000);
+      const cancelWhenSafe = () => {
+        if (this.active.get(sessionId) !== turn || this.process !== child) return;
+        // Keep an unanswered cancellation pending: releasing its turn would
+        // falsely enable more sends while Grok still owns the old request.
+        // Wait for other conversations and their configuration/restoration to
+        // finish before restarting the shared engine. If every turn was
+        // explicitly cancelled, terminating them together is safe.
+        const othersRunning = [...this.active.values()].some(other => other !== turn && !other.cancelled);
+        if (othersRunning || this.creating || this.sessionLoads.size || this.configuring.size) {
+          turn.cancelTimer = setTimeout(cancelWhenSafe, 1000);
+          turn.cancelTimer.unref?.();
+          return;
+        }
+        this._kill(child);
+      };
+      turn.cancelTimer = setTimeout(cancelWhenSafe, 10000);
       turn.cancelTimer.unref?.();
     }
     return { cancelled: true };

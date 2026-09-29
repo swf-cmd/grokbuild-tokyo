@@ -37,6 +37,8 @@ This project is not affiliated with or endorsed by xAI. Install the official CLI
 | **Separate account profiles** | Add, sign in, switch, rename and remove profiles with their own login state and history. |
 | **Images and files** | Select files, drop them onto the message composer, or paste images; preview image replies and save returned files. |
 | **Visibility into the work** | Follow tool progress and execution plans, respond to permission requests and stop generation. |
+| **Several tasks at once** | Run up to four conversations in parallel, each with its own progress, permissions, stop button and draft. |
+| **Your quota at a glance** | See how much of the account's Grok allowance is used and when it resets, right in the sidebar. |
 | **Controls backed by the CLI** | Automatically updated model choices, CLI-provided reasoning levels, subagent settings and a workspace of your choice. |
 | **Seven interface languages** | English, 简体中文, 日本語, 한국어, Español, Deutsch and Français. |
 
@@ -131,6 +133,8 @@ Your installed Grok Build CLI
 ```
 
 The client keeps its chat history and settings locally, while the CLI handles model requests. This is not an offline model: prompts and tool context may be sent to the service by the CLI.
+
+The optional quota card is the one request the client makes itself: it asks xAI's Grok Build billing endpoint for the active account's usage, using that account's CLI sign-in. You can turn it off in **Preferences**. See [Account quota](docs/guide.md#account-quota).
 
 **Compatibility baseline:** Grok Build **1.0.13 / ACP 1**, checked on Windows on 2026-09-07. That version does not advertise native ACP image or audio input. Uploaded images and files are passed as local resource references for CLI tools to read; image replies can still be previewed. The client does not expose every TUI feature, such as interactive terminals, Git/worktree management, session forks or a slash-command menu. See the [full compatibility notes](docs/guide.md#grok-compatibility).
 

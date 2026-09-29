@@ -11,7 +11,7 @@
   const t = i18n.t;
   const diagnostic = i18n.localizeDiagnostic;
   const state = {
-    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, musicEnabled: true, musicVolume: 90, language: 'en', ...api?.initialPreferences },
+    settings: { executable: '', workspace: '', rainEnabled: true, subagentsEnabled: true, quotaEnabled: true, musicEnabled: true, musicVolume: 90, language: 'en', ...api?.initialPreferences },
     info: { models: [], modes: [], version: '' },
     sessions: [], activeId: null, connected: false, connectionStatus: 'connecting', initializing: true, startingEngine: true,
     sending: false, configuring: false, selecting: false, savingSettings: false, renaming: false, deleting: false,
@@ -20,8 +20,12 @@
     renameId: null, deleteId: null, renderPending: false, lastError: '',
     accounts: [], activeAccountId: 'local', login: null, accountAction: false, accountDrafts: new Map(),
     accountRenameId: null, accountDeleteId: null, accountCancelPending: false,
+    maxConcurrentTurns: 4, quota: null, quotaRefreshing: false,
   };
   const activeSession = () => state.sessions.find(s => s.id === state.activeId);
+  // Each conversation runs independently; only the one on screen locks its composer.
+  const activeBusy = () => state.busy.has(state.activeId);
+  const atCapacity = () => !activeBusy() && state.busy.size >= state.maxConcurrentTurns;
   const needsSignIn = () => state.accounts.find(account => account.id === state.activeAccountId)?.signedIn === false;
   const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
   const clearPermissions = id => { for (const [key, permission] of state.permissions) if (permission.sessionId === id) state.permissions.delete(key); };
@@ -224,10 +228,10 @@
     const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
     fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'));
     fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'));
-    const locked = state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || state.busy.size > 0;
+    const locked = state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || activeBusy();
     for (const element of [$('model-select'), $('mode-select')]) {
       element.disabled = locked;
-      element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : state.busy.size ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
+      element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : activeBusy() ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
     }
     if (!models.length) $('model-select').disabled = true;
     if (!modes.length) {
@@ -253,7 +257,17 @@
     return date.getTime() >= start ? t('今天') : date.getTime() >= yesterday ? t('昨天') : t('更早');
   }
 
+  function renderRunning() {
+    const badge = $('running-badge');
+    const count = state.busy.size;
+    badge.hidden = count === 0;
+    badge.textContent = `◌ ${count}`;
+    const label = t('{count} 个任务正在运行', { count });
+    badge.title = label; badge.setAttribute('aria-label', label);
+  }
+
   function renderSessions() {
+    renderRunning();
     const list = $('session-list');
     const query = $('session-search').value.toLocaleLowerCase().trim();
     const sessions = state.sessions.filter(session => sessionTitle(session).toLocaleLowerCase().includes(query)).sort((a, b) => sessionTime(b) - sessionTime(a));
@@ -564,13 +578,15 @@
   }
 
   function renderComposerState() {
-    const busy = state.busy.has(state.activeId);
+    const busy = activeBusy();
+    const full = atCapacity();
     const draft = currentDraft();
     const changing = state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login;
     $('send-button').hidden = busy;
     $('stop-button').hidden = !busy;
-    $('send-button').disabled = state.initializing || state.startingEngine || state.sending || changing || draft.pending > 0 || state.busy.size > 0 || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
-    $('attach-button').disabled = state.initializing || state.startingEngine || state.sending || state.busy.size > 0 || draft.pending > 0 || changing;
+    $('send-button').disabled = state.initializing || state.startingEngine || state.sending || changing || draft.pending > 0 || busy || full || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
+    $('send-button').title = full ? t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: state.maxConcurrentTurns }) : '';
+    $('attach-button').disabled = state.initializing || state.startingEngine || state.sending || busy || draft.pending > 0 || changing;
     renderDraftAttachments();
     $('settings-button').disabled = state.initializing || state.sending || changing;
     $('account-button').disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction;
@@ -580,7 +596,7 @@
     for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
     for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
     $('prompt').disabled = state.sending;
-    $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : needsSignIn() ? t('请先登录 Grok，也可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : state.busy.size ? t('另一段对话正在运行，可以先写下你的想法…') : t('在雨声中，开始你的下一个想法…');
+    $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : needsSignIn() ? t('请先登录 Grok，也可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : full ? t('已达到同时运行的任务上限，可以先写好下一条消息…') : t('在雨声中，开始你的下一个想法…');
     $('activity-strip').hidden = !busy;
     if (busy) updateActivity();
     renderSignInNotice();
@@ -654,7 +670,7 @@
   }
 
   async function addAttachments(files) {
-    if (state.initializing || state.startingEngine || state.sending || state.busy.size > 0 || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    if (state.initializing || state.startingEngine || state.sending || activeBusy() || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
     const draft = currentDraft();
     if (draft.pending) return;
     const accountId = state.activeAccountId;
@@ -721,7 +737,7 @@
 
   async function configureSession(patch) {
     const session = activeSession();
-    if (!session || !state.connected || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    if (!session || !state.connected || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.has(session.id)) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       const updated = await call('configureSession', { sessionId: session.id, ...patch });
@@ -735,7 +751,7 @@
   }
 
   async function prepareModel(model) {
-    if (state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size) { renderSelects(); return; }
+    if (state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       // A model without a published effort menu needs an actual session readback.
@@ -758,7 +774,8 @@
     const text = $('prompt').value.trim();
     const draft = currentDraft();
     const attachments = [...draft.attachments];
-    if ((!text && !attachments.length) || draft.pending || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.size > 0) return;
+    if ((!text && !attachments.length) || draft.pending || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || activeBusy()) return;
+    if (atCapacity()) { toast(t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: state.maxConcurrentTurns }), true); return; }
     if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
     if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
     state.sending = true;
@@ -826,6 +843,7 @@
       renderSessions(); if (sessionId === state.activeId) { renderSelects(); renderWorkspace(); queueMessages(); }
       return;
     }
+    if (event.type === 'quota') { applyQuota(event.quota); return; }
     if (event.type === 'info') {
       state.info = normalizeInfo(event.info || event);
       if (typeof event.connected === 'boolean') state.connected = event.connected;
@@ -853,10 +871,12 @@
         state.busy.add(sessionId); if (!state.started.has(sessionId)) state.started.set(sessionId, Date.now());
       }
       if (sessionId && ['idle', 'cancelled', 'error'].includes(status)) {
-        state.busy.delete(sessionId); state.started.delete(sessionId); clearPermissions(sessionId);
+        const wasBusy = state.busy.delete(sessionId); state.started.delete(sessionId); clearPermissions(sessionId);
         const session = state.sessions.find(item => item.id === sessionId);
         const last = session?.messages.at(-1);
         if (last?.role === 'assistant' && last.status === 'working') last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete';
+        // A conversation finishing out of view gets a short notice; failures already raise an error toast.
+        if (wasBusy && status === 'idle' && !event.failed && session && sessionId !== state.activeId && last?.status !== 'error') toast(t('对话“{title}”已完成。', { title: sessionTitle(session) }), false, 6000);
         if (event.stopReason === 'max_tokens') toast(t('已达到本次回复的长度限制，可以继续追问。'));
       }
       renderSessions(); if (sessionId === state.activeId) queueMessages();
@@ -982,6 +1002,81 @@
     renderSignInNotice();
   }
 
+  function applyQuota(quota) {
+    // A late response for a previous account must never appear under this one.
+    if (quota && quota.accountId && quota.accountId !== state.activeAccountId) return;
+    // A snapshot taken before a refresh started must not hide a newer reading.
+    if (quota?.status === 'idle' && state.quota && state.quota.accountId === quota.accountId && state.quota.status !== 'idle') return;
+    state.quota = quota || null;
+    renderQuota();
+  }
+
+  function quotaTime(value, withDate = true) {
+    const date = new Date(value);
+    if (!Number.isFinite(value) || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(i18n.getLanguage(), withDate ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' } : { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  }
+
+  function quotaMoney(cents) {
+    try { return new Intl.NumberFormat(i18n.getLanguage(), { style: 'currency', currency: 'USD' }).format(cents / 100); }
+    catch { return `$${(cents / 100).toFixed(2)}`; }
+  }
+
+  function quotaReason(reason) {
+    return ({
+      'api-key': t('API 密钥登录不显示订阅额度'),
+      expired: t('登录凭据待刷新，发送一条消息后会自动更新'),
+      unauthorized: t('无法验证登录，请重新登录后查看额度'),
+      invalid: t('额度信息无法识别，点击重试'),
+    })[reason] || t('暂时无法读取额度，点击重试');
+  }
+
+  function renderQuota() {
+    const card = $('quota-card');
+    const quota = state.quota;
+    const visible = !state.initializing && !!quota && ['loading', 'ok', 'unavailable'].includes(quota.status) && (!quota.accountId || quota.accountId === state.activeAccountId);
+    card.hidden = !visible;
+    if (!visible) return;
+    const usage = quota.status === 'ok' ? quota.usage : null;
+    const period = ({ weekly: t('本周额度'), monthly: t('本月额度'), daily: t('今日额度') })[usage?.periodType] || t('账户额度');
+    const used = usage ? Math.max(0, usage.usedPercent) : 0;
+    const shown = usage ? `${used < 10 && used % 1 ? used.toFixed(1) : Math.round(used)}%` : '—';
+    let detail;
+    if (quota.status === 'loading') detail = t('正在读取额度…');
+    else if (!usage) detail = quotaReason(quota.reason);
+    else if (quota.reason) detail = `${t('更新于 {time}', { time: quotaTime(quota.fetchedAt, false) })} · ${quotaReason(quota.reason)}`;
+    else if (usage.resetAt) detail = t('{time} 重置', { time: quotaTime(usage.resetAt) });
+    else detail = usage.plan ? t('套餐：{plan}', { plan: usage.plan }) : t('更新于 {time}', { time: quotaTime(quota.fetchedAt, false) });
+    card.dataset.state = quota.status === 'loading' ? 'loading' : !usage ? 'unavailable' : used >= 100 ? 'exhausted' : used >= 80 ? 'high' : 'normal';
+    card.classList.toggle('stale', !!(usage && quota.reason));
+    card.classList.toggle('refreshing', !!quota.refreshing || state.quotaRefreshing);
+    $('quota-label').textContent = period;
+    $('quota-value').textContent = shown;
+    $('quota-fill').style.width = `${Math.min(100, used)}%`;
+    $('quota-detail').textContent = detail;
+    // Secondary figures stay in the tooltip; the sidebar keeps one clear number.
+    const lines = [`${period} · ${usage ? t('已用 {percent}%', { percent: shown.replace('%', '') }) : '—'}`, detail];
+    if (usage?.plan) lines.push(t('套餐：{plan}', { plan: usage.plan }));
+    for (const product of usage?.products || []) lines.push(`${product.name} · ${t('已用 {percent}%', { percent: Math.round(product.usedPercent) })}`);
+    if (Number.isFinite(usage?.prepaidBalanceCents) && usage.prepaidBalanceCents > 0) lines.push(t('预付余额 {amount}', { amount: quotaMoney(usage.prepaidBalanceCents) }));
+    if (Number.isFinite(usage?.onDemandCapCents) && usage.onDemandCapCents > 0) lines.push(t('按需用量 {used} / {cap}', { used: quotaMoney(usage.onDemandUsedCents || 0), cap: quotaMoney(usage.onDemandCapCents) }));
+    if (usage && quota.fetchedAt && !quota.reason && usage.resetAt) lines.push(t('更新于 {time}', { time: quotaTime(quota.fetchedAt, false) }));
+    lines.push(t('点击刷新额度'));
+    card.title = [...new Set(lines.filter(Boolean))].join('\n');
+    card.setAttribute('aria-label', card.title.replace(/\n/g, '. '));
+    card.setAttribute('aria-busy', String(quota.status === 'loading' || !!quota.refreshing || state.quotaRefreshing));
+  }
+
+  async function refreshQuota() {
+    if (state.quotaRefreshing) return;
+    const accountId = state.activeAccountId;
+    state.quotaRefreshing = true; renderQuota();
+    try {
+      const quota = await call('refreshQuota');
+      if (state.activeAccountId === accountId) applyQuota(quota);
+    } finally { state.quotaRefreshing = false; renderQuota(); }
+  }
+
   function renderSignInNotice() {
     $('signin-notice').hidden = state.initializing || (!needsSignIn() && !state.login);
     $('signin-button').textContent = state.login ? t('继续登录') : t('登录 Grok ↗');
@@ -1062,6 +1157,9 @@
     if (state.activeId !== null && !state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
     state.info = { ...result.info, models: normalizeChoices(result.info?.models), modes: normalizeChoices(result.info?.modes) };
     state.connected = result.connected === true; state.connectionStatus = state.connected ? 'ready' : 'disconnected'; state.lastError = result.error || '';
+    if (Number.isInteger(result.maxConcurrentTurns) && result.maxConcurrentTurns > 0) state.maxConcurrentTurns = result.maxConcurrentTurns;
+    if (state.quota?.accountId !== state.activeAccountId) state.quota = null;
+    applyQuota(result.quota);
     state.busy.clear(); state.permissions.clear(); state.started.clear(); syncNewChatChoices(true);
     restoreDraft(); renderAccounts(); renderSessions(); renderWorkspace(); renderSelects(); renderMessages(true); renderConnection();
   }
@@ -1102,6 +1200,7 @@
     $('music-input').checked = state.settings.musicEnabled !== false;
     $('music-volume').value = state.settings.musicVolume;
     $('subagents-input').checked = state.settings.subagentsEnabled !== false;
+    $('quota-input').checked = state.settings.quotaEnabled !== false;
     $('language-select').value = i18n.normalizeLanguage(state.settings.language);
     $('settings-feedback').textContent = '';
     renderConnection(); updateSettingsReconnect();
@@ -1110,7 +1209,7 @@
   }
 
   function settingsPatch() {
-    return { language: $('language-select').value, executable: $('executable-input').value.trim(), workspace: $('workspace-input').value.trim(), rainEnabled: $('rain-input').checked, subagentsEnabled: $('subagents-input').checked, musicEnabled: $('music-input').checked, musicVolume: Number($('music-volume').value) };
+    return { language: $('language-select').value, executable: $('executable-input').value.trim(), workspace: $('workspace-input').value.trim(), rainEnabled: $('rain-input').checked, subagentsEnabled: $('subagents-input').checked, quotaEnabled: $('quota-input').checked, musicEnabled: $('music-input').checked, musicVolume: Number($('music-volume').value) };
   }
 
   function updateSettingsReconnect() {
@@ -1274,6 +1373,7 @@
       state.selectedMode = mode; renderSelects(); renderComposerState();
     });
     $('settings-button').addEventListener('click', showSettings);
+    $('quota-card').addEventListener('click', () => { void guarded(refreshQuota); });
     $('connection-button').addEventListener('click', () => guarded(() => needsSignIn() ? showAccounts() : reconnect()));
     $('settings-reconnect').addEventListener('click', () => { void savePreferences(true); });
     $('settings-form').addEventListener('input', updateSettingsReconnect);
@@ -1396,7 +1496,7 @@
   function applyLanguage(language) {
     const scrollTop = $('conversation-scroll').scrollTop;
     i18n.setLanguage(language); i18n.apply(document);
-    renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts();
+    renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts(); renderQuota();
     for (const element of document.querySelectorAll('#settings-feedback, #account-feedback, #account-rename-feedback, #account-delete-feedback, #toast-container .toast')) {
       element.textContent = diagnostic(element.textContent);
     }
@@ -1440,7 +1540,9 @@
       state.sessions = (local?.sessions || []).map(normalizeSession);
       state.accounts = local?.accounts || []; state.activeAccountId = local?.activeAccountId || 'local'; state.login = local?.login || null;
       state.lastError = local?.error || '';
+      if (Number.isInteger(local?.maxConcurrentTurns) && local.maxConcurrentTurns > 0) state.maxConcurrentTurns = local.maxConcurrentTurns;
       state.initializing = false;
+      applyQuota(local?.quota);
       syncNewChatChoices(true);
       renderWorkspace(); renderSessions(); renderMessages(); renderConnection(); renderAccounts();
       resizePrompt(); $('prompt').focus();

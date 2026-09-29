@@ -169,7 +169,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click(); await page.locator('#settings-feedback').filter({ hasText: '请选择' }).waitFor();
       await page.locator('#executable-input').fill(alternateExecutable); await page.locator('#workspace-input').fill(alternateWorkspace); await page.locator('#rain-input').uncheck(); await page.locator('#subagents-input').uncheck();
       await page.locator('#save-settings-button').click(); await page.locator('#settings-dialog').waitFor({ state: 'hidden' }); await ready();
-      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, musicEnabled: true, musicVolume: 90, language: 'zh-CN' });
+      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, quotaEnabled: true, musicEnabled: true, musicVolume: 90, language: 'zh-CN' });
       assert.equal(await page.locator('#rain-layer').isHidden(), true);
       assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.options.subagentsEnabled), false);
       assert.equal(await page.locator('#session-path').textContent(), workspace, 'existing chat keeps its own directory');
@@ -225,6 +225,39 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#settings-feedback').filter({ hasText: '停止' }).waitFor(); assert.equal(readState().settings.subagentsEnabled, true);
       await page.locator('[data-close-dialog="settings-dialog"]').click(); await page.locator('#stop-button').click(); await idle();
     });
+    await stage('parallel conversations run and stop independently; the quota card refreshes', async () => {
+      // The fixture replaces the billing request; nothing leaves the test.
+      await page.locator('#quota-card').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => document.querySelector('#quota-value').textContent === '37%');
+      assert.equal(await page.locator('#quota-label').textContent(), '本周额度');
+      assert.match(await page.locator('#quota-detail').textContent(), /重置/);
+      assert.ok((await calls('fetchQuota')).length >= 1);
+      await page.locator('#new-session').click();
+      await page.locator('#prompt').fill('WAIT parallel one'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#new-session').click();
+      assert.equal(await page.locator('#model-select').isDisabled(), false, 'a new conversation stays configurable while another runs');
+      await page.locator('#prompt').fill('WAIT parallel two'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => document.querySelector('#running-badge').textContent.trim() === '◌ 2');
+      assert.equal(await page.locator('.session-item.working').count(), 2);
+      assert.equal(await page.locator('#workspace-button').isDisabled(), true, 'engine-wide changes wait for every conversation');
+      const pending = await desktop.evaluate(() => [...globalThis.__tokyoUITest.adapter.pending.keys()]);
+      assert.equal(pending.length, 2);
+      // Finish the first conversation while the second one is on screen.
+      await desktop.evaluate((_electron, id) => { const test = globalThis.__tokyoUITest; test.adapter.pending.get(id)({ stopReason: 'end_turn' }); test.adapter.pending.delete(id); }, pending[0]);
+      await page.locator('.toast').filter({ hasText: 'WAIT parallel one' }).waitFor();
+      await page.waitForFunction(() => document.querySelector('#running-badge').textContent.trim() === '◌ 1');
+      assert.equal(await page.locator('#stop-button').isVisible(), true);
+      await page.locator('#stop-button').click(); await idle();
+      assert.equal(await page.locator('#running-badge').isHidden(), true);
+      assert.equal(readState().sessions.find(session => session.title === 'WAIT parallel one').messages.at(-1).status, 'complete');
+      assert.equal(readState().sessions.find(session => session.title === 'WAIT parallel two').messages.at(-1).status, 'cancelled');
+      await desktop.evaluate(() => { globalThis.__tokyoUITest.quota = { usage: { usedPercent: 91, periodType: 'monthly' } }; });
+      // Explicit refreshes are limited to one every three seconds.
+      await page.waitForTimeout(3100); await page.locator('#quota-card').click();
+      await page.waitForFunction(() => document.querySelector('#quota-value').textContent === '91%');
+      assert.equal(await page.locator('#quota-card').getAttribute('data-state'), 'high');
+      assert.equal(await page.locator('#quota-label').textContent(), '本月额度');
+    });
     await stage('offline history stays readable and reconnect restores selections', async () => {
       await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.emit('event', { type: 'status', status: 'disconnected' }));
       await page.locator('#connection-label').filter({ hasText: '未连接' }).waitFor();
@@ -242,7 +275,16 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), true);
       await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), false);
       await controlWindow('minimize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), true);
-      await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].restore());
+      await desktop.evaluate(async ({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        // Native restore is asynchronous; wait until pointer interactions can
+        // reach the restored window before starting the next scenario.
+        await new Promise(resolve => { window.once('restore', resolve); window.restore(); });
+        window.focus();
+      });
+      await page.bringToFront();
+      await page.waitForFunction(() => document.visibilityState === 'visible' && document.hasFocus());
+      assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), false);
     });
     await stage('delete keep/close/confirm and disabled export after deletion', async () => {
       const before = readState().sessions.length;
