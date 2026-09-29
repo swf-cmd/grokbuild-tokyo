@@ -2,13 +2,9 @@ name: README screenshots
 
 on:
   workflow_dispatch:
-  # TEMPORARY for docs/readme-refresh: capture on push and commit the results
-  # back to the branch for review. Removed before the branch is merged.
-  push:
-    branches: [docs/readme-refresh]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   capture:
@@ -36,15 +32,3 @@ jobs:
             work/readme-capture/qa/results.json
           retention-days: 14
           if-no-files-found: error
-      - name: Commit captures to the branch for review (temporary)
-        if: always() && github.event_name == 'push'
-        shell: bash
-        run: |
-          mkdir -p review
-          cp work/readme-capture/images/*.png work/readme-capture/images/*.gif review/ 2>/dev/null || true
-          cp work/readme-capture/qa/results.json review/ 2>/dev/null || true
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f review
-          git commit -m "Capture README images for review (${{ job.status }})" || exit 0
-          git push origin HEAD:${{ github.ref_name }}

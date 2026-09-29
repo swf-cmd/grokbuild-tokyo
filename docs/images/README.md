@@ -2,11 +2,11 @@
 
 These screenshots show the real Grokbuild Tokyo Electron interface on Windows at 1440 × 940 pixels. Mac uses the same interface content with native window controls and Command-key shortcuts. They were captured with Playwright using the repository's isolated `tests/fixtures/ui-app.cjs` test entry point. The main process, IPC bridge, renderer, and bundled Tokyo artwork are the production application; the CLI adapter is an offline test fixture.
 
-The focus-timer conversation is authored demo content, not a recorded model response. The visible `UI-TEST` engine label and model selection are fixture data and do not promise access to any particular model. No personal conversations, login credentials, or paid model requests were used. `R:\Workspace` is a temporary alias to the isolated screenshot workspace.
+The focus-timer conversation is authored demo content, not a recorded model response. The visible `UI-TEST` engine label and model selection are fixture data and do not promise access to any particular model. The sidebar quota card shows a sample weekly allowance served by the fixture; no quota request reaches xAI. No personal conversations, login credentials, or paid model requests were used. `R:\Workspace` is a temporary alias to the isolated screenshot workspace.
 
 这些图片是 Windows 上 Grokbuild Tokyo 真实 Electron 界面的 1440 × 940 像素截图；Mac 共用相同界面内容，使用原生窗口按钮和 Command 快捷键。截图通过 Playwright 和仓库中的隔离测试入口 `tests/fixtures/ui-app.cjs` 拍摄。主进程、IPC、界面及东京背景均来自实际应用，CLI 适配器使用离线模拟引擎。
 
-专注计时器对话是为展示编写的示例内容，并非真实模型回复。界面中的 `UI-TEST` 引擎标记与模型选项属于测试数据，不代表特定模型的可用性。截图未使用个人聊天、登录凭据或付费模型请求。`R:\Workspace` 是隔离截图工作目录的临时路径别名。
+专注计时器对话是为展示编写的示例内容，并非真实模型回复。界面中的 `UI-TEST` 引擎标记与模型选项属于测试数据，不代表特定模型的可用性。侧边栏额度卡片显示的是测试环境提供的示例周额度，不会向 xAI 查询额度。截图未使用个人聊天、登录凭据或付费模型请求。`R:\Workspace` 是隔离截图工作目录的临时路径别名。
 
 | File / 文件 | View / 界面 |
 | --- | --- |
@@ -17,9 +17,9 @@ The focus-timer conversation is authored demo content, not a recorded model resp
 | `welcome-zh-CN.gif` | Simplified Chinese welcome screen with animated rain / 简体中文欢迎页雨滴动图 |
 | `app-zh-CN.png` | Simplified Chinese demo conversation / 简体中文示例对话 |
 
-Captured on 2026-09-08 with rain enabled. The README uses looping welcome-screen GIFs so the rain remains recognizable when the image is scaled down. Each GIF records three seconds of the two production rain animations at 20 frames per second. The PNGs retain a fixed frame of the same effect; rain is naturally subtler in conversations. No rain was painted onto the images and no production styles were changed for the captures.
+Captured on 2026-09-30 with rain enabled. The README uses looping welcome-screen GIFs so the rain remains recognizable when the image is scaled down. Each GIF records three seconds of the two production rain animations at 20 frames per second. The PNGs retain a fixed frame of the same effect; rain is naturally subtler in conversations. No rain was painted onto the images and no production styles were changed for the captures.
 
-拍摄于 2026-09-08，开启了雨滴。介绍页使用循环播放的欢迎页 GIF，让缩小后的图片也能通过运动呈现下雨效果。每张 GIF 以每秒 20 帧记录应用原有的两层雨滴动画，共三秒。PNG 保留同一效果的固定帧，聊天界面中的雨滴按应用原本设计更淡。未在图片上后期添加雨滴，也未为拍摄修改应用样式。
+拍摄于 2026-09-30，开启了雨滴。介绍页使用循环播放的欢迎页 GIF，让缩小后的图片也能通过运动呈现下雨效果。每张 GIF 以每秒 20 帧记录应用原有的两层雨滴动画，共三秒。PNG 保留同一效果的固定帧，聊天界面中的雨滴按应用原本设计更淡。未在图片上后期添加雨滴，也未为拍摄修改应用样式。
 
 ## Reproduce / 重新拍摄
 
