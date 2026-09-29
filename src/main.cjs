@@ -82,7 +82,7 @@ else {
     });
     handle('exportSession', async id => {
       const s = controller.getSession(id);
-      const title = controller.sessionTitle(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80);
+      const title = Array.from(controller.sessionTitle(s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')).slice(0, 80).join('');
       const markdown = controller.exportMarkdown(id);
       const result = await dialog.showSaveDialog(win, { title: t('导出会话'), defaultPath: path.join(root, `${title}.md`), filters: [{ name: 'Markdown', extensions: ['md'] }] });
       if (result.canceled || !result.filePath) return null;

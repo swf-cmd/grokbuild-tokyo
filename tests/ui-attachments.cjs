@@ -239,9 +239,10 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       // WAIT keeps the fixture turn active, so use the current engine session ID.
       const sessionId = readState().sessions.find(session => session.title === 'Second conversation').id;
       const resultFile = path.join(workspace, 'report.csv'); fs.writeFileSync(resultFile, 'name,value\nTokyo,42\n');
+      fs.writeFileSync(path.join(workspace, '东京 报告.csv'), 'city,rain\nTokyo,yes\n');
       await desktop.evaluate((_electron, { sessionId }) => {
         const adapter = globalThis.__tokyoUITest.adapter;
-        adapter.emit('event', { type: 'text', sessionId, text: '[Download report](report.csv)' });
+        adapter.emit('event', { type: 'text', sessionId, text: '[Download report](report.csv) [雨夜报告](<东京 报告.csv>)' });
         adapter.emit('event', { type: 'attachment', sessionId, attachment: { id: 'embedded-fixture', name: '<unsafe>.txt', mimeType: 'text/plain', size: 8, src: 'data:text/plain;base64,ZW1iZWRkZWQ=' } });
         adapter.emit('event', { type: 'tool', sessionId, toolCallId: 'generate-report', title: 'generate_file', kind: 'edit', status: 'completed', content: [{ type: 'content', content: { type: 'resource', resource: { uri: 'generated.txt', mimeType: 'text/plain', text: 'A newly generated report.' } } }] });
       }, { sessionId });
@@ -251,6 +252,12 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await report.waitFor(); await embedded.waitFor(); await generated.waitFor();
       assert.equal(await page.locator('.attachment-card unsafe').count(), 0);
       await queueDialog({ canceled: true }); await page.locator('.message-body a').filter({ hasText: 'Download report' }).click();
+      // Rendered hrefs are percent-encoded; a CJK/space filename must still map to its attachment.
+      const saveDialogs = () => desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(item => item.method === 'showSaveDialog').map(item => item.options.defaultPath));
+      await queueDialog({ canceled: true }); await page.locator('.message-body a').filter({ hasText: '雨夜报告' }).click();
+      const deadline = Date.now() + 10000;
+      while (!(await saveDialogs()).includes('东京 报告.csv')) { assert.ok(Date.now() < deadline, 'clicking an encoded local link must open the attachment save dialog'); await new Promise(resolve => setTimeout(resolve, 20)); }
+      assert.equal(await page.locator('.toast').filter({ hasText: '此链接不是网页地址' }).count(), 0);
       await queueDialog({ canceled: false, filePath: path.join(testRoot, 'saved-report.csv') }); await report.locator('.attachment-save').click();
       await page.locator('.toast').filter({ hasText: 'saved-report.csv' }).waitFor();
       assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(item => item.method === 'showSaveDialog').at(-1).options.defaultPath), 'report.csv');
@@ -263,7 +270,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await page.locator('.session-select').filter({ hasText: 'Second conversation' }).click(); await idle();
       await report.waitFor(); await embedded.waitFor(); await generated.waitFor();
       const persisted = readState().sessions.find(session => session.id === sessionId).messages.at(-1).attachments;
-      assert.equal(persisted.length, 3);
+      assert.equal(persisted.length, 4);
       assert.ok(readState().sessions.find(session => session.id === firstSession).messages[0].attachments.length === 2);
     });
     await stage('compact layout and all seven translated attachment controls', async () => {

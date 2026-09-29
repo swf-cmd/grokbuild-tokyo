@@ -26,6 +26,8 @@
   const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
   const clearPermissions = id => { for (const [key, permission] of state.permissions) if (permission.sessionId === id) state.permissions.delete(key); };
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  // The href marked renders for a link destination (same encoding as its cleanUrl).
+  const markdownHref = value => { try { return encodeURI(String(value)).replace(/%25/g, '%'); } catch { return null; } };
   const safeText = value => typeof value === 'string' ? value : value == null ? '' : Array.isArray(value) ? value.map(safeText).join('\n') : typeof value === 'object' ? value.type === 'image' || value.resource?.blob ? t('[图片]') : value.text != null ? safeText(value.text) : value.content != null ? safeText(value.content) : JSON.stringify(value, null, 2) : String(value);
   const sessionTime = session => new Date(session.updatedAt || session.createdAt || 0).getTime() || 0;
   const sessionTitle = session => session.titleIsDefault === true || (session.titleIsDefault == null && session.title === '新会话' && !session.messages?.some(message => message.role === 'user')) ? t('新会话') : session.title || t('新的对话');
@@ -1361,7 +1363,9 @@
         const url = anchor.getAttribute('href');
         const article = anchor.closest('.message');
         const message = activeSession()?.messages.find(item => item.id === article?.dataset.messageId);
-        const attachment = message?.attachments?.find(item => item.src === url);
+        // Marked percent-encodes link targets (spaces, CJK names, Windows
+        // separators), while attachments keep the destination as written.
+        const attachment = message?.attachments?.find(item => item.src === url) || message?.attachments?.find(item => markdownHref(item.src) === url);
         if (attachment) {
           const card = [...article.querySelectorAll('.attachment-card')].find(item => item.dataset.attachmentId === attachment.id);
           card?.querySelector('.attachment-save')?.click();

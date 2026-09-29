@@ -283,6 +283,62 @@ test('closing during a first send waiting for a background catalog restore never
   assert.equal(controller.active, null);
 });
 
+test('user operations wait for a background catalog restore instead of failing', async t => {
+  const { controller, adapter, session } = await started(t);
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.operation?.background, true);
+  // The first message of a new conversation creates its session first.
+  const creating = controller.createSession();
+  void creating.catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(adapter.loads.length, 1, 'the restore is still pending');
+  assert.equal(controller.visibleSessions().length, 1, 'creation waits for the restore to finish');
+  adapter.loadGate.resolve();
+  await refreshing;
+  const created = await creating;
+  assert.equal(controller.visibleSessions()[0].id, created.id);
+  assert.equal(controller.operation, null);
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 3 });
+  adapter.loadGate = deferred();
+  const refreshingAgain = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  const configuring = controller.configureSession({ sessionId: session.id, mode: 'balanced' });
+  void configuring.catch(() => {});
+  adapter.loadGate.resolve();
+  await refreshingAgain;
+  assert.equal((await configuring).id, session.id);
+  // A send still takes precedence over an operation queued behind the restore.
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 4 });
+  adapter.loadGate = deferred();
+  const refreshingThird = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  const sending = controller.send({ sessionId: created.id, text: 'queued first' });
+  const queued = controller.createSession();
+  void queued.catch(() => {});
+  adapter.loadGate.resolve();
+  await refreshingThird;
+  assert.deepEqual(await sending, { accepted: true });
+  await assert.rejects(queued, /当前回复/);
+  adapter.prompts.at(-1).gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+});
+
+test('automatic and renamed titles never split an emoji at the length limit', async t => {
+  const { controller, session, adapter } = await started(t);
+  const text = `${'a'.repeat(31)}🌧️ rain`;
+  assert.deepEqual(await controller.send({ sessionId: session.id, text }), { accepted: true });
+  assert.equal(session.title, `${'a'.repeat(31)}🌧`);
+  assert.equal(session.title.isWellFormed(), true);
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  controller.renameSession({ sessionId: session.id, title: `${'b'.repeat(119)}😀😀` });
+  assert.equal(session.title, `${'b'.repeat(119)}😀`);
+  assert.equal(session.title.isWellFormed(), true);
+});
+
 test('failed catalog readback keeps verified choices and does not retry indefinitely', async t => {
   const { controller, session, adapter } = await started(t);
   const previous = structuredClone(session);
@@ -853,6 +909,28 @@ test('the subagent setting defaults to enabled, validates booleans and restarts 
   await controller.saveSettings({ subagentsEnabled: true });
   await controller.reconnect();
   assert.equal(instances[2].options.subagentsEnabled, true);
+});
+
+test('engine settings queued behind a catalog refresh preserve preferences saved during the wait', async t => {
+  const { controller, adapter } = await started(t);
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.operation?.background, true);
+  const saving = controller.saveSettings({ subagentsEnabled: false });
+  void saving.catch(() => {});
+  const preferences = { language: 'ja', rainEnabled: false, musicEnabled: false, musicVolume: 23 };
+  await controller.saveSettings(preferences);
+  const expected = { ...controller.settings, subagentsEnabled: false };
+  assert.equal(adapter.closeCount, 0, 'the engine setting still waits for the catalog refresh');
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.deepEqual(await saving, expected);
+  assert.deepEqual(controller.settings, expected);
+  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, expected);
+  assert.equal(adapter.closeCount, 1);
+  assert.equal(controller.operation, null);
 });
 
 test('engine shutdown for changed settings reserves the engine until complete', async t => {

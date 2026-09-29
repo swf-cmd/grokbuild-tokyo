@@ -272,6 +272,12 @@ class AppController extends EventEmitter {
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
   async idleOperation(name, action, { allowInterfaceSettings = false, background = false } = {}) {
+    // A catalog readback is not a user action. Like a send, user operations
+    // (starting a conversation, changing its model, adding files) wait for it
+    // instead of failing with a transient "busy" error.
+    while (!background && this.operation?.background && !this.closing && !this.active) {
+      await this.operation.promise.catch(() => {});
+    }
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (this.active) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
@@ -534,7 +540,8 @@ class AppController extends EventEmitter {
     const message = { id: randomUUID(), role: 'assistant', text: '', responseSegments: [], thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
     session.messages.push(message);
     if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
-      session.title = (text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ').slice(0, 32);
+      // Truncate by code point so an emoji at the limit never leaves a broken half.
+      session.title = Array.from((text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ')).slice(0, 32).join('');
       session.titleIsDefault = false;
     }
     session.updatedAt = now;
@@ -697,43 +704,45 @@ class AppController extends EventEmitter {
   async saveSettings(patch) {
     if (this.closing) throw new Error(this.t('应用正在关闭'));
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(this.t('无效的设置'));
-    const next = { ...this.settings };
+    const changes = {};
     if (patch.language !== undefined) {
       if (typeof patch.language !== 'string' || !Object.hasOwn(languages, patch.language)) throw new Error(this.t('请选择支持的界面语言'));
-      next.language = patch.language;
+      changes.language = patch.language;
     }
     if (patch.executable !== undefined) {
       if (!isExecutable(patch.executable)) throw new Error(this.t('请选择有效的 Grok CLI'));
-      next.executable = patch.executable;
+      changes.executable = patch.executable;
     }
     if (patch.workspace !== undefined) {
       if (!isPathType(patch.workspace, 'isDirectory')) throw new Error(this.t('请选择有效的工作目录'));
-      next.workspace = patch.workspace;
+      changes.workspace = patch.workspace;
     }
     if (patch.rainEnabled !== undefined) {
       if (typeof patch.rainEnabled !== 'boolean') throw new Error(this.t('雨景开关必须为布尔值'));
-      next.rainEnabled = patch.rainEnabled;
+      changes.rainEnabled = patch.rainEnabled;
     }
     if (patch.musicEnabled !== undefined) {
       if (typeof patch.musicEnabled !== 'boolean') throw new Error(this.t('背景音乐开关必须为布尔值'));
-      next.musicEnabled = patch.musicEnabled;
+      changes.musicEnabled = patch.musicEnabled;
     }
     if (patch.musicVolume !== undefined) {
       if (!Number.isInteger(patch.musicVolume) || patch.musicVolume < 0 || patch.musicVolume > 100) throw new Error(this.t('背景音乐音量必须为 0 到 100 的整数'));
-      next.musicVolume = patch.musicVolume;
+      changes.musicVolume = patch.musicVolume;
     }
     if (patch.subagentsEnabled !== undefined) {
       if (typeof patch.subagentsEnabled !== 'boolean') throw new Error(this.t('子代理开关必须为布尔值'));
-      next.subagentsEnabled = patch.subagentsEnabled;
+      changes.subagentsEnabled = patch.subagentsEnabled;
     }
-    const changed = next.executable !== this.settings.executable || next.workspace !== this.settings.workspace || next.subagentsEnabled !== this.settings.subagentsEnabled;
+    const changed = ['executable', 'workspace', 'subagentsEnabled'].some(key => Object.hasOwn(changes, key) && changes[key] !== this.settings[key]);
     const persist = async () => {
       if (changed) {
         this.invalidateConnection();
         await this.closeAdapter();
       }
       const previous = this.settings;
-      this.settings = next;
+      // Interface preferences may have been saved while this change waited for
+      // a background catalog refresh. Preserve fields this request did not set.
+      this.settings = { ...previous, ...changes };
       try { this.save(); } catch (error) { this.settings = previous; throw error; }
       return this.settings;
     };
@@ -764,7 +773,7 @@ class AppController extends EventEmitter {
     const s = this.getSession(sessionId);
     const previous = s.title;
     const previousDefault = s.titleIsDefault;
-    s.title = title.trim().slice(0, 120);
+    s.title = Array.from(title.trim()).slice(0, 120).join('');
     s.titleIsDefault = false;
     try { this.save(); } catch (error) { s.title = previous; s.titleIsDefault = previousDefault; throw error; }
     return s;
