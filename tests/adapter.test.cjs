@@ -648,3 +648,35 @@ test('POSIX shutdown and unexpected CLI exit also stop owned tool descendants', 
     assert.equal(adapter.process, null);
   });
 });
+
+test('an unanswered stop releases only its own prompt while another conversation is running', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const adapter = new GrokAdapter();
+  const writes = [];
+  const child = { stdin: { destroyed: false, writableEnded: false, write: line => writes.push(JSON.parse(line)) } };
+  adapter.process = child;
+  let kills = 0;
+  adapter._kill = async () => { kills++; };
+  const turns = {};
+  const results = {};
+  for (const sessionId of ['first', 'second']) {
+    turns[sessionId] = { sessionId, text: '', cancelled: false, cancelTimer: null, dispatched: true };
+    adapter.active.set(sessionId, turns[sessionId]);
+    results[sessionId] = adapter._request('session/prompt', { sessionId, prompt: [] }, 0, id => { turns[sessionId].requestId = id; });
+  }
+  await adapter.cancel('first');
+  assert.deepEqual(writes.at(-1), { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'first' } });
+  t.mock.timers.tick(10000);
+  assert.deepEqual(await results.first, { stopReason: 'cancelled' });
+  assert.equal(kills, 0, 'restarting the engine would also abort the other conversation');
+  assert.equal(adapter.pending.has(turns.second.requestId), true);
+  // Until Grok answers the released request, its late output cannot mix into a new prompt.
+  adapter.active.delete('first');
+  await assert.rejects(adapter.prompt({ sessionId: 'first', text: 'next' }), { code: 'SESSION_BUSY' });
+  adapter._message({ jsonrpc: '2.0', id: turns.first.requestId, result: { stopReason: 'cancelled' } });
+  assert.equal(adapter.abandoned.size, 0);
+  // With nothing else running, an unresponsive stop still restarts the engine.
+  await adapter.cancel('second');
+  t.mock.timers.tick(10000);
+  assert.equal(kills, 1);
+});

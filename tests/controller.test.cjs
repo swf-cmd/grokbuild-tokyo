@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
-const { AppController } = require('../src/app-controller.cjs');
+const { AppController, MAX_CONCURRENT_TURNS } = require('../src/app-controller.cjs');
 const { attachmentsFromContent } = require('../src/attachments.cjs');
 const { executableName } = require('../src/platform.cjs');
 
@@ -24,7 +24,7 @@ function signIn(controller, account) {
   fs.writeFileSync(path.join(home, 'auth.json'), JSON.stringify({ scope: { key: 'fixture-credential', auth_mode: 'oidc', email: 'fixture@example.test' } }));
 }
 
-function fixture(t, saved, { useAppLanguage = false } = {}) {
+function fixture(t, saved, { useAppLanguage = false, quotaFetch } = {}) {
   const base = path.resolve(__dirname, '..', 'work', 'controller-tests');
   fs.mkdirSync(base, { recursive: true });
   const root = fs.mkdtempSync(path.join(base, 'run-'));
@@ -90,7 +90,7 @@ function fixture(t, saved, { useAppLanguage = false } = {}) {
     async respondPermission(args) { this.responses.push(args); }
     async close() { this.closeCount++; if (this.closeGate) await this.closeGate.promise; for (const p of this.prompts) p.gate.resolve({ stopReason: 'cancelled' }); }
   }
-  const controller = new AppController({ root, home: path.join(root, 'home'), Adapter: FakeAdapter });
+  const controller = new AppController({ root, home: path.join(root, 'home'), Adapter: FakeAdapter, quotaFetch });
   // Diagnostic assertions use an explicit locale; language tests exercise the app default.
   if (!useAppLanguage) controller.settings.language = 'zh-CN';
   controller.accountManager.defaultHome = path.join(root, 'home', '.grok');
@@ -220,13 +220,17 @@ test('first send waits for a background catalog restore and reserves the turn ag
   void sending.catch(() => {});
   assert.equal(controller.active?.sessionId, session.id, 'waiting for a background restore must reserve the user turn');
   await assert.rejects(controller.send({ sessionId: session.id, text: 'duplicate' }), /已有回复/);
-  await assert.rejects(controller.createSession(), /当前回复/);
   await assert.rejects(controller.reconnect(), /当前回复/);
+  // Starting another conversation is allowed beside a turn; it also waits for the restore.
+  const creating = controller.createSession();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.visibleSessions().length, 2, 'creation waits for the background restore');
   assert.equal(adapter.prompts.length, 0);
   assert.equal(session.messages.length, 0, 'the message is saved only when it can be dispatched');
   adapter.loadGate.resolve();
   await refreshing;
   assert.deepEqual(await sending, { accepted: true });
+  assert.equal((await creating).messages.length, 0);
   assert.equal(adapter.loads.length, 1, 'the pending send takes precedence over readback of the remaining sessions');
   assert.equal(adapter.prompts.length, 1);
   assert.equal(adapter.prompts[0].text, 'first message');
@@ -310,7 +314,7 @@ test('user operations wait for a background catalog restore instead of failing',
   adapter.loadGate.resolve();
   await refreshingAgain;
   assert.equal((await configuring).id, session.id);
-  // A send still takes precedence over an operation queued behind the restore.
+  // A send and a new conversation queued behind the restore both proceed.
   adapter.emit('event', { type: 'status', status: 'models_changed', revision: 4 });
   adapter.loadGate = deferred();
   const refreshingThird = controller.refreshModels();
@@ -321,7 +325,9 @@ test('user operations wait for a background catalog restore instead of failing',
   adapter.loadGate.resolve();
   await refreshingThird;
   assert.deepEqual(await sending, { accepted: true });
-  await assert.rejects(queued, /当前回复/);
+  const beside = await queued;
+  assert.equal(controller.visibleSessions()[0].id, beside.id);
+  assert.deepEqual(adapter.prompts.map(prompt => prompt.text), ['queued first']);
   adapter.prompts.at(-1).gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
 });
@@ -876,13 +882,17 @@ test('active generation and restoration reject session configuration and engine 
   for (const action of [
     () => controller.configureSession({ sessionId: session.id, mode: 'high' }),
     () => controller.saveSettings({ subagentsEnabled: false }),
-    () => controller.createSession(),
     () => controller.reconnect(),
   ]) await assert.rejects(action(), /当前回复/);
   adapter.loadGate.resolve();
   await sending;
   await assert.rejects(controller.configureSession({ sessionId: session.id, mode: 'high' }), /当前回复/);
   assert.deepEqual(adapter.configurations, []);
+  // Other conversations stay independent: they can be created and configured.
+  const other = await controller.createSession();
+  await controller.configureSession({ sessionId: other.id, mode: 'high' });
+  assert.deepEqual(adapter.configurations, [{ type: 'mode', sessionId: other.id, mode: 'high' }]);
+  assert.equal(session.messages.at(-1).status, 'working');
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
 });
@@ -1921,4 +1931,145 @@ test('profile and accounts directory junctions cannot redirect account deletion 
     assert.equal(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8'), 'outside data');
     assert.equal(controller.accounts.some(a => a.id === account.id), true);
   });
+});
+
+test('conversations run side by side with separate output, permissions and stop', async t => {
+  const { controller, adapter, session } = await started(t);
+  const other = await controller.createSession();
+  await controller.send({ sessionId: session.id, text: 'first task' });
+  await controller.send({ sessionId: other.id, text: 'second task' });
+  assert.deepEqual([...controller.turns.keys()], [session.id, other.id]);
+  assert.deepEqual(adapter.prompts.map(prompt => [prompt.sessionId, prompt.text]), [[session.id, 'first task'], [other.id, 'second task']]);
+  adapter.emit('event', { type: 'text', sessionId: session.id, text: 'one' });
+  adapter.emit('event', { type: 'text', sessionId: other.id, text: 'two' });
+  adapter.emit('event', { type: 'tool', sessionId: other.id, toolCallId: 'tool', title: 'Only second', status: 'completed' });
+  // Output without a session ID is ambiguous while two conversations run.
+  adapter.emit('event', { type: 'text', text: 'unknown owner' });
+  assert.equal(session.messages[1].text, 'one');
+  assert.equal(other.messages[1].text, 'two');
+  assert.deepEqual(session.messages[1].tools, []);
+  assert.equal(other.messages[1].tools[0].title, 'Only second');
+  adapter.emit('event', { type: 'permission', sessionId: other.id, requestId: 'second-permission', options: [{ optionId: 'allow' }] });
+  await assert.rejects(controller.send({ sessionId: other.id, text: 'again' }), /已有回复/);
+  // Engine-wide changes still wait for every running conversation.
+  for (const action of [() => controller.reconnect(), () => controller.saveSettings({ subagentsEnabled: false }), () => controller.switchAccount('local')]) await assert.rejects(action(), /当前回复/);
+  assert.throws(() => controller.deleteSession(session.id), /停止/);
+  const first = controller.turns.get(session.id);
+  await controller.cancel(session.id);
+  await first.promise;
+  assert.deepEqual(adapter.cancels, [session.id]);
+  assert.equal(session.messages[1].status, 'cancelled');
+  assert.equal(other.messages[1].status, 'working');
+  assert.deepEqual([...controller.turns.keys()], [other.id]);
+  assert.equal(controller.permissions.has('second-permission'), true, 'stopping one conversation keeps the other one\'s permission request');
+  // The stopped conversation can continue while the other one is still running.
+  await controller.send({ sessionId: session.id, text: 'follow-up' });
+  assert.equal(controller.turns.size, 2);
+  const running = [...controller.turns.values()].map(turn => turn.promise);
+  adapter.prompts[1].gate.resolve({ stopReason: 'end_turn' });
+  adapter.prompts[2].gate.resolve({ stopReason: 'end_turn' });
+  await Promise.all(running);
+  assert.equal(controller.active, null);
+  assert.equal(other.messages[1].status, 'complete');
+  assert.equal(session.messages[3].status, 'complete');
+  assert.equal(controller.permissions.size, 0);
+});
+
+test('the number of simultaneous conversations is bounded and closing stops all of them', async t => {
+  const { controller, adapter } = await started(t);
+  const sessions = [];
+  for (let index = 0; index <= MAX_CONCURRENT_TURNS; index++) sessions.push(await controller.createSession());
+  for (const item of sessions.slice(0, MAX_CONCURRENT_TURNS)) await controller.send({ sessionId: item.id, text: `task ${item.id}` });
+  assert.equal(controller.snapshot().maxConcurrentTurns, MAX_CONCURRENT_TURNS);
+  await assert.rejects(controller.send({ sessionId: sessions.at(-1).id, text: 'one too many' }), new RegExp(`最多同时运行 ${MAX_CONCURRENT_TURNS} 个任务`));
+  assert.equal(sessions.at(-1).messages.length, 0);
+  await controller.close();
+  assert.equal(adapter.closeCount, 1);
+  assert.equal(controller.turns.size, 0);
+  assert.ok(sessions.slice(0, MAX_CONCURRENT_TURNS).every(item => item.messages.at(-1).status === 'cancelled'));
+});
+
+test('quota reads use the active account credential, never expose it and keep the last value on failure', async t => {
+  const requests = [];
+  let respond = () => new Response(JSON.stringify({ config: { creditUsagePercent: 40, currentPeriod: { type: 'weekly', end: '2030-01-06T09:00:00Z' } } }), { status: 200 });
+  const quotaFetch = async (_url, init) => { requests.push(init.headers.Authorization); return respond(); };
+  const { controller } = fixture(t, undefined, { quotaFetch });
+  const events = [];
+  controller.on('event', event => { if (event.type === 'quota') events.push(event.quota); });
+  assert.equal((await controller.refreshQuota()).status, 'signed-out');
+  assert.equal(requests.length, 0);
+  signIn(controller, { id: 'local' });
+  const quota = await controller.refreshQuota();
+  assert.equal(quota.status, 'ok');
+  assert.equal(quota.accountId, 'local');
+  assert.deepEqual(quota.usage, { usedPercent: 40, periodType: 'weekly', resetAt: Date.UTC(2030, 0, 6, 9), products: [] });
+  assert.deepEqual(requests, ['Bearer fixture-credential']);
+  assert.deepEqual(events.map(event => event.status), ['signed-out', 'loading', 'ok']);
+  for (const value of [controller.snapshot(), events, controller.quotaState()]) assert.equal(JSON.stringify(value).includes('fixture-credential'), false);
+  // Automatic reads are throttled; an explicit refresh may follow shortly after.
+  await controller.refreshQuota();
+  assert.equal(requests.length, 1);
+  controller.quota.checkedAt -= 5000;
+  respond = () => new Response('{}', { status: 401 });
+  const stale = await controller.refreshQuota({ force: true });
+  assert.equal(requests.length, 2);
+  assert.equal(stale.status, 'ok');
+  assert.equal(stale.usage.usedPercent, 40, 'the last confirmed value remains visible');
+  assert.equal(stale.reason, 'unauthorized');
+});
+
+test('switching accounts hides the previous quota and discards its late response', async t => {
+  const gate = deferred();
+  const requests = [];
+  const quotaFetch = async (_url, init) => { requests.push(init.headers.Authorization); await gate.promise; return new Response(JSON.stringify({ config: { creditUsagePercent: 12 } }), { status: 200 }); };
+  const { controller } = await started(t, { quotaFetch });
+  signIn(controller, { id: 'local' });
+  const account = await controller.addAccount({ name: 'Work' });
+  const pending = controller.refreshQuota();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.quotaState().status, 'loading');
+  const switched = await controller.switchAccount(account.id);
+  assert.equal(switched.quota.status, 'idle');
+  assert.equal(switched.quota.accountId, account.id);
+  gate.resolve();
+  await pending;
+  assert.equal(controller.quotaState().accountId, account.id);
+  assert.equal(controller.quotaState().usage, undefined, 'the local account quota never appears under another account');
+  assert.equal((await controller.refreshQuota({ force: true })).status, 'signed-out');
+  assert.equal(requests.length, 1);
+});
+
+test('turning the quota display off stops requests, persists and validates the setting', async t => {
+  const requests = [];
+  const quotaFetch = async () => { requests.push(1); return new Response(JSON.stringify({ config: { creditUsagePercent: 3 } }), { status: 200 }); };
+  const { controller } = fixture(t, undefined, { quotaFetch });
+  signIn(controller, { id: 'local' });
+  assert.equal(controller.settings.quotaEnabled, true);
+  await controller.saveSettings({ quotaEnabled: false });
+  assert.equal(controller.quotaState().status, 'disabled');
+  assert.equal((await controller.refreshQuota({ force: true })).status, 'disabled');
+  assert.equal(requests.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings.quotaEnabled, false);
+  await assert.rejects(controller.saveSettings({ quotaEnabled: 'yes' }), /布尔值/);
+  await controller.saveSettings({ quotaEnabled: true });
+  assert.equal((await controller.refreshQuota()).status, 'ok');
+  assert.equal(requests.length, 1);
+  // Without a main-process transport the controller never attempts a request.
+  const offline = fixture(t).controller;
+  signIn(offline, { id: 'local' });
+  assert.equal((await offline.refreshQuota({ force: true })).status, 'disabled');
+});
+
+test('a finished turn schedules a quota refresh and closing clears quota timers', async t => {
+  const quotaFetch = async () => new Response('{"config":{}}', { status: 200 });
+  const { controller, adapter, session } = await started(t, { quotaFetch });
+  assert.ok(!controller.quotaTimer);
+  await controller.send({ sessionId: session.id, text: 'use some quota' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  assert.ok(controller.quotaTimer, 'the quota is read again shortly after the turn');
+  assert.ok(controller.quotaPoll, 'a slow background refresh keeps the value current');
+  await controller.close();
+  assert.equal(controller.quotaTimer, null);
+  assert.equal(controller.quotaPoll, null);
 });

@@ -75,6 +75,8 @@ class GrokAdapter extends EventEmitter {
     this.sessions = new Map();
     this.modelResolutions = new Map();
     this.active = new Map();
+    // Session ID -> request ID of a prompt released after an unanswered cancel.
+    this.abandoned = new Map();
     this.loading = new Set();
     this.sessionLoads = new Map();
     this.modelCatalogModels = null;
@@ -148,6 +150,7 @@ class GrokAdapter extends EventEmitter {
         this.pending.clear();
         this._cancelPermissions();
         for (const turn of this.active.values()) clearTimeout(turn.cancelTimer);
+        this.abandoned.clear();
         this._event({ type: 'status', status: 'disconnected', message: error.message });
       }
     };
@@ -229,9 +232,10 @@ class GrokAdapter extends EventEmitter {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  _request(method, params, timeout = CONTROL_TIMEOUT) {
+  _request(method, params, timeout = CONTROL_TIMEOUT, onId) {
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
+      onId?.(id);
       const entry = { resolve, reject, method, timer: null };
       if (timeout > 0) {
         entry.timer = setTimeout(() => {
@@ -250,7 +254,10 @@ class GrokAdapter extends EventEmitter {
     if (!isRecord(message)) return;
     if (!message.method && Object.hasOwn(message, 'id')) {
       const request = this.pending.get(message.id);
-      if (!request) return;
+      if (!request) {
+        for (const [sessionId, id] of this.abandoned) if (id === message.id) this.abandoned.delete(sessionId);
+        return;
+      }
       this.pending.delete(message.id);
       clearTimeout(request.timer);
       if (message.error) request.reject(failure(this.safeMessage(message.error.message), message.error.code));
@@ -604,13 +611,13 @@ class GrokAdapter extends EventEmitter {
   async prompt({ sessionId, text = '', attachments = [] } = {}) {
     if (!Array.isArray(attachments)) throw failure(this.t('无效的附件'), 'INVALID_ATTACHMENT');
     if (typeof text !== 'string' || (!text.trim() && !attachments.length)) throw failure(this.t('请输入消息。'), 'EMPTY_PROMPT');
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+    if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.abandoned.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
     await this.start();
     if (this.sessionLoads.has(sessionId)) await this.sessionLoads.get(sessionId);
     if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
     // Check again after the asynchronous connection/load to reject double sends.
-    if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
-    const turn = { text: '', cancelled: false, cancelTimer: null, dispatched: false };
+    if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId) || this.abandoned.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+    const turn = { sessionId, text: '', cancelled: false, cancelTimer: null, dispatched: false };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });
     try {
@@ -620,7 +627,7 @@ class GrokAdapter extends EventEmitter {
         return { stopReason: 'cancelled', text: turn.text, cancelled: true };
       }
       turn.dispatched = true;
-      const result = await this._request('session/prompt', { sessionId, prompt }, 0);
+      const result = await this._request('session/prompt', { sessionId, prompt }, 0, id => { turn.requestId = id; });
       const cancelled = turn.cancelled || result.stopReason === 'cancelled';
       this._event({ type: 'status', status: cancelled ? 'cancelled' : 'idle', sessionId, stopReason: result.stopReason });
       return { ...result, text: turn.text, cancelled };
@@ -670,11 +677,29 @@ class GrokAdapter extends EventEmitter {
     if (!turn.cancelTimer) {
       const child = this.process;
       turn.cancelTimer = setTimeout(() => {
-        if (this.active.get(sessionId) === turn && this.process === child) this._kill(child);
+        if (this.active.get(sessionId) !== turn || this.process !== child) return;
+        // Restarting the engine would also abort every other conversation that
+        // is still running. In that case, release only the unresponsive turn.
+        const othersRunning = [...this.active.keys()].some(id => id !== sessionId);
+        if (othersRunning && this._abandonPrompt(turn)) return;
+        this._kill(child);
       }, 10000);
       turn.cancelTimer.unref?.();
     }
     return { cancelled: true };
+  }
+
+  _abandonPrompt(turn) {
+    const request = turn.requestId === undefined ? undefined : this.pending.get(turn.requestId);
+    if (!request) return false;
+    // Updates without a turn are not attributed to any reply. The session stays
+    // busy until Grok answers the abandoned request, so its late output cannot
+    // leak into the next prompt of the same conversation.
+    this.pending.delete(turn.requestId);
+    this.abandoned.set(turn.sessionId, turn.requestId);
+    clearTimeout(request.timer);
+    request.resolve({ stopReason: 'cancelled' });
+    return true;
   }
 
   _killProcessGroup(child) {

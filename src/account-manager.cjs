@@ -124,8 +124,9 @@ class AccountManager extends EventEmitter {
     }
     return env;
   }
-  summary(account, cwd = this.getWorkingDirectory()) {
-    const result = { id: account.id, name: account.name, nameIsDefault: account.nameIsDefault === true, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };
+  // Main-process only: resolves the credential the CLI would use for this
+  // account. The result must never be sent over IPC or written to history.
+  credential(account, cwd = this.getWorkingDirectory()) {
     const local = account.id === 'local';
     const usable = (value, inline = false) => value && typeof value === 'object' && !Array.isArray(value) && typeof value.key === 'string' && value.key.trim() && (['oidc', 'external', 'api_key'].includes(value.auth_mode) || (inline && ['web_login', 'grok'].includes(value.auth_mode)));
     let current;
@@ -146,9 +147,14 @@ class AccountManager extends EventEmitter {
         }
       }
     } catch { /* Missing or invalid configured stores must not fall back to a different account's file. */ }
-    // Presence indicates configured authentication, not a network validity check.
     const apiKey = local ? process.env.XAI_API_KEY ?? process.env.GROK_CODE_XAI_API_KEY : undefined;
-    result.signedIn = !!current || (typeof apiKey === 'string' && !!apiKey.trim());
+    return { credential: current || null, apiKey: typeof apiKey === 'string' && !!apiKey.trim() };
+  }
+  summary(account, cwd = this.getWorkingDirectory()) {
+    const result = { id: account.id, name: account.name, nameIsDefault: account.nameIsDefault === true, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };
+    const { credential: current, apiKey } = this.credential(account, cwd);
+    // Presence indicates configured authentication, not a network validity check.
+    result.signedIn = !!current || apiKey;
     // Never return credential objects or raw CLI output across IPC.
     if (typeof current?.email === 'string') result.email = current.email.slice(0, 254);
     return result;

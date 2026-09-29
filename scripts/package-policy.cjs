@@ -9,6 +9,7 @@ const packageFiles = [
   'src/account-manager.cjs', 'src/app-controller.cjs', 'src/app-paths.cjs', 'src/attachments.cjs',
   'src/grok-adapter.cjs', 'src/i18n.js', 'src/locales.js', 'src/main.cjs',
   'src/media.cjs', 'src/model-labels.cjs', 'src/platform.cjs', 'src/preload.cjs', 'src/resource-download.cjs',
+  'src/usage-quota.cjs',
   'src/renderer/ambient-audio.js', 'src/renderer/app.js', 'src/renderer/index.html',
   'src/renderer/styles.css', 'src/renderer/vendor/marked.umd.js',
   'src/renderer/vendor/purify.min.js', 'src/renderer/assets/icon.ico', 'src/renderer/assets/icon.icns',

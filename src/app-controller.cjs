@@ -8,7 +8,19 @@ const { findGrokExecutable, isExecutable } = require('./platform.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
 const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
 const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
+const { fetchAccountQuota } = require('./usage-quota.cjs');
 const { pathToFileURL } = require('node:url');
+
+// Conversations run side by side in one Grok process. Bound the number of
+// simultaneous turns so a burst of tasks cannot exhaust tools or the account.
+const MAX_CONCURRENT_TURNS = 4;
+// Quota reads are cheap but not free: coalesce automatic refreshes, and keep a
+// slow background refresh so a weekly reset appears without user action.
+const QUOTA_MIN_INTERVAL = 60 * 1000;
+const QUOTA_FORCE_INTERVAL = 3 * 1000;
+const QUOTA_POLL_INTERVAL = 10 * 60 * 1000;
+const QUOTA_AFTER_TURN_DELAY = 8 * 1000;
+const QUOTA_AFTER_TURN_INTERVAL = 15 * 1000;
 
 function isPathType(value, type) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
@@ -22,14 +34,19 @@ const STOP_NOTICES = {
 };
 
 class AppController extends EventEmitter {
-  constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager }) {
+  constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null }) {
     super();
     this.root = root;
     this.Adapter = Adapter;
+    // Only the main process supplies a network transport. Without one (unit
+    // tests, headless tools) the quota feature stays off and never connects.
+    this.quotaFetch = typeof quotaFetch === 'function' ? quotaFetch : null;
+    this.quota = { status: 'idle' };
+    this.quotaRequest = null;
     this.dir = path.join(root, 'data');
     fs.mkdirSync(this.dir, { recursive: true });
     this.file = path.join(this.dir, 'conversations.json');
-    this.settings = { executable: findGrokExecutable({ home }), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, language: 'en' };
+    this.settings = { executable: findGrokExecutable({ home }), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, quotaEnabled: true, language: 'en' };
     this.t = createI18n(() => this.settings.language);
     this.sessions = [];
     this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
@@ -40,7 +57,9 @@ class AppController extends EventEmitter {
     this.permissions = new Map();
     this.retiredAdapters = new WeakSet();
     this.pendingAttachments = new Map();
-    this.active = null;
+    // One reserved or running turn per conversation, keyed by session ID.
+    this.turns = new Map();
+    this.turnPromise = null;
     this.operation = null;
     this.closing = false;
     this.connected = false;
@@ -57,7 +76,7 @@ class AppController extends EventEmitter {
         if (!data.sessions.every(s => s && typeof s.id === 'string' && typeof s.title === 'string' && typeof s.cwd === 'string' && Array.isArray(s.messages) && s.messages.every(m => m && ['user', 'assistant'].includes(m.role) && typeof m.text === 'string'))) throw new Error('Invalid session data');
         this.settings = { ...this.settings, ...data.settings };
         this.settings.language = normalizeLanguage(this.settings.language);
-        for (const key of ['rainEnabled', 'musicEnabled', 'subagentsEnabled']) {
+        for (const key of ['rainEnabled', 'musicEnabled', 'subagentsEnabled', 'quotaEnabled']) {
           if (typeof this.settings[key] !== 'boolean') this.settings[key] = true;
         }
         if (!Number.isInteger(this.settings.musicVolume) || this.settings.musicVolume < 0 || this.settings.musicVolume > 100) this.settings.musicVolume = 90;
@@ -106,6 +125,15 @@ class AppController extends EventEmitter {
     fs.mkdirSync(path.join(root, 'Workspace'), { recursive: true });
   }
   emitEvent(event) { this.emit('event', event); }
+  // The most recently reserved turn, or null when every conversation is idle.
+  get active() {
+    let latest = null;
+    for (const turn of this.turns.values()) latest = turn;
+    return latest;
+  }
+  releaseTurn(turn) {
+    if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId);
+  }
   save() {
     if (this.accountRecoveryError) throw new Error(this.accountRecoveryError);
     clearTimeout(this.saveTimer);
@@ -117,7 +145,7 @@ class AppController extends EventEmitter {
   visibleSessions() { return this.sessions.filter(s => (s.accountId || 'local') === this.activeAccountId); }
   getSession(id) { const s = this.visibleSessions().find(s => s.id === id); if (!s) throw new Error(this.t('会话不存在或属于其他账户')); return s; }
   accountState() { return { accounts: this.accounts.map(a => this.accountManager.summary(a)), activeAccountId: this.activeAccountId, login: this.accountManager.loginState() }; }
-  snapshot(error = null) { return { settings: this.settings, sessions: this.visibleSessions(), info: this.normalizeInfo(), connected: this.connected, error, ...this.accountState() }; }
+  snapshot(error = null) { return { settings: this.settings, sessions: this.visibleSessions(), info: this.normalizeInfo(), connected: this.connected, error, maxConcurrentTurns: MAX_CONCURRENT_TURNS, quota: this.quotaState(), ...this.accountState() }; }
   // Local preferences and history are available before the CLI's initialize and
   // session-restore round trips. Reading them must not reserve or start the engine.
   initialState() { return this.snapshot(this.loadError); }
@@ -173,7 +201,7 @@ class AppController extends EventEmitter {
       const previous = { accounts: this.accounts, sessions: this.sessions, activeAccountId: this.activeAccountId };
       this.accounts = this.accounts.filter(a => a.id !== id);
       this.sessions = this.sessions.filter(s => (s.accountId || 'local') !== id);
-      if (wasActive) this.activeAccountId = 'local';
+      if (wasActive) { this.activeAccountId = 'local'; this.resetQuota(); }
       try { this.save(); }
       catch (error) {
         Object.assign(this, previous);
@@ -195,6 +223,7 @@ class AppController extends EventEmitter {
           const session = this.visibleSessions()[0];
           if (session) await this._ensureLoaded(session); else await this._createSession({});
         } catch (error) { errors.push(this.t('账户已移除，已切回本机账户。{error}', { error: error.message })); }
+        this.scheduleQuotaRefresh(0);
       }
       return this.snapshot(errors.join('\n') || null);
     });
@@ -208,6 +237,8 @@ class AppController extends EventEmitter {
       const previous = this.activeAccountId;
       this.activeAccountId = id;
       try { this.save(); } catch (error) { this.activeAccountId = previous; throw error; }
+      // Another account's quota must never remain visible after switching.
+      this.resetQuota();
       // Clear the old account in the UI before connecting or replaying new history.
       this.emitEvent({ type: 'account-changed', state: this.snapshot() });
       let error = null;
@@ -216,6 +247,7 @@ class AppController extends EventEmitter {
         const session = this.visibleSessions()[0];
         if (session) await this._ensureLoaded(session); else await this._createSession({});
       } catch (e) { error = e.message; }
+      this.scheduleQuotaRefresh(0);
       return this.snapshot(error);
     });
   }
@@ -243,7 +275,7 @@ class AppController extends EventEmitter {
       const attachments = await stageAttachments(files, this.attachmentDirectory(accountId), { fromPaths, t: this.t });
       for (const { previewSrc, ...attachment } of attachments) this.pendingAttachments.set(attachment.id, { ...attachment, accountId });
       return attachments;
-    });
+    }, { duringTurns: true });
   }
   getAttachment({ sessionId, attachmentId } = {}) {
     const session = this.getSession(sessionId);
@@ -271,15 +303,18 @@ class AppController extends EventEmitter {
     }
     catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
   }
-  async idleOperation(name, action, { allowInterfaceSettings = false, background = false } = {}) {
+  async idleOperation(name, action, { allowInterfaceSettings = false, background = false, duringTurns = false } = {}) {
     // A catalog readback is not a user action. Like a send, user operations
     // (starting a conversation, changing its model, adding files) wait for it
     // instead of failing with a transient "busy" error.
-    while (!background && this.operation?.background && !this.closing && !this.active) {
+    while (!background && this.operation?.background && !this.closing && (duringTurns || !this.turns.size)) {
       await this.operation.promise.catch(() => {});
     }
     if (this.closing) throw new Error(this.t('应用正在关闭'));
-    if (this.active) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
+    // Per-conversation work (starting, opening or configuring another chat,
+    // staging files) may run beside other turns. Engine-wide changes such as
+    // reconnecting, account changes and engine settings still wait for all.
+    if (this.turns.size && !duringTurns) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
     // Reserve synchronously, before the first await, so a send cannot race settings.
     const operation = { name, allowInterfaceSettings, background };
@@ -292,7 +327,7 @@ class AppController extends EventEmitter {
     }
   }
   scheduleModelRefresh() {
-    if (this.closing || !this.connected || this.active || this.operation || this.modelRefreshTimer) return;
+    if (this.closing || !this.connected || this.turns.size || this.operation || this.modelRefreshTimer) return;
     if (![...this.loaded].some(id => (this.modelRefreshes.get(id) || 0) < this.modelCatalogRevision)) return;
     this.modelRefreshTimer = setTimeout(() => {
       this.modelRefreshTimer = null;
@@ -300,12 +335,12 @@ class AppController extends EventEmitter {
     }, 0);
   }
   async refreshModels() {
-    if (this.closing || !this.connected || this.active || this.operation) return;
+    if (this.closing || !this.connected || this.turns.size || this.operation) return;
     return this.idleOperation(this.t('载入会话'), async () => {
       const revision = this.modelCatalogRevision;
       const adapter = this.adapter;
       for (const session of this.visibleSessions()) {
-        if (this.closing || this.active || !this.connected || this.adapter !== adapter) break;
+        if (this.closing || this.turns.size || !this.connected || this.adapter !== adapter) break;
         if (!this.loaded.has(session.id) || (this.modelRefreshes.get(session.id) || 0) >= revision) continue;
         // Bound failures to one attempt per catalog revision. A global catalog
         // is not permission to widen a session-specific model allowlist.
@@ -417,11 +452,13 @@ class AppController extends EventEmitter {
           }
         }
       } catch (e) { error = e.message; }
+      // The quota uses the account's saved sign-in, not the engine connection.
+      this.scheduleQuotaRefresh(0);
       return this.snapshot(error);
     }, { allowInterfaceSettings: true });
   }
   async createSession(options = {}) {
-    return this.idleOperation(this.t('创建会话'), () => this._createSession(options));
+    return this.idleOperation(this.t('创建会话'), () => this._createSession(options), { duringTurns: true });
   }
   async _createSession({ cwd, model, mode } = {}) {
     await this._connect();
@@ -445,7 +482,7 @@ class AppController extends EventEmitter {
   async ensureLoaded(session) {
     // Restoring a session does not replace settings. Keep local preferences
     // usable when startup also restores a conversation selected in the UI.
-    return this.idleOperation(this.t('载入会话'), () => this._ensureLoaded(session), { allowInterfaceSettings: true });
+    return this.idleOperation(this.t('载入会话'), () => this._ensureLoaded(session), { allowInterfaceSettings: true, duringTurns: true });
   }
   async _ensureLoaded(session) {
     if ((session.accountId || 'local') !== this.activeAccountId) throw new Error(this.t('请先切换到这段对话所属的账户'));
@@ -474,7 +511,8 @@ class AppController extends EventEmitter {
     const session = this.getSession(id);
     // History remains readable offline and while another operation owns the engine.
     if (!this.connected || !this.loaded.has(id)) session.modelSelectionVerified = false;
-    if (this.connected && !this.active && !this.operation) {
+    // Other conversations may keep generating while this one is opened.
+    if (this.connected && !this.operation) {
       try { await this.ensureLoaded(session); }
       catch (error) { this.emitEvent({ type: 'error', sessionId: id, message: error.message }); }
     }
@@ -485,6 +523,8 @@ class AppController extends EventEmitter {
       const session = this.getSession(sessionId);
       if (model !== undefined && (typeof model !== 'string' || !model.trim())) throw new Error(this.t('请选择有效的模型'));
       if (mode !== undefined && (typeof mode !== 'string' || !mode.trim())) throw new Error(this.t('请选择有效的推理档位'));
+      // A running conversation keeps its configuration until its turn ends.
+      if (this.turns.has(session.id)) throw new Error(this.t('请等待当前回复完成，或先停止生成。'));
       await this._ensureLoaded(session);
       try {
         if (model !== undefined && (model !== session.model || !session.modelSelectionVerified)) {
@@ -501,11 +541,12 @@ class AppController extends EventEmitter {
         this.syncSession(session, this.engineSession(sessionId));
         this.publishSession(session);
       }
-    });
+    }, { duringTurns: true });
   }
   async send({ sessionId, text = '', attachments = [] }) {
-    if (this.active) throw new Error(this.t('已有回复正在生成'));
+    if (this.turns.has(sessionId)) throw new Error(this.t('已有回复正在生成'));
     if (this.closing) throw new Error(this.t('应用正在关闭'));
+    if (this.turns.size >= MAX_CONCURRENT_TURNS) throw new Error(this.t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: MAX_CONCURRENT_TURNS }));
     const backgroundOperation = this.operation;
     if (backgroundOperation && !backgroundOperation.background) throw new Error(this.t('正在{name}，请稍后再发送。', { name: backgroundOperation.name }));
     if (!Array.isArray(attachments) || attachments.length > MAX_ATTACHMENTS) throw new Error(this.t('每条消息最多添加 10 个附件'));
@@ -521,8 +562,8 @@ class AppController extends EventEmitter {
     if (new Set(selected.map(item => item.id)).size !== selected.length) throw new Error(this.t('无效的附件'));
     if (selected.reduce((total, item) => total + item.size, 0) > MAX_TOTAL_BYTES) throw new Error(this.t('每条消息的附件总大小不能超过 50 MB'));
     // Reserve the turn before awaiting session restore to prevent double sends.
-    const turn = { sessionId, message: null, cancelled: false };
-    this.active = turn;
+    const turn = { sessionId, message: null, cancelled: false, promise: null };
+    this.turns.set(sessionId, turn);
     try {
       // A catalog refresh can begin between createSession and this send IPC.
       // Reserve the turn while it finishes so one click sends exactly once and
@@ -532,8 +573,8 @@ class AppController extends EventEmitter {
         for (const item of selected) await resolveAttachment(item.src, [this.attachmentDirectory()], this.t);
         await this._ensureLoaded(session);
       }
-    } catch (e) { this.active = null; this.scheduleModelRefresh(); throw e; }
-    if (turn.cancelled) { this.active = null; this.scheduleModelRefresh(); this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
+    } catch (e) { this.releaseTurn(turn); this.scheduleModelRefresh(); throw e; }
+    if (turn.cancelled) { this.releaseTurn(turn); this.scheduleModelRefresh(); this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
     const now = Date.now();
     const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
     session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
@@ -551,16 +592,17 @@ class AppController extends EventEmitter {
       session.title = previous.title;
       session.titleIsDefault = previous.titleIsDefault;
       session.updatedAt = previous.updatedAt;
-      this.active = null;
+      this.releaseTurn(turn);
       this.scheduleModelRefresh();
       throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
     }
-    this.active.message = message;
+    turn.message = message;
     this.emitEvent({ type: 'session-updated', sessionId, session });
     this.emitEvent({ type: 'status', sessionId, status: 'working' });
-    this.turnPromise = (async () => {
+    const adapter = this.adapter;
+    turn.promise = (async () => {
       try {
-        const result = await this.adapter.prompt({ sessionId, text: text.trim(), ...(selected.length ? { attachments: selected.map(item => ({ ...item, path: item.src, uri: pathToFileURL(item.src).href })) } : {}) });
+        const result = await adapter.prompt({ sessionId, text: text.trim(), ...(selected.length ? { attachments: selected.map(item => ({ ...item, path: item.src, uri: pathToFileURL(item.src).href })) } : {}) });
         if (message.status === 'working') message.status = result?.cancelled || result?.stopReason === 'cancelled' ? 'cancelled' : 'complete';
         if (typeof result?.stopReason === 'string') message.stopReason = result.stopReason;
         if (message.status !== 'cancelled' && Object.hasOwn(STOP_NOTICES, result?.stopReason)) message.noticeKey = STOP_NOTICES[result.stopReason];
@@ -570,16 +612,23 @@ class AppController extends EventEmitter {
           this.emitEvent({ type: 'error', sessionId, message: e.message });
         }
       } finally {
-        this.permissions.clear();
-        this.active = null;
+        this.releaseTurn(turn);
+        // Other conversations keep their own pending permission requests.
+        for (const [requestId, permission] of this.permissions) {
+          if (permission.sessionId === sessionId || (!permission.sessionId && !this.turns.size)) this.permissions.delete(requestId);
+        }
         session.updatedAt = Date.now();
         try { this.save(); }
         catch (error) { this.emitEvent({ type: 'error', sessionId, message: this.t('保存失败：{error}', { error: error.message }) }); }
         this.emitEvent({ type: 'session-updated', sessionId, session });
         this.emitEvent({ type: 'status', sessionId, status: message.status === 'cancelled' ? 'cancelled' : 'idle' });
         this.scheduleModelRefresh();
+        // Stopped and failed turns can still consume usage. The CLI records it
+        // when the turn ends, so read the quota again shortly afterwards.
+        this.scheduleQuotaRefresh(QUOTA_AFTER_TURN_DELAY, QUOTA_AFTER_TURN_INTERVAL);
       }
     })();
+    this.turnPromise = turn.promise;
     return { accepted: true };
   }
   handleEvent(event) {
@@ -601,11 +650,13 @@ class AppController extends EventEmitter {
     }
     if (event.type === 'permission') this.permissions.set(String(event.requestId), event);
     if (event.type === 'status' && event.status === 'permission_resolved') this.permissions.delete(String(event.requestId));
-    const current = this.active;
+    // Route output to the turn of its own conversation. An event without a
+    // session ID is only unambiguous while exactly one conversation is running.
+    const current = event.sessionId ? this.turns.get(event.sessionId) : this.turns.size === 1 ? this.active : undefined;
     const message = current?.message;
     const isPlan = event.type === 'status' && event.status === 'plan';
-    if ((['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary'].includes(event.type) || isPlan) && (!message || (event.sessionId && event.sessionId !== current.sessionId))) return;
-    if (message && (!event.sessionId || event.sessionId === current.sessionId)) {
+    if ((['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary'].includes(event.type) || isPlan) && !message) return;
+    if (message) {
       if (isPlan) {
         // ACP plans replace the previous plan, including an explicitly empty one.
         const entries = (Array.isArray(event.entries) ? event.entries : []).filter(entry => typeof entry?.content === 'string').map(entry => ({
@@ -676,8 +727,8 @@ class AppController extends EventEmitter {
     this.emitEvent(event);
   }
   async cancel(sessionId) {
-    const turn = this.active;
-    if (turn?.sessionId !== sessionId) return { cancelled: false };
+    const turn = this.turns.get(sessionId);
+    if (!turn) return { cancelled: false };
     turn.cancelled = true;
     // During connection/restore there is no prompt for the adapter to cancel yet.
     if (!turn.message) return { cancelled: true };
@@ -685,7 +736,7 @@ class AppController extends EventEmitter {
     turn.message.status = 'cancelled';
     try { return await this.adapter.cancel(sessionId); }
     catch (error) {
-      if (this.active === turn) { turn.cancelled = false; turn.message.status = previousStatus; }
+      if (this.turns.get(sessionId) === turn) { turn.cancelled = false; turn.message.status = previousStatus; }
       throw error;
     }
   }
@@ -733,6 +784,10 @@ class AppController extends EventEmitter {
       if (typeof patch.subagentsEnabled !== 'boolean') throw new Error(this.t('子代理开关必须为布尔值'));
       changes.subagentsEnabled = patch.subagentsEnabled;
     }
+    if (patch.quotaEnabled !== undefined) {
+      if (typeof patch.quotaEnabled !== 'boolean') throw new Error(this.t('额度显示开关必须为布尔值'));
+      changes.quotaEnabled = patch.quotaEnabled;
+    }
     const changed = ['executable', 'workspace', 'subagentsEnabled'].some(key => Object.hasOwn(changes, key) && changes[key] !== this.settings[key]);
     const persist = async () => {
       if (changed) {
@@ -744,6 +799,12 @@ class AppController extends EventEmitter {
       // a background catalog refresh. Preserve fields this request did not set.
       this.settings = { ...previous, ...changes };
       try { this.save(); } catch (error) { this.settings = previous; throw error; }
+      if (this.settings.quotaEnabled !== previous.quotaEnabled) {
+        // Turning the quota off stops all further requests immediately.
+        this.resetQuota();
+        if (this.settings.quotaEnabled) this.scheduleQuotaRefresh(0);
+        else this.setQuota({ status: 'disabled' });
+      }
       return this.settings;
     };
     // Startup does not write settings, so interface preferences can be saved
@@ -779,7 +840,7 @@ class AppController extends EventEmitter {
     return s;
   }
   deleteSession(id) {
-    if (this.active?.sessionId === id) throw new Error(this.t('请先停止当前回复'));
+    if (this.turns.has(id)) throw new Error(this.t('请先停止当前回复'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再删除会话。', { name: this.operation.name }));
     this.getSession(id);
     const previous = this.sessions;
@@ -805,9 +866,14 @@ class AppController extends EventEmitter {
     this.closing = true;
     clearTimeout(this.modelRefreshTimer);
     this.modelRefreshTimer = null;
+    this.resetQuota();
+    clearInterval(this.quotaPoll);
+    this.quotaPoll = null;
     // Cancel pending sends before waiting on a possibly slow login shutdown.
-    if (this.active) this.active.cancelled = true;
-    if (this.active?.message) this.active.message.status = 'cancelled';
+    for (const turn of this.turns.values()) {
+      turn.cancelled = true;
+      if (turn.message) turn.message.status = 'cancelled';
+    }
     let failure;
     const initialLogin = this.accountManager.pending;
     try { await this.accountManager.cancelLogin(); } catch (error) { failure = error; }
@@ -818,12 +884,70 @@ class AppController extends EventEmitter {
     }
     try { this.save(); } catch (error) { failure ||= error; }
     try {
+      const running = [...this.turns.values()].map(turn => turn.promise).filter(Boolean);
       // A full/unavailable disk must never leave the owned Grok process running.
       await this.closeAdapter();
-      if (this.turnPromise) await this.turnPromise;
+      await Promise.all(running);
     } catch (error) { failure ||= error; }
     finally { clearTimeout(this.saveTimer); }
     if (failure) throw failure;
   }
+  // Quota values are derived in the main process. Credentials and the raw
+  // billing response never cross IPC; the renderer only receives this summary.
+  quotaState() { return structuredClone(this.quota); }
+  setQuota(quota, accountId = this.activeAccountId) {
+    this.quota = { ...quota, accountId };
+    this.emitEvent({ type: 'quota', quota: this.quotaState() });
+    return this.quotaState();
+  }
+  resetQuota() {
+    clearTimeout(this.quotaTimer);
+    this.quotaTimer = null;
+    this.quotaRequest = null;
+    this.quota = { status: 'idle', accountId: this.activeAccountId };
+  }
+  scheduleQuotaRefresh(delay = 0, minInterval = 0) {
+    if (this.closing || !this.quotaFetch || !this.settings.quotaEnabled) return;
+    clearTimeout(this.quotaTimer);
+    this.quotaTimer = setTimeout(() => {
+      this.quotaTimer = null;
+      // Even an immediate refresh skips a read that just completed.
+      void this.refreshQuota({ minInterval: Math.max(minInterval, QUOTA_FORCE_INTERVAL) }).catch(() => {});
+    }, delay);
+    this.quotaTimer.unref?.();
+    // A slow periodic read lets a weekly reset appear while the window is idle.
+    if (!this.quotaPoll) {
+      this.quotaPoll = setInterval(() => { if (!this.closing) void this.refreshQuota().catch(() => {}); }, QUOTA_POLL_INTERVAL);
+      this.quotaPoll.unref?.();
+    }
+  }
+  async refreshQuota({ force = false, minInterval = QUOTA_MIN_INTERVAL } = {}) {
+    if (this.closing) return this.quotaState();
+    const accountId = this.activeAccountId;
+    if (!this.quotaFetch || !this.settings.quotaEnabled) return this.quota.status === 'disabled' ? this.quotaState() : this.setQuota({ status: 'disabled' });
+    const account = this.accounts.find(item => item.id === accountId);
+    let auth;
+    try { auth = account && this.accountManager.credential(account); } catch { auth = null; }
+    if (!auth?.credential && !auth?.apiKey) return this.setQuota({ status: 'signed-out' });
+    if (this.quotaRequest?.accountId === accountId) return this.quotaRequest.promise;
+    const previous = this.quota.accountId === accountId ? this.quota : null;
+    const since = Date.now() - (previous?.checkedAt || 0);
+    if (previous?.checkedAt && since < (force ? QUOTA_FORCE_INTERVAL : minInterval)) return this.quotaState();
+    const retained = previous?.usage ? { usage: previous.usage, fetchedAt: previous.fetchedAt } : {};
+    this.setQuota({ status: previous?.usage ? 'ok' : 'loading', ...retained, refreshing: true, ...(previous?.checkedAt ? { checkedAt: previous.checkedAt } : {}) });
+    const request = { accountId };
+    request.promise = (async () => {
+      const result = await fetchAccountQuota(auth, { fetch: this.quotaFetch, clientVersion: this.normalizeInfo().version });
+      // Discard a response for an account that is no longer displayed.
+      if (this.closing || this.activeAccountId !== accountId || this.quotaRequest !== request) return this.quotaState();
+      const checkedAt = Date.now();
+      if (result.usage) return this.setQuota({ status: 'ok', usage: result.usage, fetchedAt: checkedAt, checkedAt });
+      // Keep the last confirmed value visible, marked with why it is stale.
+      if (retained.usage) return this.setQuota({ status: 'ok', ...retained, reason: result.reason, checkedAt });
+      return this.setQuota({ status: 'unavailable', reason: result.reason, checkedAt });
+    })().finally(() => { if (this.quotaRequest === request) this.quotaRequest = null; });
+    this.quotaRequest = request;
+    return request.promise;
+  }
 }
-module.exports = { AppController };
+module.exports = { AppController, MAX_CONCURRENT_TURNS };
