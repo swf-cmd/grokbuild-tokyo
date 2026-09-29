@@ -15,6 +15,9 @@ const motionEnabled = process.argv.includes('--motion');
 const motionFps = 20;
 const motionFrames = 60;
 const captureTime = '2026-09-07T14:42:00.000Z';
+// Illustrative sidebar quota, served by the fixture: nothing is read from xAI.
+// The reset falls one week after the demo clock so the card reads naturally.
+const demoQuota = { usage: { usedPercent: 37, periodType: 'weekly', resetAt: Date.UTC(2026, 8, 14, 0, 0), plan: 'SuperGrok', products: [{ name: 'Grok Build', usedPercent: 21 }] } };
 const workspace = 'R:\\Workspace';
 const copy = {
   en: {
@@ -131,6 +134,8 @@ async function setRainHidden(page, hidden) {
 
 async function captureView(desktop, page, locale, view) {
   await page.mouse.move(10, 10);
+  await page.locator('#quota-card[data-state="normal"][aria-busy="false"]').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#quota-value').textContent(), '37%');
   await settleAndPause(page);
   assert.equal(await page.locator('#rain-layer').isVisible(), true, 'The rain preference must be enabled');
   const evidence = await page.locator('#rain-layer').evaluate(element => {
@@ -249,7 +254,7 @@ async function captureMotion(desktop, page, locale, panel) {
 
 async function captureLocale(electron, runRoot, locale, results) {
   const { testRoot, sessions } = seedProfile(runRoot, locale);
-  const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
+  const env = { ...process.env, TOKYO_TEST_ROOT: testRoot, TOKYO_TEST_QUOTA: JSON.stringify(demoQuota) };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.TOKYO_UI_SOURCE_ROOT;
   const desktop = await electron.launch({ args: ['--force-device-scale-factor=1', path.join(root, 'tests', 'fixtures', 'ui-app.cjs')], env });
