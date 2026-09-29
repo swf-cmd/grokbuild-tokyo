@@ -153,7 +153,9 @@ require.cache[accountsFile] = { id: accountsFile, filename: accountsFile, loaded
 // Tests may replace test.quota with another result, including { reason }.
 const quotaFile = path.join(sourceRoot, 'src', 'usage-quota.cjs');
 const quotaModule = require(quotaFile);
-test.quota = { usage: { usedPercent: 37, periodType: 'weekly', resetAt: Date.UTC(2030, 0, 6, 9, 0), plan: 'SuperGrok', products: [{ name: 'Grok Build', usedPercent: 21 }] } };
+// TOKYO_TEST_QUOTA lets a capture choose the value served from startup onward.
+test.quota = process.env.TOKYO_TEST_QUOTA ? JSON.parse(process.env.TOKYO_TEST_QUOTA)
+  : { usage: { usedPercent: 37, periodType: 'weekly', resetAt: Date.UTC(2030, 0, 6, 9, 0), plan: 'SuperGrok', products: [{ name: 'Grok Build', usedPercent: 21 }] } };
 require.cache[quotaFile] = { id: quotaFile, filename: quotaFile, loaded: true, exports: { ...quotaModule, fetchAccountQuota: async (auth, options = {}) => {
   test.calls.push({ method: 'fetchQuota', signedIn: !!auth?.credential, transport: typeof options.fetch });
   return copy(test.quota);
