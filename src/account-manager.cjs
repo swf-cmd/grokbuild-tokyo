@@ -130,6 +130,7 @@ class AccountManager extends EventEmitter {
     const local = account.id === 'local';
     const usable = (value, inline = false) => value && typeof value === 'object' && !Array.isArray(value) && typeof value.key === 'string' && value.key.trim() && (['oidc', 'external', 'api_key'].includes(value.auth_mode) || (inline && ['web_login', 'grok'].includes(value.auth_mode)));
     let current;
+    let credentialScope;
     // The local CLI honors inline credentials first, then its configured store.
     // Invalid inline JSON falls back to that store, matching AuthManager::new.
     if (local && process.env.GROK_AUTH) {
@@ -142,13 +143,16 @@ class AccountManager extends EventEmitter {
         const stat = fs.statSync(file);
         if (stat.isFile() && stat.size <= 2 * 1024 * 1024) {
           const store = JSON.parse(fs.readFileSync(file, 'utf8'));
-          const credentials = store && typeof store === 'object' && !Array.isArray(store) ? Object.values(store).filter(item => usable(item)) : [];
-          current = credentials.sort((a, b) => (Date.parse(b.create_time) || 0) - (Date.parse(a.create_time) || 0))[0];
+          const credentials = store && typeof store === 'object' && !Array.isArray(store) ? Object.entries(store).filter(([, item]) => usable(item)) : [];
+          const selected = credentials.sort(([, a], [, b]) => (Date.parse(b.create_time) || 0) - (Date.parse(a.create_time) || 0))[0];
+          if (selected) [credentialScope, current] = selected;
         }
       }
     } catch { /* Missing or invalid configured stores must not fall back to a different account's file. */ }
     const apiKey = local ? process.env.XAI_API_KEY ?? process.env.GROK_CODE_XAI_API_KEY : undefined;
-    return { credential: current || null, apiKey: typeof apiKey === 'string' && !!apiKey.trim() };
+    // Preserve the store's issuer scope for callers that send credentials to a
+    // fixed service. Login summaries retain the same credential selection.
+    return { credential: current || null, credentialScope, apiKey: typeof apiKey === 'string' && !!apiKey.trim() };
   }
   summary(account, cwd = this.getWorkingDirectory()) {
     const result = { id: account.id, name: account.name, nameIsDefault: account.nameIsDefault === true, kind: account.id === 'local' ? 'local' : 'profile', signedIn: false, email: '' };

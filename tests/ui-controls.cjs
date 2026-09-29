@@ -169,7 +169,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click(); await page.locator('#settings-feedback').filter({ hasText: '请选择' }).waitFor();
       await page.locator('#executable-input').fill(alternateExecutable); await page.locator('#workspace-input').fill(alternateWorkspace); await page.locator('#rain-input').uncheck(); await page.locator('#subagents-input').uncheck();
       await page.locator('#save-settings-button').click(); await page.locator('#settings-dialog').waitFor({ state: 'hidden' }); await ready();
-      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, musicEnabled: true, musicVolume: 90, language: 'zh-CN' });
+      assert.deepEqual(readState().settings, { executable: alternateExecutable, workspace: alternateWorkspace, rainEnabled: false, subagentsEnabled: false, quotaEnabled: true, musicEnabled: true, musicVolume: 90, language: 'zh-CN' });
       assert.equal(await page.locator('#rain-layer').isHidden(), true);
       assert.equal(await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.options.subagentsEnabled), false);
       assert.equal(await page.locator('#session-path').textContent(), workspace, 'existing chat keeps its own directory');
@@ -275,7 +275,16 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), true);
       await controlWindow('maximize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMaximized()), false);
       await controlWindow('minimize'); await page.waitForTimeout(200); assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), true);
-      await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].restore());
+      await desktop.evaluate(async ({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        // Native restore is asynchronous; wait until pointer interactions can
+        // reach the restored window before starting the next scenario.
+        await new Promise(resolve => { window.once('restore', resolve); window.restore(); });
+        window.focus();
+      });
+      await page.bringToFront();
+      await page.waitForFunction(() => document.visibilityState === 'visible' && document.hasFocus());
+      assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), false);
     });
     await stage('delete keep/close/confirm and disabled export after deletion', async () => {
       const before = readState().sessions.length;

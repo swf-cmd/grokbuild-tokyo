@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { BILLING_URL, fetchAccountQuota, parseBilling, accessToken, clientVersionHeader } = require('../src/usage-quota.cjs');
 
-const oauth = (extra = {}) => ({ credential: { key: 'fixture-access-token', auth_mode: 'oidc', ...extra }, apiKey: false });
+const oauth = (extra = {}) => ({ credential: { key: 'fixture-access-token', auth_mode: 'oidc', ...extra }, credentialScope: 'https://auth.x.ai::grok-cli', apiKey: false });
 const json = (body, status = 200, headers = {}) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
 test('billing responses become a small summary, including protobuf zero omission', () => {
@@ -25,12 +25,37 @@ test('billing responses become a small summary, including protobuf zero omission
     prepaidBalanceCents: 1250, onDemandCapCents: 5000, onDemandUsedCents: 320, onDemandEnabled: true,
   });
   // Right after a reset the service omits zero values entirely.
-  assert.deepEqual(parseBilling({ config: {} }), { usedPercent: 0, products: [] });
+  assert.deepEqual(parseBilling({ config: { currentPeriod: { type: 'weekly', end: '2030-01-06T09:00:00Z' } } }), { usedPercent: 0, periodType: 'weekly', resetAt: Date.UTC(2030, 0, 6, 9), products: [] });
   assert.equal(parseBilling({ config: { currentPeriod: { periodType: 'monthly', end: 1894352400 } } }).resetAt, 1894352400000);
   assert.equal(parseBilling({ config: { currentPeriod: { end: { seconds: '1894352400', nanos: 500000000 } } } }).resetAt, 1894352400500);
   assert.equal(parseBilling({ config: { billingPeriodEnd: '1894352400000' } }).resetAt, 1894352400000);
   assert.equal(parseBilling({ config: { creditUsagePercent: '12.5' } }).usedPercent, 12.5);
   for (const invalid of [null, {}, { config: [] }, { config: { creditUsagePercent: -1 } }, { config: { creditUsagePercent: 'many' } }]) assert.equal(parseBilling(invalid), null);
+});
+
+test('missing usage means zero only when the response contains a usable billing period', async () => {
+  for (const config of [{}, { isUnifiedBillingUser: true }, { currentPeriod: { type: 'weekly' } }, { currentPeriod: { type: 'weekly', end: 'invalid' } }]) {
+    assert.equal(parseBilling({ config }), null);
+    assert.deepEqual(await fetchAccountQuota(oauth(), { fetch: async () => json({ config }) }), { reason: 'invalid' });
+  }
+  assert.equal(parseBilling({ config: { creditUsagePercent: 0 } }).usedPercent, 0);
+});
+
+test('only verified production xAI issuers reach the billing endpoint', async () => {
+  let calls = 0;
+  const fetch = async () => { calls++; return json({ config: { creditUsagePercent: 5 } }); };
+  for (const scope of ['https://idp.example.com::client', 'https://auth.x.ai.example.com::client', 'https://auth.x.ai::', 'http://localhost:22255::client', undefined]) {
+    assert.deepEqual(await fetchAccountQuota({ ...oauth(), credentialScope: scope }, { fetch }), { reason: 'unauthorized' });
+  }
+  for (const issuer of ['https://idp.example.com', 'https://auth.x.ai.example.com', 'http://localhost:22255']) {
+    assert.deepEqual(await fetchAccountQuota(oauth({ oidc_issuer: issuer }), { fetch }), { reason: 'unauthorized' });
+    assert.deepEqual(await fetchAccountQuota({ ...oauth({ auth_mode: 'external', oidc_issuer: issuer }), credentialScope: undefined }, { fetch }), { reason: 'unauthorized' });
+  }
+  assert.equal(calls, 0);
+  for (const auth of [oauth(), { ...oauth(), credentialScope: 'https://accounts.x.ai/sign-in' }, { ...oauth({ oidc_issuer: 'https://auth.x.ai' }), credentialScope: undefined }]) {
+    assert.equal((await fetchAccountQuota(auth, { fetch })).usage.usedPercent, 5);
+  }
+  assert.equal(calls, 3);
 });
 
 test('only an unexpired OAuth access token is used, never an API key', () => {

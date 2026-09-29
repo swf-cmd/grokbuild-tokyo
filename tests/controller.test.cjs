@@ -21,7 +21,7 @@ function deferred() {
 function signIn(controller, account) {
   const home = controller.accountManager.homeFor(account.id);
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(path.join(home, 'auth.json'), JSON.stringify({ scope: { key: 'fixture-credential', auth_mode: 'oidc', email: 'fixture@example.test' } }));
+  fs.writeFileSync(path.join(home, 'auth.json'), JSON.stringify({ 'https://auth.x.ai::grok-cli': { key: 'fixture-credential', auth_mode: 'oidc', email: 'fixture@example.test' } }));
 }
 
 function fixture(t, saved, { useAppLanguage = false, quotaFetch } = {}) {
@@ -2016,6 +2016,26 @@ test('quota reads use the active account credential, never expose it and keep th
   assert.equal(stale.status, 'ok');
   assert.equal(stale.usage.usedPercent, 40, 'the last confirmed value remains visible');
   assert.equal(stale.reason, 'unauthorized');
+  controller.quota.checkedAt -= 5000;
+  respond = () => new Response('{"config":{}}', { status: 200 });
+  const malformed = await controller.refreshQuota({ force: true });
+  assert.equal(malformed.usage.usedPercent, 40, 'an unrecognized config must not replace known usage with zero');
+  assert.equal(malformed.reason, 'invalid');
+});
+
+test('quota refuses another issuer without changing the account login summary', async t => {
+  let requests = 0;
+  const { controller } = fixture(t, undefined, { quotaFetch: async () => { requests++; return new Response('{"config":{"creditUsagePercent":5}}'); } });
+  signIn(controller, { id: 'local' });
+  const authFile = path.join(controller.accountManager.homeFor('local'), 'auth.json');
+  const store = JSON.parse(fs.readFileSync(authFile, 'utf8'));
+  store['https://idp.example.com::company'] = { key: 'corporate-fixture-token', auth_mode: 'oidc', create_time: '2030-01-01T00:00:00Z', email: 'person@company.example' };
+  fs.writeFileSync(authFile, JSON.stringify(store));
+  assert.equal(controller.accountManager.summary({ id: 'local' }).signedIn, true);
+  assert.equal(controller.accountManager.summary({ id: 'local' }).email, 'person@company.example');
+  assert.equal((await controller.refreshQuota()).reason, 'unauthorized');
+  assert.equal(requests, 0, 'a corporate token must never reach xAI billing');
+  assert.equal(JSON.stringify(controller.snapshot()).includes('corporate-fixture-token'), false);
 });
 
 test('switching accounts hides the previous quota and discards its late response', async t => {

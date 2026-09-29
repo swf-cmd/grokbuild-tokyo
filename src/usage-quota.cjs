@@ -73,15 +73,17 @@ function periodType(period) {
 function parseBilling(body) {
   const config = isRecord(body?.config) ? body.config : null;
   if (!config) return null;
-  // Protobuf JSON omits zero values: no percentage at the start of a period is 0%.
-  const hasPercent = config.creditUsagePercent !== undefined;
-  const usedPercent = hasPercent ? percent(config.creditUsagePercent) : 0;
-  if (usedPercent === undefined) return null;
   const period = isRecord(config.currentPeriod) ? config.currentPeriod : {};
+  const resetAt = epochMs(period.end) ?? epochMs(config.billingPeriodEnd);
+  // Protobuf JSON omits zero values at the start of a valid billing period.
+  // An empty or unrecognized config is not evidence of an unused allowance.
+  const hasPercent = config.creditUsagePercent !== undefined;
+  const usedPercent = hasPercent ? percent(config.creditUsagePercent) : resetAt !== undefined ? 0 : undefined;
+  if (usedPercent === undefined) return null;
   const usage = {
     usedPercent,
     periodType: periodType(period),
-    resetAt: epochMs(period.end) ?? epochMs(config.billingPeriodEnd),
+    resetAt,
     plan: label(body.subscriptionTier ?? config.subscriptionTier),
     products: (Array.isArray(config.productUsage) ? config.productUsage : []).filter(isRecord).slice(0, 8)
       .map(item => ({ name: label(item.product ?? item.name), usedPercent: percent(item.usagePercent ?? item.creditUsagePercent) }))
@@ -102,6 +104,13 @@ function accessToken(auth, now = Date.now()) {
   if (!credential) return { reason: auth?.apiKey ? 'api-key' : 'signed-out' };
   // API keys authenticate api.x.ai, not the subscription billing proxy.
   if (credential.auth_mode === 'api_key') return { reason: 'api-key' };
+  // The CLI store can also contain corporate OIDC and external-provider
+  // credentials. Only production xAI tokens belong at this fixed endpoint.
+  // Inline GROK_AUTH has no store scope, so it must identify its xAI issuer.
+  const scope = auth.credentialScope;
+  const issuer = credential.oidc_issuer;
+  const xaiScope = scope === 'https://accounts.x.ai/sign-in' || (typeof scope === 'string' && /^https:\/\/auth\.x\.ai::[^\s]+$/.test(scope));
+  if ((scope !== undefined && !xaiScope) || (issuer != null && issuer !== 'https://auth.x.ai') || (!xaiScope && issuer !== 'https://auth.x.ai')) return { reason: 'unauthorized' };
   const token = typeof credential.key === 'string' ? credential.key.trim() : '';
   if (!token || token.length > 16384 || /[\s\u0000-\u001f\u007f]/.test(token)) return { reason: 'unauthorized' };
   const expires = epochMs(credential.expires_at ?? credential.expiresAt);
