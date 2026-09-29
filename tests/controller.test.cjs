@@ -911,6 +911,28 @@ test('the subagent setting defaults to enabled, validates booleans and restarts 
   assert.equal(instances[2].options.subagentsEnabled, true);
 });
 
+test('engine settings queued behind a catalog refresh preserve preferences saved during the wait', async t => {
+  const { controller, adapter } = await started(t);
+  adapter.loadGate = deferred();
+  adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
+  const refreshing = controller.refreshModels();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(controller.operation?.background, true);
+  const saving = controller.saveSettings({ subagentsEnabled: false });
+  void saving.catch(() => {});
+  const preferences = { language: 'ja', rainEnabled: false, musicEnabled: false, musicVolume: 23 };
+  await controller.saveSettings(preferences);
+  const expected = { ...controller.settings, subagentsEnabled: false };
+  assert.equal(adapter.closeCount, 0, 'the engine setting still waits for the catalog refresh');
+  adapter.loadGate.resolve();
+  await refreshing;
+  assert.deepEqual(await saving, expected);
+  assert.deepEqual(controller.settings, expected);
+  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, expected);
+  assert.equal(adapter.closeCount, 1);
+  assert.equal(controller.operation, null);
+});
+
 test('engine shutdown for changed settings reserves the engine until complete', async t => {
   const { controller, adapter, session } = await started(t);
   adapter.closeGate = deferred();
