@@ -1,0 +1,335 @@
+{
+  "complete": true,
+  "capturedAt": "2026-09-29T15:40:24.891Z",
+  "demoTime": "2026-09-07T14:42:00.000Z",
+  "platform": "win32",
+  "workspace": "R:\\Workspace",
+  "captures": [
+    {
+      "locale": "en",
+      "view": "welcome",
+      "file": "welcome-en.png",
+      "hidden": false,
+      "opacity": "0.78",
+      "maskImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 6%, rgba(0, 0, 0, 0.533) 38%, rgb(0, 0, 0) 72%)",
+      "reducedMotion": false,
+      "before": {
+        "animationName": "rain-near",
+        "backgroundImage": "radial-gradient(1px 23px at 24px 48px, rgba(217, 243, 237, 0.72) 0%, rgba(189, 222, 219, 0.32) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.8px 18px at 107px 132px, rgba(217, 243, 237, 0.6) 0%, rgba(189, 222, 219, 0.267) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 27px at 171px 222px, rgba(217, 243, 237, 0.76) 0%, rgba(189, 222, 219, 0.333) 48%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.8",
+        "transform": "matrix(1, 0, -0.212557, 1, 31.6837, -149.06)"
+      },
+      "after": {
+        "animationName": "rain-far",
+        "backgroundImage": "radial-gradient(0.8px 16px at 55px 82px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 22px at 164px 179px, rgba(198, 232, 225, 0.65) 0%, rgba(177, 216, 212, 0.25) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.7px 13px at 251px 302px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.58",
+        "transform": "matrix(1, 0, -0.212557, 1, 41.5463, -195.46)"
+      },
+      "panel": {
+        "x": 237,
+        "y": 49,
+        "width": 1203,
+        "height": 891
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 940,
+        "devicePixelRatio": 1
+      },
+      "overflow": false,
+      "contentOverflow": false,
+      "animations": [
+        {
+          "name": "rain-near",
+          "state": "paused",
+          "currentTime": 504
+        },
+        {
+          "name": "rain-far",
+          "state": "paused",
+          "currentTime": 1050
+        }
+      ],
+      "pixelDiff": {
+        "changedPixels": 11630,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 131,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      }
+    },
+    {
+      "locale": "en",
+      "view": "app",
+      "file": "app-en.png",
+      "hidden": false,
+      "opacity": "0.28",
+      "maskImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 6%, rgba(0, 0, 0, 0.533) 38%, rgb(0, 0, 0) 72%)",
+      "reducedMotion": false,
+      "before": {
+        "animationName": "rain-near",
+        "backgroundImage": "radial-gradient(1px 23px at 24px 48px, rgba(217, 243, 237, 0.72) 0%, rgba(189, 222, 219, 0.32) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.8px 18px at 107px 132px, rgba(217, 243, 237, 0.6) 0%, rgba(189, 222, 219, 0.267) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 27px at 171px 222px, rgba(217, 243, 237, 0.76) 0%, rgba(189, 222, 219, 0.333) 48%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.8",
+        "transform": "matrix(1, 0, -0.212557, 1, 31.6837, -149.06)"
+      },
+      "after": {
+        "animationName": "rain-far",
+        "backgroundImage": "radial-gradient(0.8px 16px at 55px 82px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 22px at 164px 179px, rgba(198, 232, 225, 0.65) 0%, rgba(177, 216, 212, 0.25) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.7px 13px at 251px 302px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.58",
+        "transform": "matrix(1, 0, -0.212557, 1, 41.5463, -195.46)"
+      },
+      "panel": {
+        "x": 237,
+        "y": 49,
+        "width": 1203,
+        "height": 891
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 940,
+        "devicePixelRatio": 1
+      },
+      "overflow": false,
+      "contentOverflow": false,
+      "animations": [
+        {
+          "name": "rain-near",
+          "state": "paused",
+          "currentTime": 504
+        },
+        {
+          "name": "rain-far",
+          "state": "paused",
+          "currentTime": 1050
+        }
+      ],
+      "pixelDiff": {
+        "changedPixels": 19546,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 133,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      }
+    },
+    {
+      "locale": "zh-CN",
+      "view": "welcome",
+      "file": "welcome-zh-CN.png",
+      "hidden": false,
+      "opacity": "0.78",
+      "maskImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 6%, rgba(0, 0, 0, 0.533) 38%, rgb(0, 0, 0) 72%)",
+      "reducedMotion": false,
+      "before": {
+        "animationName": "rain-near",
+        "backgroundImage": "radial-gradient(1px 23px at 24px 48px, rgba(217, 243, 237, 0.72) 0%, rgba(189, 222, 219, 0.32) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.8px 18px at 107px 132px, rgba(217, 243, 237, 0.6) 0%, rgba(189, 222, 219, 0.267) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 27px at 171px 222px, rgba(217, 243, 237, 0.76) 0%, rgba(189, 222, 219, 0.333) 48%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.8",
+        "transform": "matrix(1, 0, -0.212557, 1, 31.6837, -149.06)"
+      },
+      "after": {
+        "animationName": "rain-far",
+        "backgroundImage": "radial-gradient(0.8px 16px at 55px 82px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 22px at 164px 179px, rgba(198, 232, 225, 0.65) 0%, rgba(177, 216, 212, 0.25) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.7px 13px at 251px 302px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.58",
+        "transform": "matrix(1, 0, -0.212557, 1, 41.5463, -195.46)"
+      },
+      "panel": {
+        "x": 237,
+        "y": 49,
+        "width": 1203,
+        "height": 891
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 940,
+        "devicePixelRatio": 1
+      },
+      "overflow": false,
+      "contentOverflow": false,
+      "animations": [
+        {
+          "name": "rain-near",
+          "state": "paused",
+          "currentTime": 504
+        },
+        {
+          "name": "rain-far",
+          "state": "paused",
+          "currentTime": 1050
+        }
+      ],
+      "pixelDiff": {
+        "changedPixels": 11350,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 131,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      }
+    },
+    {
+      "locale": "zh-CN",
+      "view": "app",
+      "file": "app-zh-CN.png",
+      "hidden": false,
+      "opacity": "0.28",
+      "maskImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 6%, rgba(0, 0, 0, 0.533) 38%, rgb(0, 0, 0) 72%)",
+      "reducedMotion": false,
+      "before": {
+        "animationName": "rain-near",
+        "backgroundImage": "radial-gradient(1px 23px at 24px 48px, rgba(217, 243, 237, 0.72) 0%, rgba(189, 222, 219, 0.32) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.8px 18px at 107px 132px, rgba(217, 243, 237, 0.6) 0%, rgba(189, 222, 219, 0.267) 48%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 27px at 171px 222px, rgba(217, 243, 237, 0.76) 0%, rgba(189, 222, 219, 0.333) 48%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.8",
+        "transform": "matrix(1, 0, -0.212557, 1, 31.6837, -149.06)"
+      },
+      "after": {
+        "animationName": "rain-far",
+        "backgroundImage": "radial-gradient(0.8px 16px at 55px 82px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(1px 22px at 164px 179px, rgba(198, 232, 225, 0.65) 0%, rgba(177, 216, 212, 0.25) 52%, rgba(0, 0, 0, 0) 100%), radial-gradient(0.7px 13px at 251px 302px, rgba(198, 232, 225, 0.55) 0%, rgba(177, 216, 212, 0.2) 52%, rgba(0, 0, 0, 0) 100%)",
+        "opacity": "0.58",
+        "transform": "matrix(1, 0, -0.212557, 1, 41.5463, -195.46)"
+      },
+      "panel": {
+        "x": 237,
+        "y": 49,
+        "width": 1203,
+        "height": 891
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 940,
+        "devicePixelRatio": 1
+      },
+      "overflow": false,
+      "contentOverflow": false,
+      "animations": [
+        {
+          "name": "rain-near",
+          "state": "paused",
+          "currentTime": 504
+        },
+        {
+          "name": "rain-far",
+          "state": "paused",
+          "currentTime": 1050
+        }
+      ],
+      "pixelDiff": {
+        "changedPixels": 18999,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 131,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      }
+    }
+  ],
+  "motion": [
+    {
+      "locale": "en",
+      "view": "welcome",
+      "file": "welcome-en.gif",
+      "width": 1440,
+      "height": 940,
+      "fps": 20,
+      "frames": 60,
+      "durationSeconds": 3,
+      "bytes": 1701744,
+      "rainAnimations": [
+        {
+          "name": "rain-near",
+          "initialTime": 504,
+          "state": "paused"
+        },
+        {
+          "name": "rain-far",
+          "initialTime": 1050,
+          "state": "paused"
+        }
+      ],
+      "motionDiff": {
+        "changedPixels": 8298,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 40,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      },
+      "palette": "shared",
+      "dither": "bayer"
+    },
+    {
+      "locale": "zh-CN",
+      "view": "welcome",
+      "file": "welcome-zh-CN.gif",
+      "width": 1440,
+      "height": 940,
+      "fps": 20,
+      "frames": 60,
+      "durationSeconds": 3,
+      "bytes": 1690410,
+      "rainAnimations": [
+        {
+          "name": "rain-near",
+          "initialTime": 504,
+          "state": "paused"
+        },
+        {
+          "name": "rain-far",
+          "initialTime": 1050,
+          "state": "paused"
+        }
+      ],
+      "motionDiff": {
+        "changedPixels": 8305,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 40,
+        "threshold": 3
+      },
+      "rainOffStability": {
+        "changedPixels": 0,
+        "outsidePanelPixels": 0,
+        "maximumChannelDelta": 0,
+        "threshold": 3
+      },
+      "palette": "shared",
+      "dither": "bayer"
+    }
+  ],
+  "locales": {
+    "en": {
+      "pageErrors": [],
+      "fixtureActivity": {
+        "prompts": 0,
+        "logins": 0,
+        "external": []
+      }
+    },
+    "zh-CN": {
+      "pageErrors": [],
+      "fixtureActivity": {
+        "prompts": 0,
+        "logins": 0,
+        "external": []
+      }
+    }
+  }
+}
