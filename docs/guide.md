@@ -6,7 +6,7 @@ Grokbuild Tokyo is an unofficial Windows and Mac desktop client for Grok Build C
 
 Current version: **1.2.4**. The project uses the [MIT License](../LICENSE). See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for component notices and [SECURITY.md](../SECURITY.md) for security boundaries and vulnerability reporting.
 
-For available Mac test builds, artifact expiry and Windows build options, see the [download instructions](../README.md#downloads).
+For Mac and Windows release downloads, checksums and first-launch instructions, see [Downloads](../README.md#downloads).
 
 ## Getting started
 

@@ -6,7 +6,7 @@
 
 当前版本：**1.2.4**。项目采用 [MIT 许可证](../LICENSE)。第三方组件声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，安全边界及漏洞反馈说明见 [SECURITY.zh-CN.md](../SECURITY.zh-CN.md)。
 
-Mac 测试版获取方式、产物有效期及 Windows 构建选项见[下载说明](../README.zh-CN.md#下载说明)。
+Mac 与 Windows Release 下载、校验文件及首次启动步骤见[下载说明](../README.zh-CN.md#下载说明)。
 
 ## 启动
 
