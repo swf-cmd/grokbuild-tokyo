@@ -103,6 +103,9 @@ jobs:
           (cd dist && shasum -a 256 -c ./*-mac-universal.zip.sha256)
           mkdir App
           ditto -x -k dist/*-mac-universal.zip App
+          # Electron 44 downloads its development runtime lazily. This job
+          # launches only the extracted app, so initialize the reference first.
+          node node_modules/electron/install.js
           # The verifier compares notices embedded in the distributed bundle
           # against this exact Electron version's original runtime notices.
           cp node_modules/electron/dist/LICENSE App/LICENSE
