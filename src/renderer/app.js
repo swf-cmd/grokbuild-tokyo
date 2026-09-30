@@ -18,7 +18,7 @@
     busy: new Set(), started: new Map(), permissions: new Map(),
     drafts: new Map(), selectedModel: '', selectedMode: '', menuId: null,
     renameId: null, deleteId: null, renderPending: false, lastError: '',
-    accounts: [], activeAccountId: 'local', login: null, accountAction: false, accountDrafts: new Map(),
+    accounts: [], activeAccountId: 'local', login: null, loginRevision: 0, accountAction: false, accountDrafts: new Map(),
     accountRenameId: null, accountDeleteId: null, accountCancelPending: false,
     maxConcurrentTurns: 4, quota: null, quotaRefreshing: false,
   };
@@ -825,8 +825,8 @@
     if (event.type === 'account-login') {
       state.accounts = event.accounts || state.accounts;
       const login = event.login;
+      state.loginRevision += 1;
       state.login = login && ['starting', 'waiting', 'cancelling'].includes(login.status) ? login : null;
-      if (login && ['succeeded', 'failed', 'cancelled'].includes(login.status)) state.loginTerminal = login.status;
       renderAccounts(); renderConnection();
       if (login?.status === 'succeeded') {
         $('account-feedback').textContent = t('登录成功，正在连接…');
@@ -1185,9 +1185,11 @@
   }
 
   async function startAccountLogin() {
-    state.loginTerminal = null;
+    const revision = state.loginRevision;
     const login = await call('loginAccount', state.activeAccountId);
-    if (!state.loginTerminal) state.login = login;
+    // Events can arrive before the initial IPC reply; preserve their newer
+    // challenge, cancellation or completion instead of restoring "starting".
+    if (state.loginRevision === revision) state.login = login;
     renderAccounts();
   }
 

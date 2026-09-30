@@ -16,6 +16,8 @@ A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows an
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 ![Version 1.2.4](https://img.shields.io/badge/version-1.2.4-c1adff)
 
+**[Download for Mac](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip) · [Download for Windows](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip) · [Latest Release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**
+
 [Get started](#get-started) · [Downloads](#downloads) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
 
 </div>
@@ -60,11 +62,24 @@ Image input and file reading depend on the installed CLI's capabilities, tools a
 
 ### Downloads
 
-There is currently no published [Release](https://github.com/swf-cmd/grokbuild-tokyo/releases). The version badge identifies the source version, not a downloadable release.
+**[Get the latest release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)** — public downloads, with no GitHub sign-in required.
 
-- **Mac test build:** sign in to GitHub and open the latest successful `main` run in [Actions → Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml?query=branch%3Amain). Under **Artifacts**, download either `macos-universal-tested-on-arm64` or `macos-universal-tested-on-x64`. Both contain a universal app; the suffix identifies the test runner. Artifacts are retained for 14 days.
-- Extract the artifact ZIP, then the enclosed `Grokbuild-Tokyo-…-mac-universal.zip`, and move **Grokbuild Tokyo.app** to **Applications**. The enclosed `.zip.sha256` applies to the inner app archive. These test builds use the ad-hoc signature described [below](#build-the-desktop-app), and still require the official CLI.
-- **Windows, or expired Mac artifacts:** [run from source](#run-from-source) or [build locally](#build-the-desktop-app). Windows CI currently does not publish an app download.
+| v1.2.4 download | Requirements | Checksum |
+| --- | --- | --- |
+| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** | macOS 13+ · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
+| **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
+
+- **Mac:** unzip once, then move **Grokbuild Tokyo.app** to **Applications**. The app uses an ad-hoc signature, without a Developer ID certificate or Apple notarization. If macOS blocks the first launch, verify that you downloaded it from this repository, then follow **System Settings → Privacy & Security → Open Anyway** ([Apple's instructions](https://support.apple.com/en-us/102445)).
+- **Windows:** extract the ZIP to a folder you can write to, then run **`App\Grokbuild Tokyo.exe`**. Keep the entire **`App`** folder together; this is a portable app, not an installer. The app is not code-signed. If SmartScreen appears, verify the download source before using **More info → Run anyway**, if that option is available.
+- Both downloads include the desktop runtime. **Install the [official Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary) separately** and sign in with an account that has access to the service.
+
+### First launch
+
+1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac. If yours is elsewhere, choose the executable in **Preferences** at the bottom left. On Mac, select `grok` without a `.exe` extension.
+2. Use **Switch account** to sign in or add a profile. The local profile reuses the official CLI's existing login and configuration.
+3. Choose a project folder in **Preferences**, then start a new conversation. On Windows, the default is `Workspace` beside the packaged `App` folder (or in the checkout when running from source). On Mac, it is `~/Library/Application Support/Grokbuild Tokyo/Workspace`. Existing conversations keep their original folder.
+
+English is the initial interface language. Change it in **Preferences → Interface language** and save. No API key needs to be entered into this desktop interface.
 
 ### Run from source
 
@@ -75,11 +90,7 @@ npm ci
 npm start
 ```
 
-1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac. If yours is elsewhere, choose the executable in **Preferences** at the bottom left. On Mac, select `grok` without a `.exe` extension.
-2. Use **Switch account** to sign in or add a profile. The local profile reuses the official CLI's existing login and configuration.
-3. Choose a project folder in **Preferences**, then start a new conversation. The default is `Workspace` in the source checkout on Windows, or `~/Library/Application Support/Grokbuild Tokyo/Workspace` on Mac. Existing conversations keep their original folder.
-
-English is the initial interface language. Change it in **Preferences → Interface language** and save. No API key needs to be entered into this desktop interface.
+Then follow [First launch](#first-launch). See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
 
 ### Build the desktop app
 

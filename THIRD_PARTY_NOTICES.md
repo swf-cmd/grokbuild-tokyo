@@ -13,7 +13,7 @@ These browser distributions are included unmodified. Their original notices rema
 | Component | Version | File | License / notice |
 | --- | --- | --- | --- |
 | [Marked](https://github.com/markedjs/marked) | 18.0.11 | `src/renderer/vendor/marked.umd.js` | MIT; the bundled notice also contains the Markdown BSD-style notice. [Full text](licenses/marked-LICENSE.txt). |
-| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.15 | `src/renderer/vendor/purify.min.js` | Apache-2.0 OR MPL-2.0. [Full texts](licenses/DOMPurify-LICENSE.txt). |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.16 | `src/renderer/vendor/purify.min.js` | Apache-2.0 OR MPL-2.0. [Full texts](licenses/DOMPurify-LICENSE.txt). |
 
 ## Electron and development dependencies
 

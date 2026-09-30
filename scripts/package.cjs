@@ -1,34 +1,13 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const { packager } = require('@electron/packager');
 const { validatePackageSource, installPackagedBuild } = require('./package-policy.cjs');
 const { parseTarget, packageOptions } = require('./package-config.cjs');
-const { packagedExecutable, packagedBundle } = require('./package-paths.cjs');
+const { packagedExecutable } = require('./package-paths.cjs');
+const { archivePackagedBuild } = require('./package-archive.cjs');
 const root = path.resolve(__dirname, '..');
-
-async function archiveMacApp(target) {
-  const version = require('../package.json').version;
-  const filename = `Grokbuild-Tokyo-${version}-mac-${target.arch}.zip`;
-  const output = path.join(root, 'dist', filename);
-  fs.mkdirSync(path.dirname(output), { recursive: true });
-  const temporary = path.join(fs.mkdtempSync(path.join(root, 'work', 'package-archive-')), filename);
-  try {
-    // ditto preserves .app symlinks and executable modes. Archive only the fresh
-    // bundle, excluding local extended attributes and any development data.
-    execFileSync('/usr/bin/ditto', ['-c', '-k', '--keepParent', '--norsrc', '--noextattr', packagedBundle(root), temporary], { stdio: 'inherit' });
-    const hash = crypto.createHash('sha256');
-    for await (const chunk of fs.createReadStream(temporary)) hash.update(chunk);
-    fs.renameSync(temporary, output);
-    fs.writeFileSync(output + '.sha256', `${hash.digest('hex')}  ${filename}\n`);
-  } finally {
-    fs.rmSync(path.dirname(temporary), { recursive: true, force: true });
-  }
-  console.log(output);
-  console.log(output + '.sha256');
-}
 
 (async () => {
   const target = parseTarget(process.argv.slice(2));
@@ -52,5 +31,7 @@ async function archiveMacApp(target) {
   }
   installPackagedBuild(root, builds[0]);
   console.log(packagedExecutable(root, target.platform));
-  if (target.platform === 'darwin') await archiveMacApp(target);
+  const { archive, checksum } = await archivePackagedBuild(root, target);
+  console.log(archive);
+  console.log(checksum);
 })().catch(error => { console.error(error); process.exitCode = 1; });
