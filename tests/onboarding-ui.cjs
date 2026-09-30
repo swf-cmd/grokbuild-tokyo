@@ -66,9 +66,26 @@ const readState = () => JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     });
 
     await stage('the first-run action signs in the default account and shows the browser challenge', async () => {
+      // Deliver the challenge event before the older "starting" IPC response.
+      // A fast CLI may do this in production, especially on a busy renderer.
+      await desktop.evaluate(({ ipcMain }) => {
+        const original = ipcMain._invokeHandlers.get('tokyo:loginAccount');
+        ipcMain.removeHandler('tokyo:loginAccount');
+        ipcMain.handle('tokyo:loginAccount', async (...args) => {
+          ipcMain.removeHandler('tokyo:loginAccount');
+          ipcMain.handle('tokyo:loginAccount', original);
+          const initial = await original(...args);
+          await new Promise(resolve => { globalThis.__tokyoUITest.releaseLoginResponse = resolve; });
+          return initial;
+        });
+      });
       await page.locator('#signin-button').click();
       await page.locator('#accounts-dialog').waitFor({ state: 'visible' });
       await loginChallenge();
+      assert.equal(await page.locator('#account-button').isDisabled(), true);
+      await desktop.evaluate(() => globalThis.__tokyoUITest.releaseLoginResponse());
+      await page.waitForFunction(() => !document.querySelector('#account-button').disabled);
+      assert.equal(await page.locator('#account-login-code').textContent(), 'TEST-1234', 'a late initial IPC response must not erase the newer login challenge');
       assert.equal(await page.locator('.account-row.selected').getAttribute('data-account-id'), 'local');
       assert.equal(await page.locator('.account-row').count(), 1, 'first-time login does not require or create an extra profile');
       assert.equal(await page.locator('#account-login-panel').isVisible(), true);

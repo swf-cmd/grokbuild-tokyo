@@ -3,6 +3,7 @@ name: Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -31,6 +32,15 @@ jobs:
       - run: npm run test:audio
       - run: npm run test:time
       - run: npm run build
+      - name: Test the Windows portable ZIP after extraction
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $archive = "dist/Grokbuild-Tokyo-$version-win-x64.zip"
+          $expected = (Get-Content "$archive.sha256").Split(' ')[0]
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Windows ZIP checksum mismatch' }
+          Move-Item App work/windows-build-before-extraction
+          Expand-Archive -LiteralPath $archive -DestinationPath .
       - run: node scripts/verify-package.cjs
       - run: node scripts/packaged-launch-smoke.cjs
       - run: node tests/ui-security.cjs --packaged
@@ -42,6 +52,15 @@ jobs:
       - run: npm run test:audio -- --packaged
       - run: node tests/ui-attachments.cjs --packaged
       - run: node tests/time-ui.cjs --packaged
+      - name: Keep tested Windows portable ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-x64-tested
+          path: |
+            dist/*-win-x64.zip
+            dist/*-win-x64.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
       - name: Keep UI failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -60,6 +79,48 @@ jobs:
             work/model-refresh-qa/run-*/*.png
           retention-days: 7
           if-no-files-found: ignore
+
+  macos-release-archive:
+    name: Mac release ZIP (Intel runtime)
+    needs: macos
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # Publish the arm64 job's ZIP only after this same archive has also run
+      # natively on Intel. Rebuilding a second ZIP is not equivalent coverage.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: macos-universal-tested-on-arm64
+          path: dist
+      - name: Verify and extract the release ZIP
+        run: |
+          (cd dist && shasum -a 256 -c ./*-mac-universal.zip.sha256)
+          mkdir App
+          ditto -x -k dist/*-mac-universal.zip App
+          # Electron 44 downloads its development runtime lazily. This job
+          # launches only the extracted app, so initialize the reference first.
+          node node_modules/electron/install.js
+          # The verifier compares notices embedded in the distributed bundle
+          # against this exact Electron version's original runtime notices.
+          cp node_modules/electron/dist/LICENSE App/LICENSE
+          cp node_modules/electron/dist/LICENSES.chromium.html App/LICENSES.chromium.html
+      - run: node scripts/verify-package.cjs --platform darwin --arch universal
+      - run: node scripts/packaged-launch-smoke.cjs
+      - run: node tests/ui-security.cjs --packaged
+      - run: node scripts/images-accounts-smoke.cjs --packaged
+      - run: node tests/i18n-ui.cjs --packaged
+      - run: node tests/startup-ui.cjs --packaged
+      - run: npm run test:models -- --packaged
+      - run: node tests/onboarding-ui.cjs --packaged
+      - run: npm run test:audio -- --packaged
+      - run: node tests/ui-attachments.cjs --packaged
+      - run: node tests/time-ui.cjs --packaged
 
   macos:
     name: macOS (${{ matrix.arch }})
