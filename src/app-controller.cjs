@@ -9,7 +9,9 @@ const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
 const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
 const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
 const { fetchAccountQuota } = require('./usage-quota.cjs');
+const { TurnJournal, readTurnJournal } = require('./turn-journal.cjs');
 const { pathToFileURL } = require('node:url');
+const { createHash } = require('node:crypto');
 
 // Conversations run side by side in one Grok process. Bound the number of
 // simultaneous turns so a burst of tasks cannot exhaust tools or the account.
@@ -32,6 +34,95 @@ const STOP_NOTICES = {
   max_turn_requests: '本轮已达到请求次数上限，可发送消息让 Grok 继续。',
   refusal: 'Grok 拒绝了这次请求。',
 };
+
+// Engine updates that change the reply they belong to.
+const REPLY_UPDATE_TYPES = new Set(['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary', 'error']);
+
+// Applies one streamed engine update to its reply. Live updates and crash
+// recovery share this, so a recovered reply matches what was on screen.
+// `emit` receives media found along the way; the returned update is the one
+// forwarded to the window.
+function applyReplyUpdate(message, event, sessionId, emit = () => {}) {
+  if (event.type === 'status' && event.status === 'plan') {
+    // ACP plans replace the previous plan, including an explicitly empty one.
+    const entries = (Array.isArray(event.entries) ? event.entries : []).filter(entry => typeof entry?.content === 'string').map(entry => ({
+      content: entry.content,
+      priority: ['high', 'medium', 'low'].includes(entry.priority) ? entry.priority : 'medium',
+      status: ['pending', 'in_progress', 'completed'].includes(entry.status) ? entry.status : 'pending',
+    }));
+    message.plan = entries;
+    event = { ...event, entries };
+  }
+  const addAttachment = attachment => {
+    message.attachments ||= [];
+    if (!attachment?.id || !attachment.src) return;
+    const index = message.attachments.findIndex(item => item.id === attachment.id);
+    if (index >= 0) {
+      // Explicit assistant output remains output even when a tool previously
+      // returned the same resource. Keep that provenance across restarts.
+      if (attachment.origin === 'assistant') message.attachments[index] = attachment;
+      return;
+    }
+    message.attachments.push(attachment);
+    if (event.type !== 'attachment') emit({ type: 'attachment', sessionId, attachment });
+  };
+  if (event.type === 'response-boundary') {
+    const lastSegment = message.responseSegments?.at(-1);
+    if (lastSegment) lastSegment.kind = 'commentary';
+  }
+  if (event.type === 'text') {
+    const text = event.text || '';
+    message.responseSegments ||= [];
+    if (text) {
+      const lastSegment = message.responseSegments.at(-1);
+      if (!lastSegment || event.segmentStart) {
+        if (lastSegment) lastSegment.kind = 'commentary';
+        message.responseSegments.push({ text, kind: 'response' });
+      } else lastSegment.text += text;
+      message.text += `${event.segmentStart && message.text ? '\n\n' : ''}${text}`;
+    }
+    for (const attachment of attachmentsFromText(message.text)) addAttachment({ ...attachment, origin: 'assistant' });
+  }
+  if (event.type === 'attachment') {
+    event = { ...event, attachment: { ...event.attachment, origin: 'assistant' } };
+    addAttachment(event.attachment);
+  }
+  if (event.type === 'thought') message.thought += event.text || '';
+  if (event.type === 'image' && event.image?.src) {
+    event = { ...event, image: { ...event.image, origin: 'assistant' } };
+    message.images ||= [];
+    const index = message.images.findIndex(image => image.src === event.image.src);
+    if (index < 0) message.images.push(event.image); else message.images[index] = event.image;
+  }
+  if (event.type === 'tool') {
+    const existing = message.tools.find(t => t.toolCallId === event.toolCallId);
+    if (existing) Object.assign(existing, event); else message.tools.push({ ...event });
+    for (const attachment of attachmentsFromTools([existing || event])) addAttachment(attachment);
+    const images = imagesFromTools([existing || event]);
+    for (const image of images) {
+      message.images ||= [];
+      if (!message.images.some(item => item.src === image.src)) {
+        message.images.push(image);
+        emit({ type: 'image', sessionId, image });
+      }
+    }
+  }
+  if (event.type === 'error') message.error = event.message;
+  return event;
+}
+
+// A reply the app was generating when it last exited is rebuilt from the
+// journal. Only an unfinished reply is replaced: once a reply ends, the
+// history file holds its final state and older journal entries no longer apply.
+function recoverReply(message, sessionId, logged) {
+  if (!logged || logged.sessionId !== sessionId || message?.role !== 'assistant' || message.status !== 'working') return message;
+  try {
+    const reply = logged.base;
+    for (const event of logged.events) applyReplyUpdate(reply, event, sessionId);
+    if (reply.id === message.id && reply.role === 'assistant' && typeof reply.text === 'string') return reply;
+  } catch {}
+  return message;
+}
 
 class AppController extends EventEmitter {
   constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null }) {
@@ -67,6 +158,12 @@ class AppController extends EventEmitter {
     this.modelRefreshes = new Map();
     this.loadError = null;
     this.accountRecoveryError = null;
+    // Content of the history file as last written, to skip identical rewrites.
+    this.savedDigest = null;
+    this.journal = new TurnJournal(path.join(this.dir, 'conversations.journal'), {
+      running: () => this.runningReplies(),
+      onError: error => this.emitEvent({ type: 'error', message: this.t('保存失败：{error}', { error: error.message }) }),
+    });
     const hasSavedHistory = fs.existsSync(this.file);
     let hasAccountCommitMarker = false;
     if (hasSavedHistory) {
@@ -80,6 +177,8 @@ class AppController extends EventEmitter {
           if (typeof this.settings[key] !== 'boolean') this.settings[key] = true;
         }
         if (!Number.isInteger(this.settings.musicVolume) || this.settings.musicVolume < 0 || this.settings.musicVolume > 100) this.settings.musicVolume = 90;
+        const replies = readTurnJournal(this.journal.file);
+        if (replies.size) for (const session of data.sessions) session.messages = session.messages.map(message => recoverReply(message, session.id, replies.get(message.id)));
         this.sessions = data.sessions;
         if (data.accounts !== undefined) {
           if (!Array.isArray(data.accounts) || !data.accounts.some(a => a?.id === 'local') || !data.accounts.every(a => a && typeof a.name === 'string' && (a.id === 'local' || ACCOUNT_ID.test(a.id))) || new Set(data.accounts.map(a => a.id)).size !== data.accounts.length) throw new Error('Invalid accounts');
@@ -103,8 +202,11 @@ class AppController extends EventEmitter {
         this.sessions = [];
         this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
         this.activeAccountId = 'local';
-        const backup = `${this.file}.unreadable-${Date.now()}`;
+        const stamp = Date.now();
+        const backup = `${this.file}.unreadable-${stamp}`;
         fs.copyFileSync(this.file, backup);
+        // Unfinished replies logged beside the unreadable history belong with it.
+        try { if (this.journal.exists) fs.copyFileSync(this.journal.file, `${this.journal.file}.unreadable-${stamp}`); } catch {}
         this.loadError = this.t('历史记录文件无法读取，已保留备份：{path}', { path: backup });
       }
     }
@@ -136,12 +238,24 @@ class AppController extends EventEmitter {
   }
   save() {
     if (this.accountRecoveryError) throw new Error(this.accountRecoveryError);
-    clearTimeout(this.saveTimer);
-    const temp = this.file + '.tmp';
-    fs.writeFileSync(temp, JSON.stringify({ version: 2, settings: this.settings, accounts: this.accounts, activeAccountId: this.activeAccountId, sessions: this.sessions }, null, 2), 'utf8');
-    fs.renameSync(temp, this.file);
+    // Bring the reply journal up to date first: until the history file below
+    // is replaced, the journal is what restores unfinished replies.
+    try { this.journal.flush(); } catch {}
+    const json = JSON.stringify({ version: 2, settings: this.settings, accounts: this.accounts, activeAccountId: this.activeAccountId, sessions: this.sessions }, null, 2);
+    const digest = createHash('sha256').update(json).digest('hex');
+    if (digest !== this.savedDigest) {
+      const temp = this.file + '.tmp';
+      fs.writeFileSync(temp, json, 'utf8');
+      fs.renameSync(temp, this.file);
+      this.savedDigest = digest;
+    }
+    // The history file is saved. A journal failure here must not undo that;
+    // the journal keeps its entries and is rewritten on its next write.
+    try { this.journal.reset(this.runningReplies()); } catch {}
   }
-  scheduleSave() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => { try { this.save(); } catch (e) { this.emitEvent({ type: 'error', message: this.t('保存失败：{error}', { error: e.message }) }); } }, 350); }
+  runningReplies() {
+    return [...this.turns.values()].filter(turn => turn.message).map(turn => ({ sessionId: turn.sessionId, message: turn.message }));
+  }
   visibleSessions() { return this.sessions.filter(s => (s.accountId || 'local') === this.activeAccountId); }
   getSession(id) { const s = this.visibleSessions().find(s => s.id === id); if (!s) throw new Error(this.t('会话不存在或属于其他账户')); return s; }
   accountState() { return { accounts: this.accounts.map(a => this.accountManager.summary(a)), activeAccountId: this.activeAccountId, login: this.accountManager.loginState() }; }
@@ -597,6 +711,7 @@ class AppController extends EventEmitter {
       throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
     }
     turn.message = message;
+    this.journal.begin(sessionId, message);
     this.emitEvent({ type: 'session-updated', sessionId, session });
     this.emitEvent({ type: 'status', sessionId, status: 'working' });
     const adapter = this.adapter;
@@ -657,72 +772,10 @@ class AppController extends EventEmitter {
     const isPlan = event.type === 'status' && event.status === 'plan';
     if ((['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary'].includes(event.type) || isPlan) && !message) return;
     if (message) {
-      if (isPlan) {
-        // ACP plans replace the previous plan, including an explicitly empty one.
-        const entries = (Array.isArray(event.entries) ? event.entries : []).filter(entry => typeof entry?.content === 'string').map(entry => ({
-          content: entry.content,
-          priority: ['high', 'medium', 'low'].includes(entry.priority) ? entry.priority : 'medium',
-          status: ['pending', 'in_progress', 'completed'].includes(entry.status) ? entry.status : 'pending',
-        }));
-        message.plan = entries;
-        event = { ...event, entries };
-      }
-      const addAttachment = attachment => {
-        message.attachments ||= [];
-        if (!attachment?.id || !attachment.src) return;
-        const index = message.attachments.findIndex(item => item.id === attachment.id);
-        if (index >= 0) {
-          // Explicit assistant output remains output even when a tool previously
-          // returned the same resource. Keep that provenance across restarts.
-          if (attachment.origin === 'assistant') message.attachments[index] = attachment;
-          return;
-        }
-        message.attachments.push(attachment);
-        if (event.type !== 'attachment') this.emitEvent({ type: 'attachment', sessionId: current.sessionId, attachment });
-      };
-      if (event.type === 'response-boundary') {
-        const lastSegment = message.responseSegments?.at(-1);
-        if (lastSegment) lastSegment.kind = 'commentary';
-      }
-      if (event.type === 'text') {
-        const text = event.text || '';
-        message.responseSegments ||= [];
-        if (text) {
-          const lastSegment = message.responseSegments.at(-1);
-          if (!lastSegment || event.segmentStart) {
-            if (lastSegment) lastSegment.kind = 'commentary';
-            message.responseSegments.push({ text, kind: 'response' });
-          } else lastSegment.text += text;
-          message.text += `${event.segmentStart && message.text ? '\n\n' : ''}${text}`;
-        }
-        for (const attachment of attachmentsFromText(message.text)) addAttachment({ ...attachment, origin: 'assistant' });
-      }
-      if (event.type === 'attachment') {
-        event = { ...event, attachment: { ...event.attachment, origin: 'assistant' } };
-        addAttachment(event.attachment);
-      }
-      if (event.type === 'thought') message.thought += event.text || '';
-      if (event.type === 'image' && event.image?.src) {
-        event = { ...event, image: { ...event.image, origin: 'assistant' } };
-        message.images ||= [];
-        const index = message.images.findIndex(image => image.src === event.image.src);
-        if (index < 0) message.images.push(event.image); else message.images[index] = event.image;
-      }
-      if (event.type === 'tool') {
-        const existing = message.tools.find(t => t.toolCallId === event.toolCallId);
-        if (existing) Object.assign(existing, event); else message.tools.push({ ...event });
-        for (const attachment of attachmentsFromTools([existing || event])) addAttachment(attachment);
-        const images = imagesFromTools([existing || event]);
-        for (const image of images) {
-          message.images ||= [];
-          if (!message.images.some(item => item.src === image.src)) {
-            message.images.push(image);
-            this.emitEvent({ type: 'image', sessionId: current.sessionId, image });
-          }
-        }
-      }
-      if (event.type === 'error') message.error = event.message;
-      this.scheduleSave();
+      const update = event;
+      event = applyReplyUpdate(message, event, current.sessionId, nested => this.emitEvent(nested));
+      // Log the update itself rather than rewriting the whole history.
+      if (isPlan || REPLY_UPDATE_TYPES.has(update.type)) this.journal.record(current.sessionId, message.id, update);
     }
     this.emitEvent(event);
   }
@@ -889,7 +942,7 @@ class AppController extends EventEmitter {
       await this.closeAdapter();
       await Promise.all(running);
     } catch (error) { failure ||= error; }
-    finally { clearTimeout(this.saveTimer); }
+    finally { this.journal.cancel(); }
     if (failure) throw failure;
   }
   // Quota values are derived in the main process. Credentials and the raw
