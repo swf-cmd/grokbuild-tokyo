@@ -21,7 +21,7 @@ npm ci
 npm start
 ```
 
-Windows 默认在当前用户的 `%USERPROFILE%\.grok\bin\grok.exe` 查找 CLI，Mac 默认使用 `~/.grok/bin/grok`。若安装在别处，打开左下角设置，选择对应可执行文件（Mac 上为不带 `.exe` 后缀的 `grok`）。本机账户沿用 CLI 的登录和配置。尚未登录时，点击输入框旁的“登录 Grok ↗”，再打开浏览器登录页面并核对验证码。可直接使用默认账户登录，无需先添加账户；添加其他账户为可选操作。完成授权后自动连接，并保留已写好的草稿。若需选择 CLI 可执行文件，点击“设置 Grok CLI”。
+Windows 默认在当前用户的 `%USERPROFILE%\.grok\bin\grok.exe` 查找 CLI，Mac 默认使用 `~/.grok/bin/grok`。若安装在别处，打开左下角设置，选择对应可执行文件（Mac 上为不带 `.exe` 后缀的 `grok`）。本机账户沿用 CLI 的登录和配置。尚未登录时，点击输入框上方的“登录 Grok ↗”，再打开浏览器登录页面并核对验证码。可直接使用默认账户登录，无需先添加账户；添加其他账户为可选操作。完成授权后自动连接，并保留已写好的草稿。若需选择 CLI 可执行文件，点击“设置 Grok CLI”。
 
 Windows 默认工作目录为源码项目中的 `Workspace`（打包运行时位于 `App` 旁边）；Mac 默认使用 `~/Library/Application Support/Grokbuild Tokyo/Workspace`，首次启动自动创建。要处理已有项目，在设置中选择该目录，再新建会话；已有会话继续使用自己的原始工作目录。
 

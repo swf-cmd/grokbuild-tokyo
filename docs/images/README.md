@@ -16,6 +16,7 @@ The focus-timer conversation is authored demo content, not a recorded model resp
 | `welcome-zh-CN.png` | Simplified Chinese welcome screen / 简体中文欢迎页 |
 | `welcome-zh-CN.gif` | Simplified Chinese welcome screen with animated rain / 简体中文欢迎页雨滴动图 |
 | `app-zh-CN.png` | Simplified Chinese demo conversation / 简体中文示例对话 |
+| `social-preview.png` | Link preview card for the repository, rendered from `social-preview.html` / 仓库链接分享卡片，由 `social-preview.html` 生成 |
 
 Captured on 2026-09-30 with rain enabled. The README uses looping welcome-screen GIFs so the rain remains recognizable when the image is scaled down. Each GIF records three seconds of the two production rain animations at 20 frames per second. The PNGs retain a fixed frame of the same effect; rain is naturally subtler in conversations. No rain was painted onto the images and no production styles were changed for the captures.
 
@@ -30,3 +31,19 @@ Candidate images are written to `work/readme-capture/images/`. The `qa/` directo
 Windows 上先运行 `npm ci`，再运行 `node scripts/capture-readme.cjs` 生成 PNG。如需同时生成 GIF，将 FFmpeg 加入 `PATH` 后运行 `node scripts/capture-readme.cjs --motion`。也可在 GitHub Actions 手动运行包含动图拍摄的 **README screenshots** 工作流，下载 `readme-screenshots` 产物。
 
 候选图片保存在 `work/readme-capture/images/`；`qa/` 中保留相同画面的雨滴开启/关闭对照图及 `results.json`，检查雨滴渲染、运动和其余界面的稳定性。复制到 `docs/images/` 前，应按介绍页实际显示尺寸检查 GIF 的播放效果；仅有像素变化不能证明雨滴容易辨认。拍摄使用固定演示时间与隔离测试数据，音乐静音，不调用真实 CLI。
+
+## Social preview / 社交预览图
+
+`social-preview.png` is the 1280 × 640 card that sites such as X show when the repository link is shared. `social-preview.html` places the unmodified `app-en.png` capture over the app's own Shibuya background and icon; no interface element is drawn by hand. Its text uses Liberation Sans, Liberation Mono and Poppins (SIL Open Font License), falling back to Arial, Consolas and Segoe UI; no font files are included in the repository.
+
+To update it after changing the text or the screenshot, install dependencies with `npm ci`, run `npx playwright install chromium` once, then:
+
+```sh
+npx playwright screenshot --viewport-size="1280, 640" docs/images/social-preview.html docs/images/social-preview.png
+```
+
+Keep the image under 1 MB. GitHub does not read it from the repository: upload it under **Settings → General → Social preview**.
+
+`social-preview.png` 是在 X 等网站分享仓库链接时显示的 1280 × 640 卡片。`social-preview.html` 将未经修改的 `app-en.png` 截图叠放在应用自带的涩谷背景与图标之上，没有手绘任何界面元素。文字使用 Liberation Sans、Liberation Mono 与 Poppins（SIL Open Font License），缺少时回退到 Arial、Consolas 与 Segoe UI；仓库不包含字体文件。
+
+修改文字或截图后，先运行 `npm ci`，首次还需运行 `npx playwright install chromium`，再执行上面的 `npx playwright screenshot` 命令重新生成。图片需小于 1 MB。GitHub 不会自动读取仓库中的这张图，需要在仓库的 **Settings → General → Social preview** 中上传。

@@ -21,7 +21,7 @@ npm ci
 npm start
 ```
 
-By default, the client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows or `~/.grok/bin/grok` on Mac. If your CLI is elsewhere, open settings in the lower-left corner and select the executable (`grok` without a `.exe` extension on Mac). The local account uses the CLI's existing login and configuration. If no login is saved, choose **Sign in to Grok ↗** beside the composer, then open the browser login page and verify the code. You can sign in directly with the default account; adding another account is optional. The client connects automatically after authorization and keeps your draft. Use **Set up Grok CLI** if you need to select the executable.
+By default, the client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows or `~/.grok/bin/grok` on Mac. If your CLI is elsewhere, open settings in the lower-left corner and select the executable (`grok` without a `.exe` extension on Mac). The local account uses the CLI's existing login and configuration. If no login is saved, choose **Sign in to Grok ↗** above the composer, then open the browser login page and verify the code. You can sign in directly with the default account; adding another account is optional. The client connects automatically after authorization and keeps your draft. Use **Set up Grok CLI** if you need to select the executable.
 
 The default working directory is `Workspace` inside the source project on Windows (beside `App` when packaged), or `~/Library/Application Support/Grokbuild Tokyo/Workspace` on Mac, created on first launch. To work on an existing project, select its folder in settings and start a new conversation. Existing conversations keep their original working directories.
 
