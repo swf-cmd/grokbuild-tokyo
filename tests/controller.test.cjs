@@ -1618,7 +1618,7 @@ test('reading an uploaded image never echoes it into the streamed or saved reply
   assert.equal(session.messages[1].tools[0].content[0].content.type, 'image');
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
   const restored = new AppController({ root: controller.root, home: controller.root });
-  t.after(() => clearTimeout(restored.saveTimer));
+  t.after(() => restored.journal.cancel());
   assert.deepEqual(restored.sessions[0].messages[1].images, []);
   assert.equal((restored.exportMarkdown(session.id).match(/!\[/g) || []).length, 1, 'only the user upload is exported');
 });
@@ -2092,4 +2092,260 @@ test('a finished turn schedules a quota refresh and closing clears quota timers'
   await controller.close();
   assert.equal(controller.quotaTimer, null);
   assert.equal(controller.quotaPoll, null);
+});
+
+// Loading a history that holds `message` exactly as it was on screen is what
+// an ideal snapshot taken at that moment would restore.
+function restoredFromSnapshot(t, controller, sessionId, message) {
+  const history = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  const session = history.sessions.find(item => item.id === sessionId);
+  session.messages = session.messages.map(item => item.id === message.id ? structuredClone(message) : item);
+  return fixture(t, history).controller.sessions.find(item => item.id === sessionId).messages.find(item => item.id === message.id);
+}
+
+function reopen(t, controller) {
+  // A new controller on the same files stands in for a restart after a crash.
+  const restored = new AppController({ root: controller.root, home: controller.root });
+  t.after(() => restored.journal.cancel());
+  return restored;
+}
+
+test('streamed reply updates are journaled instead of rewriting the whole history file', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'stream a long reply' });
+  const history = fs.readFileSync(controller.file, 'utf8');
+  const writes = [];
+  const { writeFileSync, renameSync } = fs;
+  fs.writeFileSync = (file, ...rest) => { writes.push(String(file)); return writeFileSync.call(fs, file, ...rest); };
+  fs.renameSync = (from, to) => { writes.push(String(to)); return renameSync.call(fs, from, to); };
+  t.after(() => { fs.writeFileSync = writeFileSync; fs.renameSync = renameSync; });
+  let expected = '';
+  for (let i = 0; i < 40; i++) {
+    adapter.emit('event', { sessionId: session.id, type: 'text', text: `chunk ${i} ` });
+    expected += `chunk ${i} `;
+    if (i % 10 === 9) await new Promise(resolve => setTimeout(resolve, 400));
+  }
+  assert.equal(fs.readFileSync(controller.file, 'utf8'), history, 'the history file is not rewritten for streamed updates');
+  assert.deepEqual(writes.filter(file => file.startsWith(controller.file)), []);
+  assert.ok(fs.readFileSync(controller.journal.file, 'utf8').includes('chunk 39 '), 'updates reach the journal within the flush delay');
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages[1];
+  assert.equal(saved.text, expected);
+  assert.deepEqual(saved.responseSegments, [{ text: expected, kind: 'response' }]);
+  assert.equal(saved.status, 'complete');
+  assert.equal(fs.existsSync(controller.journal.file), false, 'a finished reply leaves no journal behind');
+});
+
+test('a reply interrupted by an unexpected exit is restored exactly as it was shown', async t => {
+  const { controller, session, adapter } = await started(t);
+  const png = fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png')).toString('base64');
+  await controller.send({ sessionId: session.id, text: 'Build the report' });
+  const emit = event => adapter.emit('event', { sessionId: session.id, ...event });
+  emit({ type: 'thought', text: 'Planning the work.' });
+  emit({ type: 'status', status: 'plan', entries: [{ content: 'Read sources', status: 'in_progress', priority: 'high' }, { content: 42 }, { content: 'Write', status: 'odd' }] });
+  emit({ type: 'text', text: 'Checking ' });
+  emit({ type: 'text', text: 'the files.' });
+  emit({ type: 'tool', toolCallId: 'gen-1', title: 'generate_image', kind: 'other', status: 'pending', rawInput: { prompt: 'rain' } });
+  emit({ type: 'tool', toolCallId: 'gen-1', status: 'completed', content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: png } }] });
+  emit({ type: 'response-boundary' });
+  emit({ type: 'image', image: { src: `data:image/png;base64,${png}`, alt: 'Preview' } });
+  emit({ type: 'attachment', attachment: { id: 'out-1', src: 'https://example.com/out.zip', name: 'out.zip' } });
+  emit({ type: 'text', text: 'Done: [report](https://example.com/report.pdf)', segmentStart: true });
+  emit({ type: 'status', status: 'usage', usage: { totalTokens: 10 } });
+  emit({ type: 'thought', text: ' Then summarise.' });
+  controller.journal.flush();
+  const shown = structuredClone(session.messages[1]);
+  assert.equal(shown.status, 'working');
+  const restored = reopen(t, controller).sessions[0].messages[1];
+  assert.deepEqual(restored, restoredFromSnapshot(t, controller, session.id, shown));
+  assert.equal(restored.status, 'cancelled');
+  assert.equal(restored.text, 'Checking the files.\n\nDone: [report](https://example.com/report.pdf)');
+  assert.equal(restored.thought, 'Planning the work. Then summarise.');
+  assert.equal(restored.tools[0].status, 'completed');
+  assert.equal(restored.plan.length, 2);
+});
+
+test('a finished reply is never rolled back by a stale journal', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'first' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'partial' });
+  controller.journal.flush();
+  const stale = fs.readFileSync(controller.journal.file, 'utf8');
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: ' and final' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  // As if the app stopped after saving the history but before removing the journal.
+  fs.writeFileSync(controller.journal.file, stale);
+  const restored = reopen(t, controller).sessions[0].messages[1];
+  assert.equal(restored.text, 'partial and final');
+  assert.equal(restored.status, 'complete');
+});
+
+test('finishing one of two running replies keeps the other recoverable', async t => {
+  const { controller, session, adapter } = await started(t);
+  const second = await controller.createSession();
+  await controller.send({ sessionId: session.id, text: 'one' });
+  await controller.send({ sessionId: second.id, text: 'two' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'first reply' });
+  adapter.emit('event', { sessionId: second.id, type: 'text', text: 'second ' });
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  // turnPromise tracks the newest send; wait for the first conversation's turn.
+  while (controller.turns.has(session.id)) await new Promise(resolve => setImmediate(resolve));
+  const lines = fs.readFileSync(controller.journal.file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(lines.map(line => line.sessionId), [second.id], 'the journal keeps only replies still generating');
+  adapter.emit('event', { sessionId: second.id, type: 'text', text: 'still going' });
+  controller.journal.flush();
+  const restored = reopen(t, controller);
+  const first = restored.sessions.find(item => item.id === session.id).messages[1];
+  const other = restored.sessions.find(item => item.id === second.id).messages[1];
+  assert.equal(first.text, 'first reply'); assert.equal(first.status, 'complete');
+  assert.equal(other.text, 'second still going'); assert.equal(other.status, 'cancelled');
+});
+
+test('a journal write failure is reported and the next write replaces the journal', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'stream' });
+  const errors = []; controller.on('event', event => { if (event.type === 'error') errors.push(event.message); });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'before ' });
+  controller.journal.flush();
+  const { appendFileSync } = fs;
+  fs.appendFileSync = (file, data, ...rest) => {
+    // Leave a torn line, as a full disk might.
+    appendFileSync.call(fs, file, String(data).slice(0, 12), ...rest);
+    throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+  };
+  t.after(() => { fs.appendFileSync = appendFileSync; });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'lost? ' });
+  await new Promise(resolve => setTimeout(resolve, 450));
+  assert.match(errors.join('\n'), /fixture disk full/);
+  fs.appendFileSync = appendFileSync;
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'after' });
+  controller.journal.flush();
+  const restored = reopen(t, controller).sessions[0].messages[1];
+  assert.equal(restored.text, 'before lost? after', 'no update is lost or replayed twice');
+});
+
+test('a torn final journal line is ignored when recovering', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'stream' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'kept' });
+  controller.journal.flush();
+  fs.appendFileSync(controller.journal.file, '{"sessionId":"' + session.id + '","messageId":"' + session.messages[1].id + '","event":{"type":"te');
+  const restored = reopen(t, controller).sessions[0].messages[1];
+  assert.equal(restored.text, 'kept');
+});
+
+test('a full disk at turn completion preserves the reply already saved in the journal', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'stream' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'persisted reply' });
+  controller.journal.flush();
+  const savedJournal = fs.readFileSync(controller.journal.file, 'utf8');
+  const errors = []; controller.on('event', event => { if (event.type === 'error') errors.push(event.message); });
+  const { appendFileSync, writeFileSync } = fs;
+  try {
+    fs.appendFileSync = (file, data, ...rest) => {
+      if (file !== controller.journal.file) return appendFileSync.call(fs, file, data, ...rest);
+      appendFileSync.call(fs, file, String(data).slice(0, 12), ...rest);
+      throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+    };
+    adapter.emit('event', { sessionId: session.id, type: 'text', text: ' not yet saved' });
+    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    fs.writeFileSync = (file, ...rest) => {
+      if (file === controller.file + '.tmp' || file === controller.journal.file + '.tmp') {
+        throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+      }
+      return writeFileSync.call(fs, file, ...rest);
+    };
+    adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+    await controller.turnPromise;
+    assert.equal(controller.turns.size, 0);
+    assert.match(errors.join('\n'), /fixture disk full/);
+    assert.ok(fs.readFileSync(controller.journal.file, 'utf8').startsWith(savedJournal), 'failed saves retain the previous journal');
+    const restored = reopen(t, controller).sessions[0].messages[1];
+    assert.equal(restored.text, 'persisted reply');
+    assert.equal(restored.status, 'cancelled');
+  } finally {
+    fs.appendFileSync = appendFileSync;
+    fs.writeFileSync = writeFileSync;
+  }
+});
+
+test('journal repair retains a finished reply until its history save succeeds', async t => {
+  const { controller, session, adapter } = await started(t);
+  const second = await controller.createSession();
+  await controller.send({ sessionId: session.id, text: 'one' });
+  const firstTurn = controller.turns.get(session.id).promise;
+  await controller.send({ sessionId: second.id, text: 'two' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'first reply' });
+  adapter.emit('event', { sessionId: second.id, type: 'text', text: 'second ' });
+  controller.journal.flush();
+  const { appendFileSync, writeFileSync } = fs;
+  let journalWritable = false;
+  try {
+    fs.appendFileSync = (file, data, ...rest) => {
+      if (file !== controller.journal.file) return appendFileSync.call(fs, file, data, ...rest);
+      appendFileSync.call(fs, file, String(data).slice(0, 12), ...rest);
+      throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+    };
+    adapter.emit('event', { sessionId: second.id, type: 'text', text: 'pending ' });
+    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    fs.writeFileSync = (file, ...rest) => {
+      if (file === controller.file + '.tmp' || (!journalWritable && file === controller.journal.file + '.tmp')) {
+        throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+      }
+      return writeFileSync.call(fs, file, ...rest);
+    };
+    adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+    await firstTurn;
+    assert.equal(controller.turns.has(session.id), false);
+    // Enough room for the small journal repair, but the full history still
+    // cannot be saved. The other reply continues after the first turn ended.
+    journalWritable = true;
+    fs.appendFileSync = appendFileSync;
+    adapter.emit('event', { sessionId: second.id, type: 'text', text: 'continued' });
+    controller.journal.flush();
+    const restored = reopen(t, controller);
+    const first = restored.sessions.find(item => item.id === session.id).messages[1];
+    const other = restored.sessions.find(item => item.id === second.id).messages[1];
+    assert.equal(first.text, 'first reply');
+    assert.equal(first.status, 'complete');
+    assert.equal(other.text, 'second pending continued');
+    assert.equal(other.status, 'cancelled');
+  } finally {
+    fs.appendFileSync = appendFileSync;
+    fs.writeFileSync = writeFileSync;
+  }
+  controller.save();
+  const entries = fs.readFileSync(controller.journal.file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(entries.map(entry => entry.sessionId), [second.id], 'a successful history save can discard the finished reply');
+});
+
+test('the history file is rewritten only when its content changes', async t => {
+  const { controller, session } = await started(t);
+  const renames = [];
+  const { renameSync } = fs;
+  fs.renameSync = (from, to) => { renames.push(String(to)); return renameSync.call(fs, from, to); };
+  t.after(() => { fs.renameSync = renameSync; });
+  for (let i = 0; i < 3; i++) await controller.selectSession(session.id);
+  controller.save();
+  assert.deepEqual(renames.filter(file => file === controller.file), []);
+  controller.renameSession({ sessionId: session.id, title: 'Renamed' });
+  assert.deepEqual(renames.filter(file => file === controller.file), [controller.file]);
+  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].title, 'Renamed');
+});
+
+test('an unreadable history keeps a backup of the reply journal beside it', async t => {
+  const { controller, root } = fixture(t, '{broken');
+  assert.match(controller.loadError, /conversations\.json\.unreadable-/);
+  const journal = '{"sessionId":"s","messageId":"m","base":{"id":"m","role":"assistant","text":"partial"}}\n';
+  fs.writeFileSync(controller.journal.file, journal);
+  // The history is still unreadable at the next start; the journal is kept with its backup.
+  const reopened = new AppController({ root, home: root });
+  t.after(() => reopened.journal.cancel());
+  const backups = fs.readdirSync(path.join(root, 'data')).filter(name => name.startsWith('conversations.journal.unreadable-'));
+  assert.equal(backups.length, 1);
+  assert.equal(fs.readFileSync(path.join(root, 'data', backups[0]), 'utf8'), journal);
+  assert.equal(fs.readFileSync(controller.file, 'utf8'), '{broken', 'the unreadable history itself is never overwritten at startup');
 });
