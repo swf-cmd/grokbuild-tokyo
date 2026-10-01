@@ -6,19 +6,21 @@
 
 **Your ideas. After dark.**
 
-A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows and Mac.
+A desktop app for the [Grok Build](https://x.ai/cli) coding agent: streaming chats, parallel tasks and separate accounts, with a rainy Tokyo night outside the window.
 
 **English** · [简体中文](README.zh-CN.md)
 
 [![Tests](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml/badge.svg)](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/swf-cmd/grokbuild-tokyo?label=release&color=c1adff)](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-71d6c6)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows_x64-86b7f9)
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
-![Version 1.2.4](https://img.shields.io/badge/version-1.2.4-c1adff)
 
-**[Download for Mac](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip) · [Download for Windows](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip) · [Latest Release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**
+**[Download for Mac](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip) · [Download for Windows](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip) · [All releases](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
 
-[Get started](#get-started) · [Downloads](#downloads) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
+<sub>Free and open source · Unofficial · Uses the official <a href="#install-grok-build">Grok Build CLI</a>, installed separately</sub>
+
+[Quick start](#quick-start) · [Features](#made-for-long-evenings-of-building) · [FAQ](#faq) · [User guide](docs/guide.md) · [Contribute](CONTRIBUTING.md) · [Report a bug](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
 
 </div>
 
@@ -26,99 +28,137 @@ A Tokyo rainy-night desktop client for Grok Build — unofficial, for Windows an
 
 *Animated rain in the Windows interface, using an isolated demo profile. Mac uses native window controls and Command-key shortcuts. [Still image](docs/images/welcome-en.png?v=20260930) · [Capture details](docs/images/README.md).*
 
-Grokbuild Tokyo is an **unofficial, independent desktop client** for the locally installed [Grok Build CLI](https://github.com/xai-org/grok-build). It connects over the Agent Client Protocol (ACP), bringing streaming conversations, separate account profiles, images and file attachments into a desktop interface inspired by Tokyo after hours.
+[Grok Build](https://x.ai/cli) is the terminal coding agent from SpaceXAI (formerly xAI). Grokbuild Tokyo is an **unofficial, open-source desktop app** for it: it starts the Grok Build CLI you installed and talks to it over the [Agent Client Protocol](https://agentclientprotocol.com/) (ACP). Your sign-in, models, tools, permission rules, MCP servers and skills stay exactly as the CLI configures them. The app gives them a window worth keeping open.
 
-This project is not affiliated with or endorsed by xAI. Install the official CLI separately; authentication, model access and usage are handled by that CLI and your account.
+This project is not affiliated with or endorsed by SpaceXAI or xAI. Authentication, model access and usage are handled by the official CLI and your account.
 
 ## Made for long evenings of building
 
 | Experience | What you can do |
 | --- | --- |
 | **A place to focus** | Rainy Shibuya scenery, optional animated rain and an original offline synth soundtrack. |
+| **Several tasks at once** | Run up to four conversations in parallel, each with its own progress, permission prompts, stop button and draft. |
 | **Conversations that stay with you** | Stream Markdown and code, search and rename chats, restore sessions and export Markdown. |
-| **Separate account profiles** | Add, sign in, switch, rename and remove profiles with their own login state and history. |
-| **Images and files** | Select files, drop them onto the message composer, or paste images; preview image replies and save returned files. |
-| **Visibility into the work** | Follow tool progress and execution plans, respond to permission requests and stop generation. |
-| **Several tasks at once** | Run up to four conversations in parallel, each with its own progress, permissions, stop button and draft. |
+| **See the agent at work** | Follow tool progress and execution plans, answer each permission request and stop generation at any time. |
+| **Separate account profiles** | Add, sign in, switch, rename and remove profiles, each with its own login state and history. |
+| **Images and files** | Pick files, drop them onto the message composer or paste images; preview image replies and save returned files. |
 | **Your quota at a glance** | See how much of the account's Grok allowance is used and when it resets, right in the sidebar. |
-| **Controls backed by the CLI** | Automatically updated model choices, CLI-provided reasoning levels, subagent settings and a workspace of your choice. |
+| **Controls from your CLI** | Model choices and reasoning levels come from the CLI and update automatically; choose subagent settings and a workspace. |
 | **Seven interface languages** | English, 简体中文, 日本語, 한국어, Español, Deutsch and Français. |
-
-When the connected CLI announces a changed model list, new-conversation choices update automatically. Loaded conversations refresh their own available models once the current reply or settings operation finishes, if the CLI supports session restoration. Drafts stay in place, and refreshing requires neither a restart nor sending a message. Each conversation continues to use the model choices and selections confirmed by the CLI.
-
-Image input and file reading depend on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
 
 ![English demo conversation with the subtle rain effect in the real desktop interface](docs/images/app-en.png?v=20260930)
 
 *Screenshots use an isolated demo profile and a simulated engine. Conversation text and quota figures are illustrative; available models and tools depend on your installed CLI.*
 
-## Get started
+## Quick start
 
-### Requirements
+You need the official Grok Build CLI, an account with access to it, and the app for your computer.
 
-- **Windows x64**, or **macOS 13 Ventura or later on Intel or Apple Silicon**. The universal Mac build includes both architectures. The minimum macOS version follows [Electron 44](https://www.electronjs.org/blog/electron-44-0); older Macs must be able to run macOS 13 or later. Linux is not a supported client target.
-- An installed [Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary), with account access to the service. The official CLI supports both Mac architectures; see its [changelog](https://x.ai/build/changelog).
-- To run from source or build: **Git**, **Node.js 22.12.0 or later**, and npm. Development and CI use Node.js 24. Mac packaging also needs Apple Command Line Tools (`xcode-select --install`). Packaged apps include Electron and do not require a separate Node.js installation.
+### Install Grok Build
+
+Install the CLI with the official installer, or follow the [official installation instructions](https://github.com/xai-org/grok-build#installing-the-released-binary):
+
+```sh
+# macOS
+curl -fsSL https://x.ai/cli/install.sh | bash
+```
+
+```powershell
+# Windows PowerShell
+irm https://x.ai/cli/install.ps1 | iex
+```
+
+If you have already signed in to Grok Build in a terminal, the app reuses the sign-in and configuration saved in `~/.grok`. Otherwise, you can sign in from the app on first launch.
 
 ### Downloads
 
-**[Get the latest release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)** — public downloads, with no GitHub sign-in required.
+**[Get the latest release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**: public downloads, with no GitHub sign-in required.
 
 | v1.2.4 download | Requirements | Checksum |
 | --- | --- | --- |
-| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** | macOS 13+ · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
+| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** | macOS 13 Ventura or later · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
 | **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
 
 - **Mac:** unzip once, then move **Grokbuild Tokyo.app** to **Applications**. The app uses an ad-hoc signature, without a Developer ID certificate or Apple notarization. If macOS blocks the first launch, verify that you downloaded it from this repository, then follow **System Settings → Privacy & Security → Open Anyway** ([Apple's instructions](https://support.apple.com/en-us/102445)).
 - **Windows:** extract the ZIP to a folder you can write to, then run **`App\Grokbuild Tokyo.exe`**. Keep the entire **`App`** folder together; this is a portable app, not an installer. The app is not code-signed. If SmartScreen appears, verify the download source before using **More info → Run anyway**, if that option is available.
-- Both downloads include the desktop runtime. **Install the [official Grok Build CLI](https://github.com/xai-org/grok-build#installing-the-released-binary) separately** and sign in with an account that has access to the service.
+- Both downloads include the desktop runtime; Node.js is only needed to [build from source](#build-from-source). The minimum macOS version follows [Electron 44](https://www.electronjs.org/blog/electron-44-0). Linux is not a supported client target.
+
+<details>
+<summary><b>Verify a download</b></summary>
+
+Save the ZIP and its matching `.sha256` file in the same folder. On Mac:
+
+```sh
+shasum -a 256 -c Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256
+```
+
+In Windows PowerShell, compare the computed hash with the value in the `.sha256` file:
+
+```powershell
+Get-FileHash .\Grokbuild-Tokyo-1.2.4-win-x64.zip -Algorithm SHA256
+Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
+```
+
+</details>
 
 ### First launch
 
 1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac. If yours is elsewhere, choose the executable in **Preferences** at the bottom left. On Mac, select `grok` without a `.exe` extension.
-2. Use **Switch account** to sign in or add a profile. The local profile reuses the official CLI's existing login and configuration.
+2. If no sign-in is saved yet, choose **Sign in to Grok ↗** above the message box, then **Open sign-in page ↗**, and confirm the code in your browser. The app connects automatically once you approve. Use **Switch account** to add more profiles.
 3. Choose a project folder in **Preferences**, then start a new conversation. On Windows, the default is `Workspace` beside the packaged `App` folder (or in the checkout when running from source). On Mac, it is `~/Library/Application Support/Grokbuild Tokyo/Workspace`. Existing conversations keep their original folder.
 
 English is the initial interface language. Change it in **Preferences → Interface language** and save. No API key needs to be entered into this desktop interface.
 
-### Run from source
+## FAQ
 
-```sh
-git clone https://github.com/swf-cmd/grokbuild-tokyo.git
-cd grokbuild-tokyo
-npm ci
-npm start
-```
+<details>
+<summary><b>Is this an official app?</b></summary>
 
-Then follow [First launch](#first-launch). See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
+No. Grokbuild Tokyo is an independent project under the MIT License and is not affiliated with or endorsed by SpaceXAI or xAI. It does not bundle or modify the CLI: it starts the Grok Build CLI you installed and shows what that CLI reports.
 
-### Build the desktop app
+</details>
 
-Quit the running client before building. On Windows:
+<details>
+<summary><b>What does it cost?</b></summary>
 
-```powershell
-npm run build
-node scripts/verify-package.cjs
-& '.\App\Grokbuild Tokyo.exe'
-```
+The app is free. Requests are made by the Grok Build CLI under your own account and count toward that account's plan or usage, just as they would in a terminal.
 
-Keep the **entire `App` folder** together when running or distributing the Windows version.
+</details>
 
-On Mac, build one app for both Intel and Apple Silicon:
+<details>
+<summary><b>Do I need an API key?</b></summary>
 
-```sh
-npm run build:mac
-node scripts/verify-package.cjs --platform darwin --arch universal
-open "App/Grokbuild Tokyo.app"
-```
+No. Signing in from the app uses the CLI's official browser login (`grok login --device-auth`), so there is nowhere to paste a key. Each profile keeps its own CLI sign-in.
 
-The shareable archive is `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`, with a matching `.zip.sha256` checksum. Unzip it and move **Grokbuild Tokyo.app** to **Applications**. `npm run build:mac:arm64` and `npm run build:mac:x64` create smaller builds for a single architecture. `npm run build` targets the current computer; on Mac this uses its current Node.js architecture.
+</details>
 
-Mac builds are locally signed (ad hoc), without a Developer ID certificate or Apple notarization. A downloaded build may need approval in **System Settings → Privacy & Security → Open Anyway** after you verify its source; see [Apple’s instructions](https://support.apple.com/en-us/102445).
+<details>
+<summary><b>Which Grok Build versions work?</b></summary>
 
-Both versions use the same interface, seven languages, chat, account, attachment, model, rain, and music features. Mac adds native window controls and menus. Closing the Mac window keeps the app and ongoing work running; click its Dock icon to reopen, or press **Cmd+Q** to quit.
+The live compatibility baseline is Grok Build **1.0.13 / ACP 1**, checked on Windows on 2026-09-07. Models, reasoning levels and other options are read from the connected CLI, so keep it current with `grok update`. The app does not expose every terminal feature, such as interactive terminals, Git/worktree management, session forks or the slash-command menu. See the [full compatibility notes](docs/guide.md#grok-compatibility).
 
-Packaging uses an explicit list of runtime files and licenses; the previous `App` build is preserved under `work/package-backups`. Installing dependencies and the first build require internet access for Electron downloads. The source repository does not include prebuilt apps.
+</details>
+
+<details>
+<summary><b>Can I send images and files?</b></summary>
+
+Yes: up to 10 files per message, 20 MB each and 50 MB in total. What the model can read depends on the installed CLI's capabilities, tools and permissions. With the tested CLI 1.0.13, attachments are sent as local resource references for the CLI's tools to read. See [attachment support and limits](docs/guide.md#chat-images-and-attachments).
+
+</details>
+
+<details>
+<summary><b>Why does macOS or Windows warn me on first launch?</b></summary>
+
+The Mac app is ad-hoc signed and not notarized, and the Windows app is not code-signed. Make sure the download came from this repository's [releases](https://github.com/swf-cmd/grokbuild-tokyo/releases), optionally verify its SHA-256 checksum, then follow the steps in [Downloads](#downloads).
+
+</details>
+
+<details>
+<summary><b>Does the app send my data anywhere?</b></summary>
+
+Chats are stored on your computer. The CLI sends prompts and tool context to the service, as it would in a terminal. Besides loading images and files that replies point to, the app's only network request of its own is the optional quota card, which you can turn off. See [How it connects](#how-it-connects) and [Your data](#your-data).
+
+</details>
 
 ## Everyday shortcuts
 
@@ -145,23 +185,59 @@ Your installed Grok Build CLI
 
 The client keeps its chat history and settings locally, while the CLI handles model requests. This is not an offline model: prompts and tool context may be sent to the service by the CLI.
 
-The optional quota card is the one request the client makes itself: it asks xAI's Grok Build billing endpoint for the active account's usage, using that account's CLI sign-in. You can turn it off in **Preferences**. See [Account quota](docs/guide.md#account-quota).
-
-**Compatibility baseline:** Grok Build **1.0.13 / ACP 1**, checked on Windows on 2026-09-07. That version does not advertise native ACP image or audio input. Uploaded images and files are passed as local resource references for CLI tools to read; image replies can still be previewed. The client does not expose every TUI feature, such as interactive terminals, Git/worktree management, session forks or a slash-command menu. See the [full compatibility notes](docs/guide.md#grok-compatibility).
+The optional quota card is the only request the client sends with your CLI sign-in: it asks the Grok Build billing endpoint for the active account's usage. You can turn it off with **Preferences → Show account quota**. See [Account quota](docs/guide.md#account-quota).
 
 ## Your data
 
 On Windows, `data/` is in the source checkout or beside the packaged `App` folder. On Mac, it is `~/Library/Application Support/Grokbuild Tokyo/data`, outside the `.app` bundle and shared by source and packaged runs. It contains chats, attachments, settings and account credentials saved by the CLI. It is local, excluded from Git and **not additionally encrypted by this app**. The local account may also use `GROK_HOME` (default `~/.grok`). Separate profiles isolate configuration and history, but are not operating-system sandboxes.
 
-| Tracked in this repository | Kept out of Git |
-| --- | --- |
-| `src/`, `scripts/`, `tests/`, `docs/`, licenses and project configuration | `data/`, `Workspace/`, `App/`, `dist/`, `work/`, `node_modules/`, `.env` files |
+Remote images can contact public image hosts. Read the [security policy](SECURITY.md) for permission, file access and network boundaries, and the [user guide](docs/guide.md#local-data-and-repository-contents) for what is kept where. Back up personal data separately; do not include it in an issue, screenshot or release archive.
 
-Remote images can contact public image hosts. Read the [security policy](SECURITY.md) for permission, file access and network boundaries. Back up personal data separately; do not include it in an issue, screenshot or release archive.
+## Build from source
+
+You need **Git**, **Node.js 22.12.0 or later** and npm; development and CI use Node.js 24. Installing dependencies and the first build download Electron, so they need internet access.
+
+```sh
+git clone https://github.com/swf-cmd/grokbuild-tokyo.git
+cd grokbuild-tokyo
+npm ci
+npm start
+```
+
+Then follow [First launch](#first-launch). See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
+
+<details>
+<summary><b>Package the desktop app</b></summary>
+
+Quit the running client before building. On Windows:
+
+```powershell
+npm run build
+node scripts/verify-package.cjs
+& '.\App\Grokbuild Tokyo.exe'
+```
+
+Keep the **entire `App` folder** together when running or distributing the Windows version.
+
+On Mac, install Apple Command Line Tools if needed (`xcode-select --install`), then build one app for both Intel and Apple Silicon:
+
+```sh
+npm run build:mac
+node scripts/verify-package.cjs --platform darwin --arch universal
+open "App/Grokbuild Tokyo.app"
+```
+
+The shareable archive is `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`, with a matching `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` create smaller builds for a single architecture. `npm run build` targets the current computer; on Mac this uses its current Node.js architecture.
+
+Mac builds are locally signed (ad hoc), without a Developer ID certificate or Apple notarization. Both versions share the same interface and features; Mac adds native window controls and menus. Closing the Mac window keeps the app and ongoing work running; click its Dock icon to reopen, or press **Cmd+Q** to quit.
+
+Packaging uses an explicit list of runtime files and licenses; the previous `App` build is preserved under `work/package-backups`. The source repository does not include prebuilt apps.
+
+</details>
 
 ## Development and contributions
 
-```powershell
+```sh
 npm test
 npm run test:ui
 npm run test:models
@@ -171,6 +247,8 @@ npm run test:security
 Default tests use isolated fixtures without real model requests. CI checks accounts, attachments, languages, clocks, dependencies and the packaged application on the configured Windows and Mac runners. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete checks, contribution workflow and opt-in live tests.
 
 Bug reports, focused fixes, translations and documentation improvements are welcome. Please use [private vulnerability reporting](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new) for sensitive security findings.
+
+If Grokbuild Tokyo keeps you company on late-night builds, starring the repository helps other people find it.
 
 ## License and credits
 

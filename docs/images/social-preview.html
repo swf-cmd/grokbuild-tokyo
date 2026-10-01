@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  Source for social-preview.png, the 1280 x 640 card GitHub shows when the repository
+  link is shared. It combines the real app-en.png capture with the app's background
+  and icon. See README.md in this folder for how to render it.
+-->
+<title>Grokbuild Tokyo social preview</title>
+<style>
+  :root { --bg:#0b1014; --text:#e3e9df; --muted:#97a6a3; --faint:#6e807b; --lime:#d4eb89; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { width:1280px; height:640px; background:var(--bg); overflow:hidden; }
+  body { position:relative; font-family:"Poppins", "Segoe UI", sans-serif; color:var(--text); }
+
+  /* City: right two thirds, fading into the solid left column like the app's backdrop */
+  .city { position:absolute; inset:0; background-image:url("../../src/renderer/assets/tokyo-rain.png"); background-size:cover; background-position:72% 30%; opacity:.92; }
+  .shade { position:absolute; inset:0;
+    background:
+      linear-gradient(90deg, #0b1014 0%, #0b1014 34%, #0b1014d9 46%, #0b101470 66%, #0b101430 100%),
+      linear-gradient(0deg, #0b1014e6 0%, #0b101400 38%),
+      linear-gradient(180deg, #0b1014aa 0%, #0b101400 22%); }
+  .rain { position:absolute; inset:0; opacity:.22;
+    background-image: repeating-linear-gradient(103deg, transparent 0 22px, #cfe3ff22 22px 23px, transparent 23px 61px);
+    mask-image: linear-gradient(90deg, transparent 30%, #000 70%); }
+
+  /* App window */
+  .window { position:absolute; left:704px; top:128px; width:760px; border-radius:12px; overflow:hidden;
+    border:1px solid #ffffff1f; box-shadow: 0 30px 80px #000c, 0 0 0 1px #00000080, 0 0 60px #6fb7c418; }
+  .window img { display:block; width:100%; }
+
+  .copy { position:absolute; left:76px; top:70px; width:600px; }
+  .eyebrow { display:flex; align-items:center; gap:14px; font-family:"Liberation Mono", Consolas, monospace; font-size:15px; letter-spacing:3.2px; color:#8fa29d; text-transform:uppercase; }
+  .eyebrow img { width:44px; height:44px; }
+  .title { margin-top:34px; font-family:"Liberation Sans", Arial, sans-serif; font-weight:700; line-height:.9; }
+  .title .solid { display:block; font-size:104px; letter-spacing:-5.5px; color:var(--text); text-shadow:0 4px 40px #10252b40; }
+  .title .outline { display:block; margin-top:6px; font-size:104px; letter-spacing:-4.6px; color:transparent; -webkit-text-stroke:2.2px #c3d0bd; font-weight:400; }
+  .title .star { color:var(--lime); -webkit-text-stroke:0; font-size:84px; margin-left:16px; display:inline-block; transform:rotate(12deg) translateY(-14px); }
+  .tagline { margin-top:34px; font-size:34px; font-weight:300; letter-spacing:1.4px; color:#e2e8e1; }
+  .sub { margin-top:14px; font-size:23px; font-weight:400; letter-spacing:.3px; color:#a9b7b3; }
+  .foot { position:absolute; left:76px; bottom:58px; display:flex; align-items:center; gap:14px; font-family:"Liberation Mono", Consolas, monospace; font-size:15px; letter-spacing:3px; color:#8fa29d; text-transform:uppercase; }
+  .foot .dot { width:6px; height:6px; background:var(--lime); transform:rotate(45deg); }
+</style>
+</head>
+<body>
+  <div class="city"></div>
+  <div class="rain"></div>
+  <div class="shade"></div>
+  <div class="window"><img src="app-en.png" alt=""></div>
+  <div class="copy">
+    <div class="eyebrow"><img src="../../src/renderer/assets/icon.png" alt="">Unofficial desktop app for Grok Build</div>
+    <div class="title"><span class="solid">GROKBUILD</span><span class="outline">TOKYO<span class="star">&#x2733;&#xFE0E;</span></span></div>
+    <div class="tagline">Your ideas. After dark.</div>
+    <div class="sub">Parallel chats · Multi-account · Quota view</div>
+  </div>
+  <div class="foot"><span class="dot"></span>Windows · macOS · Free &amp; open source</div>
+</body>
+</html>
