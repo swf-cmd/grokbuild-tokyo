@@ -11,11 +11,12 @@ const fs = require('node:fs');
 const FLUSH_DELAY = 350;
 
 class TurnJournal {
-  // `running` returns { sessionId, message } for every reply still generating.
-  constructor(file, { running, onError } = {}) {
+  constructor(file, { onError } = {}) {
     this.file = file;
-    this.running = running || (() => []);
     this.onError = onError;
+    // Keep live snapshots until the history file commits. A reply can stop
+    // generating before its final history save succeeds.
+    this.replies = new Map();
     this.pending = [];
     this.timer = null;
     this.exists = fs.existsSync(file);
@@ -28,6 +29,7 @@ class TurnJournal {
 
   // Starts a reply from a complete snapshot.
   begin(sessionId, message) {
+    this.replies.set(message.id, { sessionId, message });
     this.push({ sessionId, messageId: message.id, base: message });
   }
 
@@ -49,7 +51,7 @@ class TurnJournal {
 
   flush() {
     this.cancel();
-    if (this.broken) return this.reset(this.running());
+    if (this.broken) return this.reset([...this.replies.values()]);
     if (!this.pending.length) return;
     try { fs.appendFileSync(this.file, this.pending.join('\n') + '\n', 'utf8'); }
     catch (error) { this.broken = true; this.exists = true; throw error; }
@@ -57,8 +59,8 @@ class TurnJournal {
     this.exists = true;
   }
 
-  // Replaces the log with snapshots of the replies still generating. Callers
-  // write the history file first, so it already holds every other reply.
+  // Repair keeps every tracked reply. Only after committing the history may
+  // callers pass just the replies still generating and discard the others.
   reset(entries) {
     this.cancel();
     if (!entries.length) {
@@ -67,12 +69,13 @@ class TurnJournal {
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
       this.exists = false;
-    } else if (this.dirty || this.broken) {
+    } else if (this.dirty || this.broken || entries.length !== this.replies.size) {
       const temp = this.file + '.tmp';
       fs.writeFileSync(temp, entries.map(({ sessionId, message }) => JSON.stringify({ sessionId, messageId: message.id, base: message }) + '\n').join(''), 'utf8');
       fs.renameSync(temp, this.file);
       this.exists = true;
     }
+    this.replies = new Map(entries.map(entry => [entry.message.id, entry]));
     this.pending = [];
     this.dirty = false;
     this.broken = false;

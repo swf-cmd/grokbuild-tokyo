@@ -161,7 +161,6 @@ class AppController extends EventEmitter {
     // Content of the history file as last written, to skip identical rewrites.
     this.savedDigest = null;
     this.journal = new TurnJournal(path.join(this.dir, 'conversations.journal'), {
-      running: () => this.runningReplies(),
       onError: error => this.emitEvent({ type: 'error', message: this.t('保存失败：{error}', { error: error.message }) }),
     });
     const hasSavedHistory = fs.existsSync(this.file);

@@ -2236,6 +2236,92 @@ test('a torn final journal line is ignored when recovering', async t => {
   assert.equal(restored.text, 'kept');
 });
 
+test('a full disk at turn completion preserves the reply already saved in the journal', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'stream' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'persisted reply' });
+  controller.journal.flush();
+  const savedJournal = fs.readFileSync(controller.journal.file, 'utf8');
+  const errors = []; controller.on('event', event => { if (event.type === 'error') errors.push(event.message); });
+  const { appendFileSync, writeFileSync } = fs;
+  try {
+    fs.appendFileSync = (file, data, ...rest) => {
+      if (file !== controller.journal.file) return appendFileSync.call(fs, file, data, ...rest);
+      appendFileSync.call(fs, file, String(data).slice(0, 12), ...rest);
+      throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+    };
+    adapter.emit('event', { sessionId: session.id, type: 'text', text: ' not yet saved' });
+    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    fs.writeFileSync = (file, ...rest) => {
+      if (file === controller.file + '.tmp' || file === controller.journal.file + '.tmp') {
+        throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+      }
+      return writeFileSync.call(fs, file, ...rest);
+    };
+    adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+    await controller.turnPromise;
+    assert.equal(controller.turns.size, 0);
+    assert.match(errors.join('\n'), /fixture disk full/);
+    assert.ok(fs.readFileSync(controller.journal.file, 'utf8').startsWith(savedJournal), 'failed saves retain the previous journal');
+    const restored = reopen(t, controller).sessions[0].messages[1];
+    assert.equal(restored.text, 'persisted reply');
+    assert.equal(restored.status, 'cancelled');
+  } finally {
+    fs.appendFileSync = appendFileSync;
+    fs.writeFileSync = writeFileSync;
+  }
+});
+
+test('journal repair retains a finished reply until its history save succeeds', async t => {
+  const { controller, session, adapter } = await started(t);
+  const second = await controller.createSession();
+  await controller.send({ sessionId: session.id, text: 'one' });
+  const firstTurn = controller.turns.get(session.id).promise;
+  await controller.send({ sessionId: second.id, text: 'two' });
+  adapter.emit('event', { sessionId: session.id, type: 'text', text: 'first reply' });
+  adapter.emit('event', { sessionId: second.id, type: 'text', text: 'second ' });
+  controller.journal.flush();
+  const { appendFileSync, writeFileSync } = fs;
+  let journalWritable = false;
+  try {
+    fs.appendFileSync = (file, data, ...rest) => {
+      if (file !== controller.journal.file) return appendFileSync.call(fs, file, data, ...rest);
+      appendFileSync.call(fs, file, String(data).slice(0, 12), ...rest);
+      throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+    };
+    adapter.emit('event', { sessionId: second.id, type: 'text', text: 'pending ' });
+    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    fs.writeFileSync = (file, ...rest) => {
+      if (file === controller.file + '.tmp' || (!journalWritable && file === controller.journal.file + '.tmp')) {
+        throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
+      }
+      return writeFileSync.call(fs, file, ...rest);
+    };
+    adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+    await firstTurn;
+    assert.equal(controller.turns.has(session.id), false);
+    // Enough room for the small journal repair, but the full history still
+    // cannot be saved. The other reply continues after the first turn ended.
+    journalWritable = true;
+    fs.appendFileSync = appendFileSync;
+    adapter.emit('event', { sessionId: second.id, type: 'text', text: 'continued' });
+    controller.journal.flush();
+    const restored = reopen(t, controller);
+    const first = restored.sessions.find(item => item.id === session.id).messages[1];
+    const other = restored.sessions.find(item => item.id === second.id).messages[1];
+    assert.equal(first.text, 'first reply');
+    assert.equal(first.status, 'complete');
+    assert.equal(other.text, 'second pending continued');
+    assert.equal(other.status, 'cancelled');
+  } finally {
+    fs.appendFileSync = appendFileSync;
+    fs.writeFileSync = writeFileSync;
+  }
+  controller.save();
+  const entries = fs.readFileSync(controller.journal.file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(entries.map(entry => entry.sessionId), [second.id], 'a successful history save can discard the finished reply');
+});
+
 test('the history file is rewritten only when its content changes', async t => {
   const { controller, session } = await started(t);
   const renames = [];
