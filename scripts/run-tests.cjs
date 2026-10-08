@@ -12,7 +12,7 @@ const uiTests = [
   'tests/ui-controls.cjs', 'tests/ui-security.cjs', 'scripts/images-accounts-smoke.cjs',
   'tests/ui-attachments.cjs', 'tests/i18n-ui.cjs', 'tests/startup-ui.cjs',
   'tests/model-refresh-ui.cjs', 'tests/onboarding-ui.cjs',
-  'tests/ambient-audio-render.cjs', 'tests/time-ui.cjs', 'tests/renderer-performance.cjs',
+  'tests/ambient-audio-render.cjs', 'tests/time-ui.cjs', 'tests/renderer-performance.cjs', 'tests/lazy-images.cjs',
 ];
 
 function packageBin(name, command) {

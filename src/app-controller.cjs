@@ -12,7 +12,7 @@ const { ControllerAccounts } = require('./controller-accounts.cjs');
 const { ControllerQuota, QUOTA_AFTER_TURN_DELAY, QUOTA_AFTER_TURN_INTERVAL } = require('./controller-quota.cjs');
 const { TurnJournal, readTurnJournal } = require('./turn-journal.cjs');
 const { pathToFileURL } = require('node:url');
-const { BlobStore, BLOB_REFERENCE } = require('./blob-store.cjs');
+const { BlobStore, BLOB_REFERENCE, collectBlobReferences } = require('./blob-store.cjs');
 const { HistoryStore, sessionMetadata } = require('./history-store.cjs');
 const TEXT_SCAN_INTERVAL = 500;
 const textScanTimes = new WeakMap();
@@ -178,6 +178,7 @@ class AppController extends EventEmitter {
     };
     const hasSavedHistory = fs.existsSync(this.file);
     let hasAccountCommitMarker = false;
+    let validatedV3 = false;
     if (hasSavedHistory) {
       try {
         const data = this.store.read();
@@ -209,6 +210,7 @@ class AppController extends EventEmitter {
             // Legacy media discovery happens only when this conversation opens.
           }
         }
+        validatedV3 = data.version === 3;
       } catch {
         this.sessions = [];
         this.accounts = [{ id: 'local', name: '本机 Grok 账户', nameIsDefault: true }];
@@ -219,6 +221,9 @@ class AppController extends EventEmitter {
         const contentDirectory = path.join(this.dir, 'sessions');
         if (fs.existsSync(contentDirectory)) fs.cpSync(contentDirectory, `${backup}.sessions`, { recursive: true, dereference: false });
         this.store.files.clear();
+        this.store.references.clear();
+        this.store.sessionIds.clear();
+        this.store.accountIds.clear();
         // Unfinished replies logged beside the unreadable history belong with it.
         try { if (this.journal.exists) fs.copyFileSync(this.journal.file, `${this.journal.file}.unreadable-${stamp}`); } catch {}
         this.loadError = this.t('历史记录文件无法读取，已保留备份：{path}', { path: backup });
@@ -240,7 +245,13 @@ class AppController extends EventEmitter {
     }
     fs.mkdirSync(path.join(root, 'Workspace'), { recursive: true });
     this.cleanupQueue = Promise.resolve();
-    if (!this.loadError) void this.cleanAttachments().catch(error => this.emitEvent({ type: 'error', message: error.message }));
+    if (!this.loadError) {
+      // A full, validated restart is the migration backup's expiry point. The
+      // first migration boot retains it unless a deletion commits meanwhile.
+      this.store.backupRetirementAllowed = validatedV3;
+      this.cleanupQueue = this.store.cleanupLegacyBackup().catch(error => this.emitEvent({ type: 'error', message: error.message }));
+      void this.cleanAttachments().catch(error => this.emitEvent({ type: 'error', message: error.message }));
+    }
   }
   emitEvent(event) { this.emit('event', event); }
   // The most recently reserved turn, or null when every conversation is idle.
@@ -274,7 +285,15 @@ class AppController extends EventEmitter {
       try { await this.journal.flush(); } catch {}
       try { await commit; }
       catch (error) { for (const id of dirty) this.dirtySessions.add(id); throw error; }
-      try { await this.journal.reset([...this.journal.replies.values()].filter(entry => !committedFinal.has(entry.message.id))); } catch {}
+      const liveSessions = new Set(this.sessions.map(session => session.id));
+      try { await this.journal.reset([...this.journal.replies.values()].filter(entry => !committedFinal.has(entry.message.id) && (this.store.sessionIds.has(entry.sessionId) || liveSessions.has(entry.sessionId)))); }
+      catch (error) { this.emitEvent({ type: 'error', message: error.message }); }
+      // Cleanup is post-commit maintenance: failure must be visible but cannot
+      // roll back an already durable account/conversation deletion in memory.
+      try { await this.store.cleanupLegacyBackup(); }
+      catch (error) { this.emitEvent({ type: 'error', message: error.message }); }
+      try { await this.cleanBlobs(); }
+      catch (error) { this.emitEvent({ type: 'error', message: error.message }); }
     });
     this.saveQueue = operation;
     return operation;
@@ -351,8 +370,8 @@ class AppController extends EventEmitter {
     const entry = this.imageTokens.get(token);
     if (!entry) return;
     clearTimeout(entry.timer);
-    void entry.response?.body?.cancel().catch(() => {});
     this.imageTokens.delete(token);
+    return entry.response?.body?.cancel().catch(() => {});
   }
   async serveImage(url) {
     let parsed;
@@ -383,7 +402,7 @@ class AppController extends EventEmitter {
     const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
       : await findSessionImageDirectory(this.accountManager.homeFor(accountId), session.cwd, session.id);
     const response = await resolveImageResponse(src, session.cwd, cache, this.t, undefined, roots);
-    if (accountId !== this.activeAccountId) { await response.body?.cancel(); throw new Error(this.t('不支持的图片地址')); }
+    if (accountId !== this.activeAccountId || !this.sessions.includes(session)) { await response.body?.cancel(); throw new Error(this.t('不支持的图片地址')); }
     return response;
   }
   async readImage(args) {
@@ -401,6 +420,23 @@ class AppController extends EventEmitter {
     });
     this.cleanupQueue = operation;
     return operation;
+  }
+  async cleanBlobs() {
+    if (this.journal.referencesUnreadable) return;
+    const recoveryReferences = await this.store.readRecoveryReferences();
+    const liveSessions = new Set(this.sessions.map(session => session.id));
+    await Promise.all([...this.imageTokens].filter(([, entry]) => !this.store.sessionIds.has(entry.sessionId) && !liveSessions.has(entry.sessionId)).map(([token]) => this.dropImageToken(token)));
+    await this.blobs.collect(() => {
+      const references = this.store.blobReferences();
+      for (const ref of recoveryReferences) references.add(ref);
+      for (const ref of this.journal.blobReferences) references.add(ref);
+      // Stored generations cover unchanged history. Only unsaved/active
+      // conversations need walking while another save is awaiting disk I/O.
+      for (const session of this.sessions) {
+        if (this.dirtySessions.has(session.id) || this.turns.has(session.id) || !this.store.files.has(session.id)) collectBlobReferences(session.messages, references);
+      }
+      return references;
+    });
   }
   async releaseAttachments({ ids = [], accountId = this.activeAccountId } = {}) {
     if (!Array.isArray(ids)) throw new Error(this.t('无效的附件'));

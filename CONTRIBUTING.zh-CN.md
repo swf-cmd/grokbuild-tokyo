@@ -50,7 +50,7 @@ npm run build
 npm run test:packaged
 ```
 
-`test:all` 顺序运行 ESLint、JavaScript 类型检查、单元测试及全部离线界面测试，包括渲染性能回归。`test:packaged` 验证压缩包清单和发布版 Fuses，启动实际的加固后可执行文件，再针对包内 ASAR 资源运行界面测试。两者遇到首次失败即退出，直接调用 Node，兼容 Windows 与 macOS 命令行。附加 `-- --list` 可只查看命令；原有的单项测试命令仍可使用。
+`test:all` 顺序运行 ESLint、JavaScript 类型检查、单元测试及全部离线界面测试，包括渲染性能及图片接近可见区域才加载的回归。`test:packaged` 验证压缩包清单和发布版 Fuses，启动实际的加固后可执行文件，再针对包内 ASAR 资源运行界面测试。两者遇到首次失败即退出，直接调用 Node，兼容 Windows 与 macOS 命令行。附加 `-- --list` 可只查看命令；原有的单项测试命令仍可使用。
 
 `npm run lint` 检查自行编写的 JavaScript，不包含第三方和生成文件。`npm run typecheck` 通过 `checkJs` 与 `noEmit` 检查路径、模型、额度、blob 和历史存储模块以及打包、测试运行脚本；增量覆盖范围明确列在 `tsconfig.json`，拆分其他控制器或界面模块时应继续扩展。检查不会引入应用运行时依赖。受支持的新版 ESLint 需要开发环境使用 Node.js 22.13.0 或更高版本，CI 使用 Node.js 24。
 

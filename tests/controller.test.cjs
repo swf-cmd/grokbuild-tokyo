@@ -851,6 +851,9 @@ test('a failed configuration that invalidates adapter state forces restoration b
 test('a pending configuration prevents a prompt and other engine mutations from racing', async t => {
   const { controller, adapter, session } = await started(t);
   adapter.modelGate = deferred();
+  const modelEntered = deferred();
+  const setModel = adapter.setModel.bind(adapter);
+  adapter.setModel = args => { modelEntered.resolve(); return setModel(args); };
   const configuring = controller.configureSession({ sessionId: session.id, model: 'new-model' });
   await assert.rejects(controller.send({ sessionId: session.id, text: 'must wait' }), /更新会话配置/);
   await assert.rejects(controller.createSession(), /更新会话配置/);
@@ -858,6 +861,9 @@ test('a pending configuration prevents a prompt and other engine mutations from 
   await assert.rejects(controller.saveSettings({ subagentsEnabled: false }), /更新会话配置/);
   await assert.rejects(controller.configureSession({ sessionId: session.id, mode: 'high' }), /更新会话配置/);
   assert.equal(adapter.prompts.length, 0);
+  // Restoration now includes asynchronous file collection. Reject only after
+  // the fixture engine consumes its gate, avoiding an unhandled early reject.
+  await modelEntered.promise;
   adapter.modelGate.reject(new Error('model failed'));
   await assert.rejects(configuring, /model failed/);
   assert.equal(controller.operation, null);

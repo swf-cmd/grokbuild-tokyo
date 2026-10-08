@@ -50,7 +50,7 @@ npm run build
 npm run test:packaged
 ```
 
-`test:all` runs ESLint, JavaScript type checking, unit tests, and every offline UI suite, including renderer performance. `test:packaged` verifies the archive inventory and release fuses, launches the actual hardened binary, and repeats the fixture suites against its ASAR resources. Both runners stop at the first failure and invoke Node directly, so they work in Windows and macOS shells. Use `-- --list` to inspect the commands without running them; existing individual test commands remain available.
+`test:all` runs ESLint, JavaScript type checking, unit tests, and every offline UI suite, including renderer performance and image loading near the viewport. `test:packaged` verifies the archive inventory and release fuses, launches the actual hardened binary, and repeats the fixture suites against its ASAR resources. Both runners stop at the first failure and invoke Node directly, so they work in Windows and macOS shells. Use `-- --list` to inspect the commands without running them; existing individual test commands remain available.
 
 `npm run lint` covers authored JavaScript (excluding vendored/generated files). `npm run typecheck` uses `checkJs` and `noEmit` for the path, model, quota, blob and history modules plus packaging and test-runner scripts; `tsconfig.json` lists this incremental coverage explicitly. Extend it when moving more controller or UI behavior into modules. These checks add no application runtime dependency. Development requires Node.js 22.13.0+ for the supported ESLint release; CI uses Node.js 24.
 

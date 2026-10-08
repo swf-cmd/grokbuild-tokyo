@@ -383,6 +383,26 @@
   }
 
   const imageCache = new Map();
+  const pendingImages = new Map();
+  let imageObserver;
+  function observeImage(figure, load) {
+    imageObserver ||= new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const request = pendingImages.get(entry.target);
+        if (!request || !entry.isIntersecting) continue;
+        imageObserver.unobserve(entry.target);
+        pendingImages.delete(entry.target);
+        // A queued observer entry can outlive a conversation or message.
+        if (entry.target.isConnected) void request();
+      }
+    }, { root: $('conversation-scroll'), rootMargin: '300px 0px' });
+    pendingImages.set(figure, load);
+    imageObserver.observe(figure);
+  }
+  function clearImageObservers() {
+    imageObserver?.disconnect();
+    pendingImages.clear();
+  }
   function createImage(source, session, messageId, previousImages) {
     const key = `${messageId}:${source.src}`;
     if (previousImages.has(key)) { const figure = previousImages.get(key); figure.localize?.(); return figure; }
@@ -390,30 +410,47 @@
     const figure = document.createElement('figure'); figure.className = 'chat-image'; figure.imageKey = key;
     const button = document.createElement('button'); button.type = 'button'; button.className = 'image-thumbnail'; button.disabled = true;
     button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() }));
-    const img = document.createElement('img'); img.alt = alt(); img.loading = 'lazy'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
+    // IntersectionObserver controls preparation; consume the short-lived image
+    // response immediately once requested, including within the preload margin.
+    const img = document.createElement('img'); img.alt = alt(); img.loading = 'eager'; img.decoding = 'async'; img.referrerPolicy = 'no-referrer';
     const caption = document.createElement('figcaption'); caption.textContent = t('正在加载图片…');
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'image-retry'; retry.textContent = t('重新加载'); retry.hidden = true;
     button.append(img); figure.append(button, caption, retry);
-    const cacheKey = `${state.activeAccountId}:${session.id}:${source.src}`;
+    const accountId = state.activeAccountId;
+    const cacheKey = `${accountId}:${session.id}:${source.src}`;
+    const current = () => figure.isConnected && state.activeAccountId === accountId && state.activeId === session.id;
     let failure = '';
+    let loading = false;
     const load = async () => {
+      if (!current() || loading) return;
+      loading = true;
       const follow = nearBottom();
       failure = ''; caption.textContent = t('正在加载图片…'); retry.hidden = true; img.hidden = false; button.disabled = true;
+      let request = imageCache.get(cacheKey);
       try {
-        let request = imageCache.get(cacheKey);
         if (!request) {
           request = call('readImage', { sessionId: session.id, src: source.src });
           imageCache.set(cacheKey, request);
           if (imageCache.size > 24) imageCache.delete(imageCache.keys().next().value);
         }
         const resolved = await request;
+        if (!current()) {
+          if (imageCache.get(cacheKey) === request) imageCache.delete(cacheKey);
+          return;
+        }
         img.onload = () => {
+          if (!current()) return;
           button.disabled = false; caption.textContent = t('{alt} · 点击放大', { alt: alt() });
           if (follow && figure.isConnected) $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight;
         };
-        img.onerror = () => failed(t('图片加载失败，地址可能已失效或需要登录'));
+        img.onerror = () => { if (current()) failed(t('图片加载失败，地址可能已失效或需要登录'), request); };
         img.src = resolved.src;
-      } catch (error) { failed(error.message); }
+      } catch (error) {
+        // A failed request must not poison the cache after its figure is gone.
+        // Leave any newer request for this source intact.
+        if (imageCache.get(cacheKey) === request) imageCache.delete(cacheKey);
+        if (current()) failed(error.message, request);
+      } finally { loading = false; }
     };
     figure.localize = () => {
       button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() })); img.alt = alt(); retry.textContent = t('重新加载');
@@ -421,14 +458,14 @@
       else if (retry.hidden) caption.textContent = t('正在加载图片…');
       else caption.textContent = diagnostic(failure);
     };
-    const failed = message => { failure = message; imageCache.delete(cacheKey); img.removeAttribute('src'); img.hidden = true; button.disabled = true; caption.textContent = diagnostic(message); retry.hidden = false; };
+    const failed = (message, request) => { failure = message; if (imageCache.get(cacheKey) === request) imageCache.delete(cacheKey); img.removeAttribute('src'); img.hidden = true; button.disabled = true; caption.textContent = diagnostic(message); retry.hidden = false; };
     retry.addEventListener('click', () => { void load(); });
     button.addEventListener('click', () => {
       $('image-title').textContent = alt();
       $('image-preview').alt = alt(); $('image-preview').referrerPolicy = 'no-referrer'; $('image-preview').src = img.src;
       $('image-dialog').showModal();
     });
-    void load();
+    observeImage(figure, load);
     return figure;
   }
 
@@ -539,7 +576,8 @@
     const container = $('messages');
     const context = `${state.activeAccountId}:${session?.id || ''}`;
     const displayContext = `${i18n.getLanguage()}:${new Date().getTimezoneOffset()}`;
-    if (messageRenderContext !== context) { messageNodes.clear(); container.replaceChildren(); messageRenderContext = context; }
+    const contextChanged = messageRenderContext !== context;
+    if (contextChanged) { clearImageObservers(); messageNodes.clear(); container.replaceChildren(); messageRenderContext = context; }
     const liveIds = new Set();
     messages.forEach((message, index) => {
       liveIds.add(message.id);
@@ -622,7 +660,15 @@
     for (const [id, cached] of messageNodes) {
       if (!liveIds.has(id)) { cached.article.remove(); messageNodes.delete(id); }
     }
-    if (pinned) scroller.scrollTop = scroller.scrollHeight;
+    for (const figure of pendingImages.keys()) {
+      if (!figure.isConnected) { imageObserver.unobserve(figure); pendingImages.delete(figure); }
+    }
+    if (pinned) {
+      // Opening history must jump directly to its latest message; an animated
+      // trip through the entire conversation would preload every image en route.
+      if (forceBottom || contextChanged) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'instant' });
+      else scroller.scrollTop = scroller.scrollHeight;
+    }
     $('scroll-bottom').hidden = !hasMessages || nearBottom();
     renderComposerState();
     renderPermissions();
@@ -1574,7 +1620,7 @@
     window.addEventListener('resize', closeSessionMenu);
     window.addEventListener('focus', updateClock);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) updateClock(); });
-    window.addEventListener('beforeunload', () => { clearTimeout(clockTimer); composerObserver.disconnect(); if (typeof unsubscribe === 'function') unsubscribe(); unsubscribeMenu?.(); ambience?.dispose(); });
+    window.addEventListener('beforeunload', () => { clearTimeout(clockTimer); composerObserver.disconnect(); clearImageObservers(); if (typeof unsubscribe === 'function') unsubscribe(); unsubscribeMenu?.(); ambience?.dispose(); });
   }
 
   function applyLanguage(language) {
