@@ -113,3 +113,15 @@ test('cleanup waits for attachment staging to finish registering the pending dra
   assert.equal((await fs.readFile(draft.src)).toString(), 'draft');
   assert.ok(controller.pendingAttachments.has(draft.id));
 });
+
+test('a rejected attachment import does not leave an unhandled cleanup queue rejection', async t => {
+  const root = await directory(t);
+  const controller = controllerAt(t, root);
+  await assert.rejects(controller.importAttachments({ files: [{ name: 'bad.png', data: 'not base64' }] }));
+  // Let Node report an unhandled rejection before another cleanup attaches a
+  // handler: the caller already handled the original staging failure above.
+  await new Promise(resolve => setImmediate(resolve));
+  await controller.cleanupQueue;
+  const [valid] = await controller.importAttachments({ files: [{ name: 'image.png', data: png.toString('base64') }] });
+  assert.equal(controller.pendingAttachments.has(valid.id), true);
+});

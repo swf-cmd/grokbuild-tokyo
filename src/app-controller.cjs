@@ -314,7 +314,7 @@ class AppController extends EventEmitter {
       });
       // Cleanup shares this queue through staging and registration, so it cannot
       // mistake a just-created upload directory for an abandoned draft.
-      this.cleanupQueue = staging.then(() => {});
+      this.cleanupQueue = staging.then(() => {}, () => {});
       return staging;
     }, { duringTurns: true });
   }
