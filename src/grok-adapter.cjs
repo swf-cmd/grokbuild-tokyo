@@ -56,6 +56,30 @@ function flattenChoices(options) {
     Array.isArray(option?.options) ? flattenChoices(option.options) : option && typeof option === 'object' ? [option] : []);
 }
 
+// Buffer incomplete lines as segments. Only the newly decoded chunk is scanned;
+// a multi-megabyte base64 line must not repeatedly rescan its growing prefix.
+class LineFramer {
+  constructor(maxLength = MAX_LINE) { this.maxLength = maxLength; this.parts = []; this.length = 0; }
+  push(chunk, onLine) {
+    let start = 0;
+    while (start < chunk.length) {
+      const newline = chunk.indexOf('\n', start);
+      const end = newline < 0 ? chunk.length : newline;
+      const length = end - start;
+      if (this.length + length > this.maxLength) {
+        this.parts = []; this.length = 0;
+        throw failure('Protocol line too large', 'PROTOCOL_LIMIT');
+      }
+      if (length) { this.parts.push(chunk.slice(start, end)); this.length += length; }
+      if (newline < 0) return;
+      const line = this.parts.length === 1 ? this.parts[0] : this.parts.join('');
+      this.parts = []; this.length = 0;
+      onLine(line);
+      start = newline + 1;
+    }
+  }
+}
+
 class GrokAdapter extends EventEmitter {
   constructor({ executable = 'grok', cwd = process.cwd(), subagentsEnabled = true, env = process.env, spawnProcess = spawn, getLanguage = () => 'en' } = {}) {
     super();
@@ -129,7 +153,7 @@ class GrokAdapter extends EventEmitter {
     this.process = child;
     if (process.platform !== 'win32' && Number.isInteger(child.pid) && child.pid > 0) this.processGroups.add(child);
     const decoder = new StringDecoder('utf8');
-    let buffer = '';
+    const framer = new LineFramer();
     let stderr = '';
     let disconnected = false;
     const disconnect = (error, exited = false) => {
@@ -166,25 +190,18 @@ class GrokAdapter extends EventEmitter {
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
       if (this.process !== child || disconnected) return;
-      buffer += decoder.write(data);
-      let newline;
-      while ((newline = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        if (line.length > MAX_LINE) {
-          disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), 'PROTOCOL_LIMIT'));
-          this._kill(child);
-          return;
-        }
-        try { this._message(JSON.parse(line)); }
-        catch (error) {
-          // A non-JSON startup notice is not a protocol response. Never echo it.
-          if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: this.safeMessage(error.message) });
-        }
-      }
-      if (buffer.length > MAX_LINE) {
-        disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), 'PROTOCOL_LIMIT'));
+      try {
+        framer.push(decoder.write(data), value => {
+          const line = value.trim();
+          if (!line) return;
+          try { this._message(JSON.parse(line)); }
+          catch (error) {
+            // A non-JSON startup notice is not a protocol response. Never echo it.
+            if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: this.safeMessage(error.message) });
+          }
+        });
+      } catch (error) {
+        disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), error.code || 'PROTOCOL_LIMIT'));
         this._kill(child);
       }
     });
@@ -764,4 +781,4 @@ class GrokAdapter extends EventEmitter {
   }
 }
 
-module.exports = { GrokAdapter };
+module.exports = { GrokAdapter, LineFramer };

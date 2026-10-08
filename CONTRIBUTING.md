@@ -13,7 +13,7 @@ Thanks for helping improve this unofficial Windows and Mac desktop client for Gr
 
 ## Development setup
 
-Use Windows x64 or macOS 13+ on Intel or Apple Silicon, with Node.js 22.12.0 or newer. CI uses Node.js 24; use that version when reproducing CI failures. The locally installed [Grok Build CLI](https://github.com/xai-org/grok-build) is required for normal application use, while the default automated tests use isolated mock engines.
+Use Windows x64 or macOS 13+ on Intel or Apple Silicon, with Node.js 22.13.0 or newer. CI uses Node.js 24; use that version when reproducing CI failures. The locally installed [Grok Build CLI](https://github.com/xai-org/grok-build) is required for normal application use, while the default automated tests use isolated mock engines.
 
 Fork this repository, clone your fork, and create a branch for your change:
 
@@ -44,24 +44,17 @@ Run the checks relevant to the change locally. CI runs the shared checks on Wind
 
 ```sh
 npm ci
-npm test
+npm run test:all
 npm audit --audit-level=moderate
-npm run test:ui
-npm run test:security
-npm run test:accounts
-npm run test:attachments
-npm run test:i18n
-npm run test:models
-npm run test:time
 npm run build
-node scripts/verify-package.cjs
-node tests/ui-security.cjs --packaged
-node scripts/images-accounts-smoke.cjs --packaged
-node tests/i18n-ui.cjs --packaged
-npm run test:models -- --packaged
-node tests/ui-attachments.cjs --packaged
-node tests/time-ui.cjs --packaged
+npm run test:packaged
 ```
+
+`test:all` runs ESLint, JavaScript type checking, unit tests, and every offline UI suite, including renderer performance. `test:packaged` verifies the archive inventory and release fuses, launches the actual hardened binary, and repeats the fixture suites against its ASAR resources. Both runners stop at the first failure and invoke Node directly, so they work in Windows and macOS shells. Use `-- --list` to inspect the commands without running them; existing individual test commands remain available.
+
+`npm run lint` covers authored JavaScript (excluding vendored/generated files). `npm run typecheck` uses `checkJs` and `noEmit` for the path, model, quota, blob and history modules plus packaging and test-runner scripts; `tsconfig.json` lists this incremental coverage explicitly. Extend it when moving more controller or UI behavior into modules. These checks add no application runtime dependency. Development requires Node.js 22.13.0+ for the supported ESLint release; CI uses Node.js 24.
+
+Release packaging disables `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and Node inspector arguments with Electron Fuses, and enforces embedded ASAR integrity and ASAR-only loading. Fuses are applied after universal merging and before the final macOS signature. The actual-binary smoke test uses renderer CDP so the production inspector fuse stays disabled; fixture tests continue to cover native lifecycle and menu behavior using development Electron. CI builds the universal Mac ZIP once on Apple Silicon and runs that same archive on Intel.
 
 Quit the running client before building (**Cmd+Q** on Mac; closing its window only hides it). The build replaces the entire `App/` directory and saves the previous directory under `work/package-backups/`. Windows distributions need the complete `App/` directory and its license files.
 
@@ -69,8 +62,7 @@ For a Mac release, build the universal app on a Mac and validate both architectu
 
 ```sh
 npm run build:mac
-node scripts/verify-package.cjs --platform darwin --arch universal
-node scripts/packaged-launch-smoke.cjs
+npm run test:packaged -- --platform darwin --arch universal
 ```
 
 This creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip` with a `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` produce individual architecture builds.

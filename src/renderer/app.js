@@ -25,6 +25,13 @@
   const activeSession = () => state.sessions.find(s => s.id === state.activeId);
   // Each conversation runs independently; only the one on screen locks its composer.
   const activeBusy = () => state.busy.has(state.activeId);
+  // Shared action guard: individual controls declare only their extra scope.
+  function uiLocked({ engine = false, connected = false, busy = false, login = true, saving = true } = {}) {
+    return state.initializing || state.sending || state.configuring || state.selecting
+      || (saving && state.savingSettings) || state.accountAction || (login && !!state.login)
+      || (engine && state.startingEngine) || (connected && !state.connected)
+      || (busy === 'all' ? state.busy.size > 0 : busy && activeBusy());
+  }
   const atCapacity = () => !activeBusy() && state.busy.size >= state.maxConcurrentTurns;
   const needsSignIn = () => state.accounts.find(account => account.id === state.activeAccountId)?.signedIn === false;
   const sessionPermissions = id => [...state.permissions.values()].filter(item => item.sessionId === id);
@@ -81,25 +88,53 @@
     return { ...state.info, ...info, models: normalizeChoices(info.models ?? state.info.models), modes: normalizeChoices(info.modes ?? state.info.modes) };
   }
 
-  function normalizeSession(session) {
-    return { ...session, messages: (session.messages || []).map(message => {
+  // IPC snapshots create fresh objects. Keep unchanged messages by identity so
+  // completed replies retain their DOM, selection, details and loaded images.
+  function equalMessageValue(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && equalMessageValue(a[key], b[key]));
+  }
+
+  function normalizeSession(session, previous) {
+    const oldMessages = Array.isArray(session.messages) ? new Map((previous?.messages || []).map(message => [message.id, message])) : null;
+    const messages = Array.isArray(session.messages) ? session.messages.map(message => {
       const text = safeText(message.text ?? message.content);
       const segments = message.responseSegments;
       const validSegments = Array.isArray(segments) && segments.every(segment => segment && typeof segment.text === 'string' && ['response', 'commentary'].includes(segment.kind))
         && segments.map(segment => segment.text).join('\n\n') === text;
-      return { ...message, id: message.id || uid(), role: message.role || 'assistant', text, responseSegments: validSegments ? segments : undefined, thought: safeText(message.thought), tools: message.tools || [] };
-    }) };
+      const normalized = { ...message, id: message.id || uid(), role: message.role || 'assistant', text, responseSegments: validSegments ? segments : undefined, thought: safeText(message.thought), tools: message.tools || [] };
+      const old = oldMessages.get(normalized.id);
+      return old && equalMessageValue(old, normalized) ? old : normalized;
+    }) : previous?.messages || [];
+    return { ...previous, ...session, messages, messagesLoaded: Array.isArray(session.messages) || previous?.messagesLoaded === true };
+  }
+
+  function replaceSessionList(sessions = []) {
+    const previous = new Map(state.sessions.map(session => [session.id, session]));
+    state.sessions = sessions.map(session => normalizeSession(session, previous.get(session.id)));
   }
 
   function upsertSession(session) {
     if (!session?.id) return;
     if ((session.accountId || 'local') !== state.activeAccountId) return;
-    const normalized = normalizeSession(session);
     const index = state.sessions.findIndex(item => item.id === session.id);
+    const normalized = normalizeSession(session, index >= 0 ? state.sessions[index] : undefined);
     if (index >= 0) state.sessions[index] = normalized;
     else state.sessions.unshift(normalized);
-    const pending = normalized.messages.some(message => message.status === 'working');
+    const pending = normalized.lastMessageStatus === 'working' || normalized.messages.some(message => message.status === 'working');
     if (pending) { state.busy.add(normalized.id); if (!state.started.has(normalized.id)) state.started.set(normalized.id, Date.now()); }
+  }
+
+  async function loadSessionMessages(id) {
+    const accountId = state.activeAccountId;
+    const session = state.sessions.find(item => item.id === id);
+    if (!session || session.messagesLoaded) return;
+    const loaded = await call('readSession', id);
+    if (state.activeAccountId !== accountId) return;
+    upsertSession(loaded);
+    if (state.activeId === id) renderMessages(true);
   }
 
   function fillSelect(element, items, selected, placeholder) {
@@ -228,7 +263,7 @@
     const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
     fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'));
     fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'));
-    const locked = state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login || activeBusy();
+    const locked = uiLocked({ engine: true, connected: true, busy: true });
     for (const element of [$('model-select'), $('mode-select')]) {
       element.disabled = locked;
       element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : activeBusy() ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
@@ -293,7 +328,7 @@
       row.className = `session-item${session.id === state.activeId ? ' active' : ''}${state.busy.has(session.id) ? ' working' : ''}`;
       const select = document.createElement('button');
       select.className = 'session-select';
-      select.disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings;
+      select.disabled = uiLocked();
       select.title = sessionTitle(session);
       select.setAttribute('aria-current', session.id === state.activeId ? 'page' : 'false');
       const icon = document.createElement('span');
@@ -386,7 +421,7 @@
       else if (retry.hidden) caption.textContent = t('正在加载图片…');
       else caption.textContent = diagnostic(failure);
     };
-    const failed = message => { failure = message; imageCache.delete(cacheKey); img.hidden = true; button.disabled = true; caption.textContent = diagnostic(message); retry.hidden = false; };
+    const failed = message => { failure = message; imageCache.delete(cacheKey); img.removeAttribute('src'); img.hidden = true; button.disabled = true; caption.textContent = diagnostic(message); retry.hidden = false; };
     retry.addEventListener('click', () => { void load(); });
     button.addEventListener('click', () => {
       $('image-title').textContent = alt();
@@ -485,6 +520,11 @@
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
   }
 
+  const messageNodes = new Map();
+  const messageRevisions = new WeakMap();
+  let messageRenderContext = '';
+  function touchMessage(message) { messageRevisions.set(message, (messageRevisions.get(message) || 0) + 1); }
+
   function renderMessages(forceBottom = false) {
     const scroller = $('conversation-scroll');
     const pinned = forceBottom || nearBottom();
@@ -496,12 +536,24 @@
     document.querySelector('.main-panel').classList.toggle('has-messages', hasMessages);
     $('breadcrumb-title').textContent = session ? sessionTitle(session) : t('新对话');
     $('export-button').disabled = !session || !messages.length;
-    const openDetails = new Set([...$('messages').querySelectorAll('details[open]')].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId || item.dataset.responseId));
-    const previousPlans = new Set([...$('messages').querySelectorAll('[data-plan-id]')].map(item => item.dataset.planId));
     const container = $('messages');
-    const previousImages = new Map([...container.querySelectorAll('.chat-image')].map(figure => [figure.imageKey, figure]));
-    container.replaceChildren();
+    const context = `${state.activeAccountId}:${session?.id || ''}`;
+    const displayContext = `${i18n.getLanguage()}:${new Date().getTimezoneOffset()}`;
+    if (messageRenderContext !== context) { messageNodes.clear(); container.replaceChildren(); messageRenderContext = context; }
+    const liveIds = new Set();
     messages.forEach((message, index) => {
+      liveIds.add(message.id);
+      const streaming = message.role === 'assistant' && message.status === 'working' && index === messages.length - 1 && state.busy.has(session.id);
+      const revision = messageRevisions.get(message) || 0;
+      const cached = messageNodes.get(message.id);
+      if (cached?.message === message && cached.revision === revision && cached.streaming === streaming && cached.displayContext === displayContext) {
+        if (container.children[index] !== cached.article) container.insertBefore(cached.article, container.children[index] || null);
+        return;
+      }
+      const previous = cached?.article;
+      const openDetails = new Set([...previous?.querySelectorAll('details[open]') || []].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId || item.dataset.responseId));
+      const previousPlans = new Set([...previous?.querySelectorAll('[data-plan-id]') || []].map(item => item.dataset.planId));
+      const previousImages = new Map([...previous?.querySelectorAll('.chat-image') || []].map(figure => [figure.imageKey, figure]));
       const article = document.createElement('article');
       article.className = `message ${message.role === 'user' ? 'user' : 'assistant'}`;
       article.dataset.messageId = message.id;
@@ -548,23 +600,28 @@
       }
       mountImages(body, message, session, previousImages);
       mountAttachments(body, message, session);
-      const last = index === messages.length - 1;
-      if (message.role === 'assistant' && last && state.busy.has(session.id)) {
+      if (streaming) {
         const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', t('正在生成')); body.append(cursor);
       }
       if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = diagnostic(message.error) || t('本次请求未能完成，请检查引擎连接后重试。'); body.append(error); }
       if (message.noticeKey) { const notice = document.createElement('div'); notice.className = 'message-notice'; notice.textContent = t(message.noticeKey); body.append(notice); }
       if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = t('本次生成已停止'); body.append(cancelled); }
-      article.append(body); container.append(article);
-    });
-    container.querySelectorAll('pre > code').forEach(code => {
-      const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = t('复制'); button.setAttribute('aria-label', t('复制代码'));
-      button.addEventListener('click', async () => {
-        try { await call('copyText', code.textContent); button.textContent = t('已复制'); setTimeout(() => { if (button.isConnected) button.textContent = t('复制'); }, 1800); }
-        catch (_) { toast(t('无法访问剪贴板，请选择代码后复制。'), true); }
+      article.append(body);
+      article.querySelectorAll('pre > code').forEach(code => {
+        const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = t('复制'); button.setAttribute('aria-label', t('复制代码'));
+        button.addEventListener('click', async () => {
+          try { await call('copyText', code.textContent); button.textContent = t('已复制'); setTimeout(() => { if (button.isConnected) button.textContent = t('复制'); }, 1800); }
+          catch (_) { toast(t('无法访问剪贴板，请选择代码后复制。'), true); }
+        });
+        code.parentElement.append(button);
       });
-      code.parentElement.append(button);
+      messageNodes.set(message.id, { article, message, revision, streaming, displayContext });
+      if (previous?.parentNode === container) previous.replaceWith(article);
+      if (container.children[index] !== article) container.insertBefore(article, container.children[index] || null);
     });
+    for (const [id, cached] of messageNodes) {
+      if (!liveIds.has(id)) { cached.article.remove(); messageNodes.delete(id); }
+    }
     if (pinned) scroller.scrollTop = scroller.scrollHeight;
     $('scroll-bottom').hidden = !hasMessages || nearBottom();
     renderComposerState();
@@ -581,20 +638,20 @@
     const busy = activeBusy();
     const full = atCapacity();
     const draft = currentDraft();
-    const changing = state.configuring || state.selecting || state.savingSettings || state.accountAction || !!state.login;
+    const locked = uiLocked();
     $('send-button').hidden = busy;
     $('stop-button').hidden = !busy;
-    $('send-button').disabled = state.initializing || state.startingEngine || state.sending || changing || draft.pending > 0 || busy || full || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
+    $('send-button').disabled = uiLocked({ engine: true }) || draft.pending > 0 || busy || full || (!$('prompt').value.trim() && !draft.attachments.length) || !state.connected || !newChatConfigReady();
     $('send-button').title = full ? t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: state.maxConcurrentTurns }) : '';
-    $('attach-button').disabled = state.initializing || state.startingEngine || state.sending || busy || draft.pending > 0 || changing;
+    $('attach-button').disabled = uiLocked({ engine: true, busy: true }) || draft.pending > 0;
     renderDraftAttachments();
-    $('settings-button').disabled = state.initializing || state.sending || changing;
-    $('account-button').disabled = state.initializing || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction;
-    $('workspace-button').disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0;
-    $('new-session').disabled = state.sending || changing;
-    for (const element of document.querySelectorAll('.session-select, .session-more')) element.disabled = state.initializing || state.sending || changing || (state.startingEngine && element.classList.contains('session-more'));
+    $('settings-button').disabled = locked;
+    $('account-button').disabled = uiLocked({ login: false });
+    $('workspace-button').disabled = uiLocked({ engine: true }) || state.busy.size > 0;
+    $('new-session').disabled = locked;
+    for (const element of document.querySelectorAll('.session-select, .session-more')) element.disabled = locked || (state.startingEngine && element.classList.contains('session-more'));
     for (const element of document.querySelectorAll('[data-prompt]')) element.disabled = state.sending;
-    for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = state.initializing || state.startingEngine || state.sending || changing || state.busy.size > 0 || state.connectionStatus === 'connecting';
+    for (const id of ['connection-button', 'settings-reconnect']) $(id).disabled = uiLocked({ engine: true }) || state.busy.size > 0 || state.connectionStatus === 'connecting';
     $('prompt').disabled = state.sending;
     $('prompt').placeholder = state.login ? t('请先完成或取消账户登录，可以先写好草稿…') : needsSignIn() ? t('请先登录 Grok，也可以先写好草稿…') : state.configuring ? t('正在等待引擎确认配置，可以先写好下一条消息…') : state.selecting ? t('正在恢复这段对话…') : !state.connected ? t('当前离线；连接引擎后可继续对话…') : busy ? t('可以先写好下一条消息，等待当前任务完成…') : full ? t('已达到同时运行的任务上限，可以先写好下一条消息…') : t('在雨声中，开始你的下一个想法…');
     $('activity-strip').hidden = !busy;
@@ -644,9 +701,20 @@
   function rememberDraft() { currentDraft().text = $('prompt').value; }
   function restoreDraft() { $('prompt').value = currentDraft().text; resizePrompt(); }
 
+  let renderedDraft;
+  function releaseDraftAttachments(attachments, accountId = state.activeAccountId) {
+    if (attachments.length) void guarded(() => call('releaseAttachments', { ids: attachments.map(item => item.id), accountId }));
+  }
+
   function renderDraftAttachments() {
     const draft = currentDraft();
     const list = $('attachment-drafts');
+    const language = i18n.getLanguage();
+    if (renderedDraft?.draft === draft && renderedDraft.attachments === draft.attachments && renderedDraft.pending === draft.pending && renderedDraft.language === language) {
+      for (const button of list.querySelectorAll('.attachment-remove')) button.disabled = state.sending;
+      return;
+    }
+    renderedDraft = { draft, attachments: draft.attachments, pending: draft.pending, language };
     list.hidden = !draft.attachments.length && !draft.pending;
     list.replaceChildren();
     for (const attachment of draft.attachments) {
@@ -661,7 +729,10 @@
       const size = document.createElement('span'); size.className = 'attachment-size'; size.textContent = attachmentSize(attachment.size);
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'attachment-remove'; remove.textContent = '×'; remove.disabled = state.sending;
       remove.setAttribute('aria-label', t('移除附件：{name}', { name: name.textContent }));
-      remove.addEventListener('click', () => { draft.attachments = draft.attachments.filter(item => item.id !== attachment.id); renderComposerState(); });
+      remove.addEventListener('click', () => {
+        draft.attachments = draft.attachments.filter(item => item.id !== attachment.id);
+        releaseDraftAttachments([attachment]); renderComposerState();
+      });
       info.append(name, size); card.append(info, remove); list.append(card);
     }
     if (draft.pending) {
@@ -670,13 +741,13 @@
   }
 
   async function addAttachments(files) {
-    if (state.initializing || state.startingEngine || state.sending || activeBusy() || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    if (uiLocked({ engine: true, busy: true })) return;
     const draft = currentDraft();
     if (draft.pending) return;
     const accountId = state.activeAccountId;
     draft.pending++; renderComposerState();
+    let attachments = [], retained = false;
     try {
-      let attachments;
       if (files) {
         if (files.length + draft.attachments.length > 10) throw new Error(t('每条消息最多添加 10 个附件。'));
         if (files.some(file => file.size > 20 * 1024 * 1024)) throw new Error(t('单个附件不能超过 20 MB。'));
@@ -698,13 +769,16 @@
       const combined = [...draft.attachments, ...attachments.filter(item => item?.id && !draft.attachments.some(previous => previous.id === item.id))];
       if (combined.length > 10) throw new Error(t('每条消息最多添加 10 个附件。'));
       if (combined.reduce((sum, file) => sum + (file.size || 0), 0) > 50 * 1024 * 1024) throw new Error(t('每条消息的附件总大小不能超过 50 MB。'));
-      draft.attachments = combined;
+      draft.attachments = combined; retained = true;
     } catch (error) { if (state.activeAccountId === accountId) toast(error.message || t('添加附件失败，请重试。'), true, 6500); }
-    finally { draft.pending--; renderComposerState(); }
+    finally {
+      if (!retained && Array.isArray(attachments)) releaseDraftAttachments(attachments, accountId);
+      draft.pending--; renderComposerState();
+    }
   }
 
   function newChat() {
-    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) return;
+    if (uiLocked()) return;
     rememberDraft();
     state.activeId = null;
     syncNewChatChoices(true);
@@ -713,13 +787,13 @@
   }
 
   async function selectSession(id) {
-    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || id === state.activeId) return;
+    if (uiLocked() || id === state.activeId) return;
     rememberDraft();
-    // Saved conversations are already in memory. Browsing them must not wait
-    // for ACP initialize or contend with its session restoration operation.
+    // Fetch saved history without waiting for ACP or restoring an engine session.
     if (state.startingEngine) {
       if (!state.sessions.some(session => session.id === id)) return;
       state.activeId = id;
+      await loadSessionMessages(id);
       restoreDraft(); renderSessions(); renderSelects(); renderWorkspace(); renderMessages(true);
       closeSessionMenu(); $('prompt').focus();
       return;
@@ -737,7 +811,7 @@
 
   async function configureSession(patch) {
     const session = activeSession();
-    if (!session || !state.connected || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || state.busy.has(session.id)) { renderSelects(); return; }
+    if (!session || uiLocked({ engine: true, connected: true, busy: true })) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       const updated = await call('configureSession', { sessionId: session.id, ...patch });
@@ -751,7 +825,7 @@
   }
 
   async function prepareModel(model) {
-    if (state.initializing || state.startingEngine || !state.connected || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login) { renderSelects(); return; }
+    if (uiLocked({ engine: true, connected: true })) { renderSelects(); return; }
     state.configuring = true; renderSelects(); renderComposerState();
     try {
       // A model without a published effort menu needs an actual session readback.
@@ -774,7 +848,7 @@
     const text = $('prompt').value.trim();
     const draft = currentDraft();
     const attachments = [...draft.attachments];
-    if ((!text && !attachments.length) || draft.pending || state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || activeBusy()) return;
+    if ((!text && !attachments.length) || draft.pending || uiLocked({ engine: true, busy: true })) return;
     if (atCapacity()) { toast(t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: state.maxConcurrentTurns }), true); return; }
     if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
     if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
@@ -816,6 +890,7 @@
       message = { id: uid(), role: 'assistant', text: '', thought: '', tools: [], status: 'working', createdAt: new Date().toISOString() };
       session.messages.push(message);
     }
+    touchMessage(message);
     return message;
   }
 
@@ -838,6 +913,11 @@
       return;
     }
     const sessionId = event.sessionId || event.session?.id || state.activeId;
+    if (event.type === 'sessions-updated') {
+      for (const session of event.sessions || []) upsertSession(session);
+      renderSessions(); renderSelects(); renderWorkspace(); queueMessages();
+      return;
+    }
     if (event.type === 'session-updated') {
       if (event.session) upsertSession(event.session);
       renderSessions(); if (sessionId === state.activeId) { renderSelects(); renderWorkspace(); queueMessages(); }
@@ -874,7 +954,7 @@
         const wasBusy = state.busy.delete(sessionId); state.started.delete(sessionId); clearPermissions(sessionId);
         const session = state.sessions.find(item => item.id === sessionId);
         const last = session?.messages.at(-1);
-        if (last?.role === 'assistant' && last.status === 'working') last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete';
+        if (last?.role === 'assistant' && last.status === 'working') { last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete'; touchMessage(last); }
         // A conversation finishing out of view gets a short notice; failures already raise an error toast.
         if (wasBusy && status === 'idle' && !event.failed && session && sessionId !== state.activeId && last?.status !== 'error') toast(t('对话“{title}”已完成。', { title: sessionTitle(session) }), false, 6000);
         if (event.stopReason === 'max_tokens') toast(t('已达到本次回复的长度限制，可以继续追问。'));
@@ -1080,7 +1160,7 @@
   function renderSignInNotice() {
     $('signin-notice').hidden = state.initializing || (!needsSignIn() && !state.login);
     $('signin-button').textContent = state.login ? t('继续登录') : t('登录 Grok ↗');
-    $('signin-button').disabled = state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.busy.size > 0;
+    $('signin-button').disabled = uiLocked({ engine: true, busy: 'all', login: false });
     $('signin-settings').disabled = $('settings-button').disabled;
     $('signin-description').textContent = state.login ? t('打开登录页面，在浏览器中登录并核对验证码。完成授权后，客户端会自动连接。')
       : t('当前账户尚未登录。请在浏览器中完成登录，随后回到这里继续。');
@@ -1096,7 +1176,7 @@
   }
 
   function accountsLocked() {
-    return state.initializing || state.startingEngine || state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.accountCancelPending || state.busy.size > 0 || !!state.login;
+    return uiLocked({ engine: true, busy: 'all' }) || state.accountCancelPending;
   }
 
   function validateAccountName(input, feedback) {
@@ -1144,7 +1224,7 @@
       // null is an intentional new-conversation selection with its own draft.
       // Only a first visit to an account should default to its latest history.
       state.activeId = saved ? saved.activeId : result.sessions?.[0]?.id || null;
-      imageCache.clear(); closeSessionMenu();
+      imageCache.clear(); state.sessions = []; closeSessionMenu();
       if ($('image-dialog').open) $('image-dialog').close();
       $('image-preview').removeAttribute('src');
       $('session-search').value = ''; $('history-search').hidden = true; searchVisible = false;
@@ -1153,7 +1233,7 @@
     for (const key of imageCache.keys()) if (!survivingAccounts.has(key.split(':')[0])) imageCache.delete(key);
     state.activeAccountId = result.activeAccountId;
     state.accounts = result.accounts || []; state.login = result.login || null;
-    state.sessions = (result.sessions || []).map(normalizeSession);
+    replaceSessionList(result.sessions);
     if (state.activeId !== null && !state.sessions.some(s => s.id === state.activeId)) state.activeId = state.sessions[0]?.id || null;
     state.info = { ...result.info, models: normalizeChoices(result.info?.models), modes: normalizeChoices(result.info?.modes) };
     state.connected = result.connected === true; state.connectionStatus = state.connected ? 'ready' : 'disconnected'; state.lastError = result.error || '';
@@ -1162,6 +1242,7 @@
     applyQuota(result.quota);
     state.busy.clear(); state.permissions.clear(); state.started.clear(); syncNewChatChoices(true);
     restoreDraft(); renderAccounts(); renderSessions(); renderWorkspace(); renderSelects(); renderMessages(true); renderConnection();
+    if (state.activeId) void guarded(() => loadSessionMessages(state.activeId));
   }
 
   async function accountWork(action) {
@@ -1195,7 +1276,7 @@
 
   function showSettings() {
     if (state.initializing) { toast(t('正在读取本地配置，请稍候。')); return; }
-    if (state.sending || state.configuring || state.selecting || state.savingSettings || state.accountAction || state.login || document.querySelector('dialog[open]')) return;
+    if (uiLocked() || document.querySelector('dialog[open]')) return;
     $('executable-input').value = state.settings.executable || '';
     $('workspace-input').value = state.settings.workspace || '';
     $('rain-input').checked = state.settings.rainEnabled !== false;
@@ -1222,7 +1303,7 @@
   }
 
   async function savePreferences(forceReconnect = false) {
-    if (state.savingSettings || state.configuring || state.selecting || state.sending) return;
+    if (uiLocked()) return;
     state.savingSettings = true; renderSelects(); renderComposerState();
     $('save-settings-button').disabled = true; $('settings-feedback').textContent = '';
     try {
@@ -1250,7 +1331,7 @@
 
   async function reconnect() {
     if (state.startingEngine || state.connectionStatus === 'connecting') return;
-    if (state.sending || state.configuring || state.selecting) { toast(t('请等待当前操作完成，再重新连接引擎。')); return; }
+    if (uiLocked({ saving: false })) { toast(t('请等待当前操作完成，再重新连接引擎。')); return; }
     if (state.busy.size) { toast(t('请先停止正在执行的任务，再重新连接引擎。')); return; }
     state.selecting = true;
     state.connectionStatus = 'connecting'; state.connected = false; state.lastError = ''; renderConnection();
@@ -1388,7 +1469,7 @@
     $('choose-executable').addEventListener('click', () => guarded(async () => { const result = await call('chooseExecutable', i18n.getLanguage()); if (result) { $('executable-input').value = result; updateSettingsReconnect(); } }));
     $('choose-workspace').addEventListener('click', () => guarded(async () => { const result = await call('chooseFolder', i18n.getLanguage()); if (result) { $('workspace-input').value = result; updateSettingsReconnect(); } }));
     $('workspace-button').addEventListener('click', () => guarded(async () => {
-      if (state.startingEngine || state.savingSettings || state.sending || state.configuring || state.selecting || state.busy.size) return;
+      if (uiLocked({ engine: true, busy: 'all' })) return;
       state.savingSettings = true; renderSelects(); renderComposerState();
       try {
         const workspace = await call('chooseFolder', i18n.getLanguage()); if (!workspace || workspace === state.settings.workspace) return;
@@ -1453,6 +1534,7 @@
       for (const element of $('delete-dialog').querySelectorAll('button')) element.disabled = true;
       try {
         await call('deleteSession', id);
+        releaseDraftAttachments(state.drafts.get(id)?.attachments || []);
         state.sessions = state.sessions.filter(session => session.id !== id); state.drafts.delete(id); clearPermissions(id); state.busy.delete(id);
         $('delete-dialog').close(); if (state.activeId === id) { newChat(); state.drafts.delete(id); } else renderSessions(); toast(t('对话已删除。'));
       } finally { state.deleting = false; for (const element of $('delete-dialog').querySelectorAll('button')) element.disabled = false; }
@@ -1539,7 +1621,7 @@
       i18n.setLanguage(state.settings.language); i18n.apply(document);
       updateClock();
       state.info = normalizeInfo(local?.info || {});
-      state.sessions = (local?.sessions || []).map(normalizeSession);
+      replaceSessionList(local?.sessions);
       state.accounts = local?.accounts || []; state.activeAccountId = local?.activeAccountId || 'local'; state.login = local?.login || null;
       state.lastError = local?.error || '';
       if (Number.isInteger(local?.maxConcurrentTurns) && local.maxConcurrentTurns > 0) state.maxConcurrentTurns = local.maxConcurrentTurns;
@@ -1554,7 +1636,7 @@
       // selection, language previews or drafts changed during this await.
       const result = await call('bootstrap');
       state.info = normalizeInfo(result?.info || {});
-      state.sessions = (result?.sessions || []).map(normalizeSession);
+      if (result?.sessions) replaceSessionList(result.sessions);
       state.accounts = result?.accounts || state.accounts;
       state.connected = result?.connected === true;
       state.connectionStatus = state.connected ? 'ready' : 'disconnected';

@@ -44,7 +44,7 @@ fs.mkdirSync(output, { recursive: true });
     await page.locator('#send-button').click();
     await page.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('东京连接成功') && document.querySelector('#stop-button')?.hidden, { timeout: 120000 });
     await page.screenshot({ path: path.join(output, 'chat.png') });
-    const persisted = JSON.parse(fs.readFileSync(path.join(env.TOKYO_TEST_ROOT, 'data', 'conversations.json'), 'utf8'));
+    const persisted = require('../tests/fixtures/read-history.cjs')(path.join(env.TOKYO_TEST_ROOT, 'data', 'conversations.json'));
     const session = persisted.sessions.find(s => s.messages.some(m => m.role === 'assistant' && m.text.includes('东京连接成功')));
     assert.ok(session, 'actual assistant reply is persisted');
     assert.equal(session.messages.filter(m => m.role === 'user').length, 1);

@@ -18,7 +18,7 @@ fs.writeFileSync(executable, 'Fixture only; never executed.');
 fs.chmodSync(executable, 0o755);
 // Omit language to exercise migration of existing settings.
 fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false }, sessions: [] }));
-const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
+const readState = () => require('./fixtures/read-history.cjs')(path.join(testRoot, 'data', 'conversations.json'));
 const codes = ['zh-CN', 'ja', 'en', 'ko', 'es', 'de', 'fr'];
 const translated = (locale, source, params) => createI18n(() => locale)(source, params);
 
@@ -215,7 +215,7 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
       const choice = await desktop.evaluate(() => globalThis.__tokyoUITest.calls.filter(item => item.method === 'respondPermission').at(-1));
       assert.equal(choice.optionId, 'allow-once');
       await page.locator('#prompt').fill('WAIT language cancellation'); await page.locator('#send-button').click();
-      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await openSettings(); await choose('fr'); await save('fr');
       await page.locator('#stop-button').click(); await idle();
       await assertText('.message-cancelled', '本次生成已停止', 'fr');
@@ -254,7 +254,7 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
 
     await stage('live plans and stop reasons remain visible and relocalize in all seven languages', async () => {
       await page.locator('#prompt').fill('WAIT plan localization'); await page.locator('#send-button').click();
-      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       const entries = [
         { content: '偏好设置 — authored plan', priority: 'high', status: 'completed' },
         { content: 'Fixture implementation', priority: 'medium', status: 'in_progress' },

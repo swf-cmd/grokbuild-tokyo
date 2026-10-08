@@ -7,6 +7,7 @@ const { validatePackageSource, installPackagedBuild } = require('./package-polic
 const { parseTarget, packageOptions } = require('./package-config.cjs');
 const { packagedExecutable } = require('./package-paths.cjs');
 const { archivePackagedBuild } = require('./package-archive.cjs');
+const { hardenPackagedBuild } = require('./package-fuses.cjs');
 const root = path.resolve(__dirname, '..');
 
 (async () => {
@@ -17,6 +18,7 @@ const root = path.resolve(__dirname, '..');
   validatePackageSource(root);
   const builds = await packager(packageOptions(root, target));
   if (builds.length !== 1) throw new Error(`Expected one build, received ${builds.length}`);
+  await hardenPackagedBuild(builds[0], target.platform);
   if (target.platform === 'darwin') {
     const bundle = path.join(builds[0], 'Grokbuild Tokyo.app');
     // Electron places these next to the bundle. Keep them inside the .app so

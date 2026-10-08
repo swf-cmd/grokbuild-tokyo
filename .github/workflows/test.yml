@@ -2,8 +2,26 @@ name: Tests
 
 on:
   push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  electron_config_cache: ${{ github.workspace }}/work/electron-cache
 
 permissions:
   contents: read
@@ -18,19 +36,14 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.electron_config_cache }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
-      - run: npm test
+      - run: npm run test:all
       - run: npm audit --audit-level=moderate
-      - run: npm run test:ui
-      - run: npm run test:security
-      - run: npm run test:accounts
-      - run: npm run test:attachments
-      - run: npm run test:i18n
-      - run: npm run test:startup
-      - run: npm run test:models
-      - run: npm run test:onboarding
-      - run: npm run test:audio
-      - run: npm run test:time
       - run: npm run build
       - name: Test the Windows portable ZIP after extraction
         shell: pwsh
@@ -41,17 +54,7 @@ jobs:
           if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Windows ZIP checksum mismatch' }
           Move-Item App work/windows-build-before-extraction
           Expand-Archive -LiteralPath $archive -DestinationPath .
-      - run: node scripts/verify-package.cjs
-      - run: node scripts/packaged-launch-smoke.cjs
-      - run: node tests/ui-security.cjs --packaged
-      - run: node scripts/images-accounts-smoke.cjs --packaged
-      - run: node tests/i18n-ui.cjs --packaged
-      - run: node tests/startup-ui.cjs --packaged
-      - run: npm run test:models -- --packaged
-      - run: node tests/onboarding-ui.cjs --packaged
-      - run: npm run test:audio -- --packaged
-      - run: node tests/ui-attachments.cjs --packaged
-      - run: node tests/time-ui.cjs --packaged
+      - run: npm run test:packaged
       - name: Keep tested Windows portable ZIP
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -91,6 +94,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.electron_config_cache }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       # Publish the arm64 job's ZIP only after this same archive has also run
       # natively on Intel. Rebuilding a second ZIP is not equivalent coverage.
@@ -110,17 +118,7 @@ jobs:
           # against this exact Electron version's original runtime notices.
           cp node_modules/electron/dist/LICENSE App/LICENSE
           cp node_modules/electron/dist/LICENSES.chromium.html App/LICENSES.chromium.html
-      - run: node scripts/verify-package.cjs --platform darwin --arch universal
-      - run: node scripts/packaged-launch-smoke.cjs
-      - run: node tests/ui-security.cjs --packaged
-      - run: node scripts/images-accounts-smoke.cjs --packaged
-      - run: node tests/i18n-ui.cjs --packaged
-      - run: node tests/startup-ui.cjs --packaged
-      - run: npm run test:models -- --packaged
-      - run: node tests/onboarding-ui.cjs --packaged
-      - run: npm run test:audio -- --packaged
-      - run: node tests/ui-attachments.cjs --packaged
-      - run: node tests/time-ui.cjs --packaged
+      - run: npm run test:packaged -- --platform darwin --arch universal
 
   macos:
     name: macOS (${{ matrix.arch }})
@@ -140,33 +138,22 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Cache Electron downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ env.electron_config_cache }}
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
-      - run: npm test
+      - run: npm run test:all
       - run: npm audit --audit-level=moderate
-      - run: npm run test:ui
-      - run: npm run test:security
-      - run: npm run test:accounts
-      - run: npm run test:attachments
-      - run: npm run test:i18n
-      - run: npm run test:startup
-      - run: npm run test:models
-      - run: npm run test:onboarding
-      - run: npm run test:audio
-      - run: npm run test:time
-      # Run the universal app natively on each CPU family, without Rosetta.
-      - run: npm run build:mac
-      - run: node scripts/verify-package.cjs --platform darwin --arch universal
-      - run: node scripts/packaged-launch-smoke.cjs
-      - run: node tests/ui-security.cjs --packaged
-      - run: node scripts/images-accounts-smoke.cjs --packaged
-      - run: node tests/i18n-ui.cjs --packaged
-      - run: node tests/startup-ui.cjs --packaged
-      - run: npm run test:models -- --packaged
-      - run: node tests/onboarding-ui.cjs --packaged
-      - run: npm run test:audio -- --packaged
-      - run: node tests/ui-attachments.cjs --packaged
-      - run: node tests/time-ui.cjs --packaged
+      # Build one universal release on Apple Silicon. The archive job runs that
+      # exact ZIP on Intel; the x64 matrix entry only validates source behavior.
+      - if: matrix.arch == 'arm64'
+        run: npm run build:mac
+      - if: matrix.arch == 'arm64'
+        run: npm run test:packaged -- --platform darwin --arch universal
       - name: Keep tested universal Mac ZIP
+        if: matrix.arch == 'arm64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos-universal-tested-on-${{ matrix.arch }}

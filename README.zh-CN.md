@@ -197,7 +197,7 @@ Windows 的 `data/` 位于源码根目录，或打包后 `App` 文件夹的旁�
 
 ## 从源码构建
 
-需要 **Git**、**Node.js 22.12.0 或更高版本**及 npm；开发和 CI 使用 Node.js 24。安装依赖和首次构建需联网下载 Electron。
+需要 **Git**、**Node.js 22.13.0 或更高版本**及 npm；开发和 CI 使用 Node.js 24。安装依赖和首次构建需联网下载 Electron。
 
 ```sh
 git clone https://github.com/swf-cmd/grokbuild-tokyo.git

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('tokyo', {
   initialPreferences,
   onMenuAction: callback => { const listener = (_event, action) => { if (['preferences', 'new-conversation'].includes(action)) callback(action); }; ipcRenderer.on('tokyo:menu', listener); return () => ipcRenderer.removeListener('tokyo:menu', listener); },
   initialState: invoke('initialState'), bootstrap: invoke('bootstrap'), createSession: invoke('createSession'), selectSession: invoke('selectSession'),
+  readSession: invoke('readSession'), releaseAttachments: invoke('releaseAttachments'),
   configureSession: invoke('configureSession'),
   chooseAttachments: invoke('chooseAttachments'), importAttachments: invoke('importAttachments'), saveAttachment: invoke('saveAttachment'),
   readImage: invoke('readImage'), listAccounts: invoke('listAccounts'), addAccount: invoke('addAccount'), renameAccount: invoke('renameAccount'), deleteAccount: invoke('deleteAccount'), switchAccount: invoke('switchAccount'), loginAccount: invoke('loginAccount'), cancelAccountLogin: invoke('cancelAccountLogin'),

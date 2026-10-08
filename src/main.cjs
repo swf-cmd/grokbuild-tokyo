@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, clipboard, session, protocol, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,6 +7,7 @@ const { createI18n, languages } = require('./i18n.js');
 const { AppController } = require('./app-controller.cjs');
 const { safeName } = require('./attachments.cjs');
 const { appRoot } = require('./app-paths.cjs');
+protocol.registerSchemesAsPrivileged([{ scheme: 'tokyo-image', privileges: { secure: true, standard: true, stream: true } }]);
 const isMac = process.platform === 'darwin';
 const root = appRoot({ testRoot: process.env.TOKYO_TEST_ROOT, appData: app.getPath('appData'), isPackaged: app.isPackaged, executablePath: process.execPath, sourceRoot: path.resolve(__dirname, '..') });
 fs.mkdirSync(path.join(root, 'data', 'browser'), { recursive: true });
@@ -46,7 +47,8 @@ else {
     const quotaSession = session.fromPartition('tokyo-quota', { cache: false });
     quotaSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     quotaSession.setPermissionCheckHandler(() => false);
-    controller = new AppController({ root, home: os.homedir(), quotaFetch: (url, init) => quotaSession.fetch(url, init) });
+    controller = new AppController({ root, home: os.homedir(), nativeImage, quotaFetch: (url, init) => quotaSession.fetch(url, init) });
+    protocol.handle('tokyo-image', request => controller.serveImage(request.url));
     // Only presentation preferences travel with the renderer startup. This lets
     // the first frame use the saved language without synchronous IPC or disk I/O.
     const initialPreferences = Object.fromEntries(['language', 'rainEnabled', 'musicEnabled', 'musicVolume'].map(key => [key, controller.settings[key]]));
@@ -61,7 +63,8 @@ else {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== entryURL) throw new Error('Invalid IPC sender');
       return fn(...args);
     });
-    for (const name of ['initialState', 'bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin', 'readImage']) handle(name, (...args) => controller[name](...args));
+    for (const name of ['initialState', 'readSession', 'releaseAttachments', 'bootstrap', 'createSession', 'selectSession', 'configureSession', 'send', 'cancel', 'permission', 'renameSession', 'deleteSession', 'reconnect', 'listAccounts', 'addAccount', 'renameAccount', 'deleteAccount', 'switchAccount', 'loginAccount', 'cancelAccountLogin']) handle(name, (...args) => controller[name](...args));
+    handle('readImage', args => controller.imageURL(args));
     // The renderer may only ask for a refresh; it cannot choose an account or URL.
     handle('refreshQuota', () => controller.refreshQuota({ force: true }));
     handle('saveSettings', async patch => { const result = await controller.saveSettings(patch); installMenu(); return result; });

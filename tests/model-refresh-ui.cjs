@@ -26,7 +26,7 @@ fs.writeFileSync(file, JSON.stringify({
   sessions: [{ id: sessionId, title: 'Saved model refresh session', cwd: workspace,
     model: 'grok-4.6', mode: 'medium', createdAt: Date.now(), updatedAt: Date.now(), messages: [] }],
 }));
-const readState = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+const readState = () => require('./fixtures/read-history.cjs')(file);
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };

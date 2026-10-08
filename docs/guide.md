@@ -12,7 +12,7 @@ For Mac and Windows release downloads, checksums and first-launch instructions, 
 
 You need Windows x64 or **macOS 13 Ventura or newer on Intel or Apple Silicon**, and an installed [Grok Build CLI](https://github.com/xai-org/grok-build). The Mac universal app contains both architectures. macOS 13 is the minimum required by [Electron 44](https://www.electronjs.org/blog/electron-44-0); the [official Grok changelog](https://x.ai/build/changelog) documents Intel and Apple Silicon CLI support. The official CLI handles authentication and model requests.
 
-Running from source or building also requires Git, Node.js 22.12.0 or newer, and npm. Development and automated tests use Node.js 24. The packaged app bundles Electron and does not need a separate Node.js installation.
+Running from source or building also requires Git, Node.js 22.13.0 or newer, and npm. Development and automated tests use Node.js 24. The packaged app bundles Electron and does not need a separate Node.js installation.
 
 ```sh
 git clone https://github.com/swf-cmd/grokbuild-tokyo.git

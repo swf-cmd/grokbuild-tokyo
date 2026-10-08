@@ -130,6 +130,7 @@ async function readLimited(response) {
   return text.length > MAX_RESPONSE_BYTES ? null : text;
 }
 
+/** @param {object} auth @param {{fetch?: typeof globalThis.fetch, clientVersion?: string, now?: () => number, timeoutMs?: number}} options */
 async function fetchAccountQuota(auth, { fetch, clientVersion, now = Date.now, timeoutMs = TIMEOUT_MS } = {}) {
   if (typeof fetch !== 'function') return { reason: 'network' };
   const { token, reason } = accessToken(auth, now());

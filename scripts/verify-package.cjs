@@ -4,11 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { packageFiles } = require('./package-policy.cjs');
+const { fuseTarget, verifyReleaseFuses } = require('./package-fuses.cjs');
 const { minimumMacOS, parseTarget } = require('./package-config.cjs');
 const { packagedArchive, packagedBundle, packagedExecutable } = require('./package-paths.cjs');
 const root = path.resolve(__dirname, '..');
 (async () => {
   const target = parseTarget(process.argv.slice(2));
+  await verifyReleaseFuses(fuseTarget(path.join(root, 'App'), target.platform));
+  console.log('PASS release fuses: Node runtime overrides and inspector disabled, ASAR integrity enforced');
   const asar = await import('@electron/asar');
   const archive = packagedArchive(root, target.platform);
   const contents = asar.listPackage(archive).map(file => file.replace(/\\/g, '/').replace(/^\//, ''));

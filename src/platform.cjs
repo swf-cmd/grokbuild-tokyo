@@ -24,6 +24,7 @@ function isExecutable(file, platform = process.platform) {
   } catch { return false; }
 }
 
+/** @param {NodeJS.ProcessEnv} env @param {{home?: string, platform?: string, executable?: string}} options */
 function cliEnvironment(env = process.env, { home = os.homedir(), platform = process.platform, executable } = {}) {
   const result = { ...env };
   if (platform !== 'darwin') return result;
@@ -48,7 +49,7 @@ function findGrokExecutable({ home = os.homedir(), platform = process.platform, 
   const environment = cliEnvironment(env, { home, platform });
   const pathKey = platform === 'win32' ? Object.keys(environment).find(key => key.toUpperCase() === 'PATH') : 'PATH';
   const paths = platform === 'win32' ? path.win32 : path.posix;
-  for (const bin of (environment[pathKey] || '').split(platform === 'win32' ? ';' : ':')) {
+  for (const bin of (environment[pathKey || 'PATH'] || '').split(platform === 'win32' ? ';' : ':')) {
     // Relative PATH entries depend on a terminal's working directory and are
     // unsuitable for selecting a persistent executable from a desktop app.
     if (!paths.isAbsolute(bin)) continue;

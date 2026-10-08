@@ -195,7 +195,7 @@ Remote images can contact public image hosts. Read the [security policy](SECURIT
 
 ## Build from source
 
-You need **Git**, **Node.js 22.12.0 or later** and npm; development and CI use Node.js 24. Installing dependencies and the first build download Electron, so they need internet access.
+You need **Git**, **Node.js 22.13.0 or later** and npm; development and CI use Node.js 24. Installing dependencies and the first build download Electron, so they need internet access.
 
 ```sh
 git clone https://github.com/swf-cmd/grokbuild-tokyo.git

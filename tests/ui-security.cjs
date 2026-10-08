@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify(
     await page.evaluate(() => { window.__trustedPrompt = document.querySelector('#prompt'); });
     await page.locator('#prompt').fill('WAIT malicious reply fixture');
     await page.locator('#send-button').click();
-    await page.waitForFunction(() => !document.querySelector('#stop-button').hidden);
+    await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
     await desktop.evaluate(() => {
       const adapter = globalThis.__tokyoUITest.adapter;
       const sessionId = [...adapter.pending.keys()][0];

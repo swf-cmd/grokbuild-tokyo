@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
+const { Readable } = require('node:stream');
 const { downloadPublicResource } = require('./resource-download.cjs');
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp', 'image/x-icon']);
@@ -64,7 +65,7 @@ function isWithin(root, target) {
   return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
 }
 
-async function readLocalBytes(file, roots, t = defaultT, attachment = false) {
+async function openLocalFile(file, roots, t = defaultT, attachment = false) {
   const invalid = attachment ? '附件必须是文件，且不能超过 20 MB' : '图片不能超过 20 MB';
   const denied = attachment ? '附件不在这段对话允许的目录内' : '图片不在这段对话的工作目录或图片缓存内';
   const target = await fs.realpath(file);
@@ -80,16 +81,23 @@ async function readLocalBytes(file, roots, t = defaultT, attachment = false) {
     if ((roots && !roots.some(root => isWithin(root, current))) || comparableDirectory(current) !== comparableDirectory(target)
       || stat.dev !== before.dev || stat.ino !== before.ino) throw new Error(t(denied));
     if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) throw new Error(t(invalid));
+    return { handle, size: stat.size };
+  } catch (error) { await handle.close(); throw error; }
+}
+
+async function readLocalBytes(file, roots, t = defaultT, attachment = false) {
+  const { handle, size } = await openLocalFile(file, roots, t, attachment);
+  try {
     // readFile() can allocate without a bound if a writer grows the file after
     // stat. Read only the observed size plus one byte and reject changes.
-    const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_IMAGE_BYTES + 1));
+    const bytes = Buffer.alloc(Math.min(size + 1, MAX_IMAGE_BYTES + 1));
     let length = 0;
     while (length < bytes.length) {
       const result = await handle.read(bytes, length, bytes.length - length, length);
       if (!result.bytesRead) break;
       length += result.bytesRead;
     }
-    if (length !== stat.size || length > MAX_IMAGE_BYTES) throw new Error(t(attachment ? '附件读取期间发生变化，请重新选择' : '图片不能超过 20 MB'));
+    if (length !== size || length > MAX_IMAGE_BYTES) throw new Error(t(attachment ? '附件读取期间发生变化，请重新选择' : '图片不能超过 20 MB'));
     return bytes.subarray(0, length);
   } finally { await handle.close(); }
 }
@@ -101,7 +109,42 @@ function comparableDirectory(value) {
   return process.platform === 'win32' ? value.toLowerCase() : value;
 }
 
+const sessionImageDirectories = new Map();
+const CACHE_LIMIT = 256;
+const CACHE_TTL = 5 * 60 * 1000;
+
+async function cacheMetadataVersion(directory) {
+  try {
+    const stat = await fs.lstat(path.join(path.dirname(directory), '.cwd'), { bigint: true });
+    return `${stat.dev}:${stat.ino}:${stat.mtimeNs}:${stat.size}:${stat.isSymbolicLink()}`;
+  } catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
+}
+
 async function findSessionImageDirectory(grokHome, cwd, sessionId) {
+  const key = JSON.stringify([grokHome, cwd, sessionId]);
+  const cached = sessionImageDirectories.get(key);
+  if (cached && cached.expires > Date.now()) {
+    try {
+      // Revalidate the cached directory: filesystem changes must never turn a
+      // former cache path into a newly trusted symlink to another account.
+      const stat = await fs.lstat(cached.directory);
+      const home = await fs.realpath(grokHome);
+      const current = await fs.realpath(cached.directory);
+      if (stat.isDirectory() && !stat.isSymbolicLink() && current === cached.directory && isWithin(home, current)
+        && await cacheMetadataVersion(current) === cached.metadataVersion) return current;
+    } catch { /* The CLI may rotate a session cache. Search again. */ }
+    sessionImageDirectories.delete(key);
+  }
+  const directory = await locateSessionImageDirectory(grokHome, cwd, sessionId);
+  if (directory) {
+    if (sessionImageDirectories.size >= CACHE_LIMIT) sessionImageDirectories.delete(sessionImageDirectories.keys().next().value);
+    sessionImageDirectories.set(key, { directory, metadataVersion: await cacheMetadataVersion(directory), expires: Date.now() + CACHE_TTL });
+  }
+  // Missing results are not cached: a running turn can create its image folder.
+  return directory;
+}
+
+async function locateSessionImageDirectory(grokHome, cwd, sessionId) {
   if (!comparableDirectory(grokHome) || !comparableDirectory(cwd) || typeof sessionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) return undefined;
   // Grok uses RFC 3986 names for short CWDs, and slug/hash names plus a .cwd
   // metadata file for longer ones. Locate only this workspace and this session.
@@ -185,6 +228,12 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT, fetcher) {
     const mime = imageMime(bytes, t);
     return { src: `data:${mime};base64,${bytes.toString('base64')}` };
   }
+  const { target, roots } = await resolveLocalImage(src, [cwd, sessionDirectory], t);
+  const bytes = await readLocalBytes(target, roots, t);
+  return { src: `data:${imageMime(bytes, t)};base64,${bytes.toString('base64')}` };
+}
+
+async function resolveLocalImage(src, directories, t, allowAnyExtension = false) {
   // Only local files in this workspace or its Grok session cache are exposed.
   // Resolve symlinks before containment checks and reject network/UNC paths.
   let files;
@@ -200,10 +249,10 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT, fetcher) {
   }
   files = files.filter(file => !/^(?:\\\\|\/\/)/.test(file) && (!/:/.test(file) || /^[a-z]:[\\/][^:]*$/i.test(file)));
   if (!files.length) throw new Error(t('不支持的图片地址'));
-  files = files.filter(file => /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(file));
+  files = files.filter(file => allowAnyExtension || /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(file));
   if (!files.length) throw new Error(t('不支持的图片格式'));
   const roots = [];
-  for (const directory of [cwd, sessionDirectory].filter(Boolean)) {
+  for (const directory of directories.filter(Boolean)) {
     try { roots.push(await fs.realpath(directory)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   let target;
@@ -215,8 +264,36 @@ async function resolveImage(src, cwd, sessionDirectory, t = defaultT, fetcher) {
   }
   if (!target) throw Object.assign(new Error(t('找不到图片文件，文件可能已移动或删除')), { code: 'ENOENT' });
   if (!roots.some(root => isWithin(root, target))) throw new Error(t('图片不在这段对话的工作目录或图片缓存内'));
-  const bytes = await readLocalBytes(target, roots, t);
-  return { src: `data:${imageMime(bytes, t)};base64,${bytes.toString('base64')}` };
+  return { target, roots };
 }
 
-module.exports = { imagesFromContent, imagesFromTools, restoreMessageImages, isReadTool, resolveImage, imageMime, findSessionImageDirectory, readLocalBytes };
+// protocol.handle can return this Response directly. Local files stay on a
+// bounded descriptor-backed stream; only remote/data resources need buffering.
+async function resolveImageResponse(src, cwd, sessionDirectory, t = defaultT, fetcher, extraRoots = []) {
+  if (typeof src !== 'string' || !src.trim() || src.length > MAX_IMAGE_BYTES * 1.4) throw new Error(t('无效的图片地址'));
+  src = src.trim();
+  let bytes;
+  if (/^https?:\/\//i.test(src)) {
+    const url = new URL(src);
+    if (url.username || url.password) throw new Error(t('图片地址不能包含登录凭据'));
+    bytes = await downloadPublicResource(url.href, { t, fetcher });
+  } else if (/^data:/i.test(src)) {
+    const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/\r\n]*={0,2})$/i.exec(src);
+    if (!match || !MIME_TYPES.has(match[1].toLowerCase())) throw new Error(t('不支持的内嵌图片'));
+    bytes = Buffer.from(match[2], 'base64');
+    if (bytes.length > MAX_IMAGE_BYTES) throw new Error(t('图片不能超过 20 MB'));
+  }
+  const headers = mime => ({ 'Content-Type': mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+  if (bytes) return new Response(bytes, { headers: headers(imageMime(bytes, t)) });
+  const { target, roots } = await resolveLocalImage(src, [cwd, sessionDirectory, ...extraRoots], t, extraRoots.length > 0);
+  const { handle, size } = await openLocalFile(target, roots, t);
+  try {
+    const prefix = Buffer.alloc(Math.min(size, 4096));
+    const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+    const mime = imageMime(prefix.subarray(0, bytesRead), t);
+    const stream = handle.createReadStream({ start: 0, end: size - 1, autoClose: true });
+    return new Response(Readable.toWeb(stream), { headers: { ...headers(mime), 'Content-Length': String(size) } });
+  } catch (error) { await handle.close(); throw error; }
+}
+
+module.exports = { imagesFromContent, imagesFromTools, restoreMessageImages, isReadTool, resolveImage, imageMime, findSessionImageDirectory, readLocalBytes, resolveImageResponse };
