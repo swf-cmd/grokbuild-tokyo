@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": true,
+    "noImplicitAny": false,
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "src/app-paths.cjs",
+    "src/model-labels.cjs",
+    "src/platform.cjs",
+    "src/usage-quota.cjs",
+    "scripts/package-*.cjs",
+    "src/history-store.cjs",
+    "src/history-writer.cjs",
+    "src/blob-store.cjs",
+    "scripts/run-tests.cjs"
+  ]
+}

@@ -15,10 +15,8 @@
   const DURATION = BAR * BARS;
   const PREROLL_BARS = 8;
   const SAMPLE_RATE = 44100;
-  const TITLE = 'Tokyo Afterimage · 東京残像';
 
   const midiHz = midi => 440 * Math.pow(2, (midi - 69) / 12);
-  const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const random = seed => {
     let state = seed >>> 0;
     return () => {

@@ -2,7 +2,9 @@
 
 // Launch the delivered binary itself. A nonexistent CLI and an isolated profile
 // make this startup check offline, with no access to a real account or prompts.
-const { _electron } = require('playwright');
+const { chromium } = require('playwright');
+const { spawn, spawnSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -19,11 +21,36 @@ fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringi
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot, GROK_HOME: path.join(testRoot, 'grok-home') };
   for (const key of ['ELECTRON_RUN_AS_NODE', 'TOKYO_UI_SOURCE_ROOT', 'GROK_AUTH', 'GROK_AUTH_PATH', 'XAI_API_KEY', 'GROK_CODE_XAI_API_KEY']) delete env[key];
+  // Verify that release fuses ignore these attempts to enter Node mode, preload
+  // code, or open a main-process inspector. Renderer CDP requires none of them.
+  env.ELECTRON_RUN_AS_NODE = '1';
+  env.NODE_OPTIONS = '--require=' + path.join(testRoot, 'must-not-load.cjs');
   const launchedAt = Date.now();
-  // Mute at process launch so verification never sends music to the speakers.
-  const desktop = await _electron.launch({ executablePath: packagedExecutable(root), args: ['--mute-audio'], env });
+  const child = spawn(packagedExecutable(root), ['--mute-audio', '--inspect=0', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stderr = '', browser;
+  child.stdout.resume();
+  const exited = new Promise(resolve => child.once('exit', resolve));
   try {
-    const page = await desktop.firstWindow();
+    const endpoint = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error('Packaged Chromium startup timed out: ' + stderr)), 30000);
+      function finish(error, value) {
+        clearTimeout(timer);
+        child.off('error', onError); child.off('exit', onExit);
+        error ? reject(error) : resolve(value);
+      }
+      const onError = error => finish(error);
+      const onExit = code => finish(new Error(`Packaged app exited (${code}): ${stderr}`));
+      child.once('error', onError); child.once('exit', onExit);
+      child.stderr.on('data', chunk => {
+        stderr = (stderr + chunk.toString()).slice(-32768);
+        const match = stderr.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+        if (match) finish(null, match[1]);
+      });
+    });
+    browser = await chromium.connectOverCDP(endpoint);
+    const context = browser.contexts()[0];
+    const page = context.pages()[0] || await context.waitForEvent('page');
+    await page.waitForURL(pathToFileURL(path.join(packagedArchive(root), 'src', 'renderer', 'index.html')).href);
     page.setDefaultTimeout(10000);
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -49,14 +76,10 @@ fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringi
     assert.equal(autoplay.localReady, true);
     assert.equal(autoplay.music, 'playing');
     autoplay.launchMs = Date.now() - launchedAt;
-    const details = await desktop.evaluate(({ app, BrowserWindow }) => ({
-      packaged: app.isPackaged, appPath: app.getAppPath(), userData: app.getPath('userData'),
-      platform: process.platform, windows: BrowserWindow.getAllWindows().length,
-    }));
-    assert.equal(details.packaged, true);
-    assert.equal(details.appPath, packagedArchive(root));
-    assert.equal(details.userData, path.join(testRoot, 'data', 'browser'));
+    const details = { appPath: packagedArchive(root), url: page.url(), platform: process.platform, windows: context.pages().length };
     assert.equal(details.windows, 1);
+    assert.equal(fs.existsSync(path.join(testRoot, 'data', 'browser')), true, 'isolated browser profile was created');
+    assert.doesNotMatch(stderr, /Debugger listening on/, 'main-process inspector fuse must stay disabled');
     assert.equal(await page.evaluate(() => window.tokyo.platform), process.platform);
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -68,25 +91,21 @@ fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringi
     if (process.platform === 'darwin') {
       assert.equal(await page.locator('.window-controls').isVisible(), false);
       assert.match(await page.locator('#new-session kbd').textContent(), /⌘/);
-      assert.equal(await desktop.evaluate(({ Menu }) => Menu.getApplicationMenu().getMenuItemById('preferences').accelerator), 'Cmd+,');
-      await page.locator('#prompt').fill('Draft survives closing the Mac window');
-      // Playwright's CDP key events do not dispatch Cocoa menu accelerators.
-      // Exercise the native window-close event, shared by the traffic light and Cmd+W.
-      await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); });
-      assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
-      await desktop.evaluate(({ app }) => { app.emit('activate'); });
-      assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
-      assert.equal(await page.locator('#prompt').inputValue(), 'Draft survives closing the Mac window');
+      await page.locator('#prompt').fill('Draft survives new-conversation shortcut');
       await page.keyboard.press('Meta+n');
-      // Already on an unsent new chat: the shared Windows/Mac behavior keeps
-      // its draft. Also invoke the actual native menu to exercise its IPC route.
-      await page.evaluate(() => window.tokyo.onMenuAction(action => { window.__lastMenuAction = action; }));
-      await desktop.evaluate(({ Menu }) => { Menu.getApplicationMenu().getMenuItemById('new-conversation').click(); });
-      await page.waitForFunction(() => window.__lastMenuAction === 'new-conversation');
-      assert.equal(await page.locator('#prompt').inputValue(), 'Draft survives closing the Mac window');
+      assert.equal(await page.locator('#prompt').inputValue(), 'Draft survives new-conversation shortcut');
     }
     assert.deepEqual(errors, []);
     fs.writeFileSync(path.join(testRoot, 'results.json'), JSON.stringify({ isolated: true, autoplay, details, errors }, null, 2));
-    console.log(`PASS actual packaged ${process.platform}/${process.arch} binary: automatic music before interaction, isolated profile, renderer, shortcuts and lifecycle ${JSON.stringify(autoplay)}`);
-  } finally { await desktop.close(); }
+    console.log(`PASS actual packaged ${process.platform}/${process.arch} binary: automatic music before interaction, isolated profile, renderer, shortcuts and release fuses ${JSON.stringify(autoplay)}`);
+  } finally {
+    if (browser) await browser.close();
+    if (child.exitCode === null && child.signalCode === null) {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+      else child.kill('SIGTERM');
+      let timer;
+      await Promise.race([exited, new Promise(resolve => { timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 5000); })]);
+      clearTimeout(timer);
+    }
+  }
 })().catch(error => { console.error(error); process.exitCode = 1; });

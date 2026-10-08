@@ -16,7 +16,7 @@ const alternateExecutable = path.join(testRoot, process.platform === 'win32' ? '
 for (const folder of [workspace, alternateWorkspace, path.join(testRoot, 'data')]) fs.mkdirSync(folder, { recursive: true });
 for (const file of [executable, alternateExecutable]) { fs.writeFileSync(file, 'Test fixture only; never executed.'); fs.chmodSync(file, 0o755); }
 fs.writeFileSync(path.join(testRoot, 'data', 'conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, rainEnabled: true, subagentsEnabled: true, language: 'zh-CN' }, sessions: [] }));
-const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
+const readState = () => require('./fixtures/read-history.cjs')(path.join(testRoot, 'data', 'conversations.json'));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
@@ -97,7 +97,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
     });
     await stage('protocol response boundaries separate progress from the final answer and survive reload', async () => {
       await page.locator('#prompt').fill('WAIT segmented response'); await page.locator('#send-button').click();
-      await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await desktop.evaluate(() => {
         const adapter = globalThis.__tokyoUITest.adapter;
         const sessionId = [...adapter.pending.keys()][0];
@@ -184,7 +184,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       assert.equal(readState().settings.workspace, workspace);
     });
     await stage('Enter send, busy controls, stop generation, error recovery', async () => {
-      await page.locator('#prompt').fill('WAIT for cancellation'); await page.locator('#prompt').press('Enter'); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#prompt').fill('WAIT for cancellation'); await page.locator('#prompt').press('Enter'); await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       assert.equal(await page.locator('#model-select').isDisabled(), true); assert.equal(await page.locator('#workspace-button').isDisabled(), true); assert.equal(await page.locator('#connection-button').isDisabled(), true);
       await page.locator('#stop-button').click(); await idle(); assert.equal(readState().sessions[0].messages.at(-1).status, 'cancelled');
       await desktop.evaluate(() => { globalThis.__tokyoUITest.failPrompt = true; }); await send('Error recovery fixture');
@@ -203,7 +203,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       }
     });
     await stage('queued permissions, external resolution, nonfatal errors keep stop available', async () => {
-      await page.locator('#prompt').fill('WAIT queued permissions'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#prompt').fill('WAIT queued permissions'); await page.locator('#send-button').click(); await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await desktop.evaluate(() => {
         const test = globalThis.__tokyoUITest; test.holdPermission = true;
         const sessionId = [...test.adapter.pending.keys()][0];
@@ -218,7 +218,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       await page.locator('#stop-button').click(); await idle(); await desktop.evaluate(() => { globalThis.__tokyoUITest.holdPermission = false; });
     });
     await stage('rain can save during generation; engine changes wait for stop', async () => {
-      await page.locator('#prompt').fill('WAIT busy rain'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#prompt').fill('WAIT busy rain'); await page.locator('#send-button').click(); await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await page.locator('#settings-button').click(); await page.locator('#rain-input').uncheck(); await page.locator('#save-settings-button').click();
       await page.locator('#settings-dialog').waitFor({ state: 'hidden' }); assert.equal(readState().settings.rainEnabled, false); assert.equal(await page.locator('#stop-button').isVisible(), true);
       await page.locator('#settings-button').click(); await page.locator('#subagents-input').uncheck(); await page.locator('#save-settings-button').click();
@@ -233,10 +233,10 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', '
       assert.match(await page.locator('#quota-detail').textContent(), /重置/);
       assert.ok((await calls('fetchQuota')).length >= 1);
       await page.locator('#new-session').click();
-      await page.locator('#prompt').fill('WAIT parallel one'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#prompt').fill('WAIT parallel one'); await page.locator('#send-button').click(); await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await page.locator('#new-session').click();
       assert.equal(await page.locator('#model-select').isDisabled(), false, 'a new conversation stays configurable while another runs');
-      await page.locator('#prompt').fill('WAIT parallel two'); await page.locator('#send-button').click(); await page.locator('#stop-button').waitFor({ state: 'visible' });
+      await page.locator('#prompt').fill('WAIT parallel two'); await page.locator('#send-button').click(); await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await page.waitForFunction(() => document.querySelector('#running-badge').textContent.trim() === '◌ 2');
       assert.equal(await page.locator('.session-item.working').count(), 2);
       assert.equal(await page.locator('#workspace-button').isDisabled(), true, 'engine-wide changes wait for every conversation');

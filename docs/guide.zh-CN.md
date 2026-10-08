@@ -12,7 +12,7 @@ Mac 与 Windows Release 下载、校验文件及首次启动步骤见[下载说�
 
 需要 Windows x64，或 **macOS 13 Ventura 及以上的 Intel / Apple Silicon Mac**，以及已安装的 [Grok Build CLI](https://github.com/xai-org/grok-build)。Mac 通用版包含两种架构。macOS 13 是 [Electron 44](https://www.electronjs.org/blog/electron-44-0) 的最低要求；[官方 Grok 更新记录](https://x.ai/build/changelog)说明了 Intel 和 Apple Silicon 的 CLI 支持。模型请求和登录由官方 CLI 处理。
 
-从源码运行或构建还需要 Git、Node.js 22.12.0 或更高版本及 npm。开发与自动测试使用 Node.js 24。打包后的程序自带 Electron，无需另外安装 Node.js。
+从源码运行或构建还需要 Git、Node.js 22.13.0 或更高版本及 npm。开发与自动测试使用 Node.js 24。打包后的程序自带 Electron，无需另外安装 Node.js。
 
 ```sh
 git clone https://github.com/swf-cmd/grokbuild-tokyo.git

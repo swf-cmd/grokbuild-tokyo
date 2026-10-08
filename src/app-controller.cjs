@@ -6,23 +6,21 @@ const { randomUUID } = require('node:crypto');
 const { GrokAdapter } = require('./grok-adapter.cjs');
 const { findGrokExecutable, isExecutable } = require('./platform.cjs');
 const { AccountManager, ACCOUNT_ID } = require('./account-manager.cjs');
-const { imagesFromTools, restoreMessageImages, resolveImage, findSessionImageDirectory } = require('./media.cjs');
-const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment } = require('./attachments.cjs');
-const { fetchAccountQuota } = require('./usage-quota.cjs');
+const { imagesFromTools, restoreMessageImages, resolveImageResponse, findSessionImageDirectory } = require('./media.cjs');
+const { MAX_ATTACHMENTS, MAX_TOTAL_BYTES, stageAttachments, attachmentsFromTools, restoreMessageAttachments, attachmentsFromText, resolveAttachment, cleanupAttachments } = require('./attachments.cjs');
+const { ControllerAccounts } = require('./controller-accounts.cjs');
+const { ControllerQuota, QUOTA_AFTER_TURN_DELAY, QUOTA_AFTER_TURN_INTERVAL } = require('./controller-quota.cjs');
 const { TurnJournal, readTurnJournal } = require('./turn-journal.cjs');
 const { pathToFileURL } = require('node:url');
-const { createHash } = require('node:crypto');
+const { BlobStore, BLOB_REFERENCE } = require('./blob-store.cjs');
+const { HistoryStore, sessionMetadata } = require('./history-store.cjs');
+const TEXT_SCAN_INTERVAL = 500;
+const textScanTimes = new WeakMap();
+const MEDIA_VERSION = 1;
 
 // Conversations run side by side in one Grok process. Bound the number of
 // simultaneous turns so a burst of tasks cannot exhaust tools or the account.
 const MAX_CONCURRENT_TURNS = 4;
-// Quota reads are cheap but not free: coalesce automatic refreshes, and keep a
-// slow background refresh so a weekly reset appears without user action.
-const QUOTA_MIN_INTERVAL = 60 * 1000;
-const QUOTA_FORCE_INTERVAL = 3 * 1000;
-const QUOTA_POLL_INTERVAL = 10 * 60 * 1000;
-const QUOTA_AFTER_TURN_DELAY = 8 * 1000;
-const QUOTA_AFTER_TURN_INTERVAL = 15 * 1000;
 
 function isPathType(value, type) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
@@ -42,7 +40,7 @@ const REPLY_UPDATE_TYPES = new Set(['text', 'thought', 'tool', 'image', 'attachm
 // recovery share this, so a recovered reply matches what was on screen.
 // `emit` receives media found along the way; the returned update is the one
 // forwarded to the window.
-function applyReplyUpdate(message, event, sessionId, emit = () => {}) {
+function applyReplyUpdate(message, event, sessionId, emit = () => {}, scanText = true) {
   if (event.type === 'status' && event.status === 'plan') {
     // ACP plans replace the previous plan, including an explicitly empty one.
     const entries = (Array.isArray(event.entries) ? event.entries : []).filter(entry => typeof entry?.content === 'string').map(entry => ({
@@ -56,7 +54,7 @@ function applyReplyUpdate(message, event, sessionId, emit = () => {}) {
   const addAttachment = attachment => {
     message.attachments ||= [];
     if (!attachment?.id || !attachment.src) return;
-    const index = message.attachments.findIndex(item => item.id === attachment.id);
+    const index = message.attachments.findIndex(item => item.id === attachment.id || (item.src === attachment.src && item.name === attachment.name));
     if (index >= 0) {
       // Explicit assistant output remains output even when a tool previously
       // returned the same resource. Keep that provenance across restarts.
@@ -81,6 +79,9 @@ function applyReplyUpdate(message, event, sessionId, emit = () => {}) {
       } else lastSegment.text += text;
       message.text += `${event.segmentStart && message.text ? '\n\n' : ''}${text}`;
     }
+  }
+  if (event.type === 'scan-attachments' || (event.type === 'text' && scanText && Date.now() - (textScanTimes.get(message) ?? -Infinity) >= TEXT_SCAN_INTERVAL)) {
+    textScanTimes.set(message, Date.now());
     for (const attachment of attachmentsFromText(message.text)) addAttachment({ ...attachment, origin: 'assistant' });
   }
   if (event.type === 'attachment') {
@@ -118,16 +119,18 @@ function recoverReply(message, sessionId, logged) {
   if (!logged || logged.sessionId !== sessionId || message?.role !== 'assistant' || message.status !== 'working') return message;
   try {
     const reply = logged.base;
-    for (const event of logged.events) applyReplyUpdate(reply, event, sessionId);
+    for (const event of logged.events) applyReplyUpdate(reply, event, sessionId, undefined, false);
+    delete reply.mediaVersion;
     if (reply.id === message.id && reply.role === 'assistant' && typeof reply.text === 'string') return reply;
   } catch {}
   return message;
 }
 
 class AppController extends EventEmitter {
-  constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null }) {
+  constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null, nativeImage = null }) {
     super();
     this.root = root;
+    this.nativeImage = nativeImage;
     this.Adapter = Adapter;
     // Only the main process supplies a network transport. Without one (unit
     // tests, headless tools) the quota feature stays off and never connects.
@@ -136,7 +139,11 @@ class AppController extends EventEmitter {
     this.quotaRequest = null;
     this.dir = path.join(root, 'data');
     fs.mkdirSync(this.dir, { recursive: true });
-    this.file = path.join(this.dir, 'conversations.json');
+    this.store = new HistoryStore(this.dir);
+    this.file = this.store.file;
+    this.dirtySessions = new Set();
+    this.saveQueue = Promise.resolve();
+    this.historyQueue = Promise.resolve();
     this.settings = { executable: findGrokExecutable({ home }), workspace: path.join(root, 'Workspace'), rainEnabled: true, musicEnabled: true, musicVolume: 90, subagentsEnabled: true, quotaEnabled: true, language: 'en' };
     this.t = createI18n(() => this.settings.language);
     this.sessions = [];
@@ -148,6 +155,9 @@ class AppController extends EventEmitter {
     this.permissions = new Map();
     this.retiredAdapters = new WeakSet();
     this.pendingAttachments = new Map();
+    this.imageTokens = new Map();
+    this.blobs = new BlobStore(path.join(this.dir, 'blobs'));
+    this.store.transformMessages = messages => this.blobs.externalize(messages);
     // One reserved or running turn per conversation, keyed by session ID.
     this.turns = new Map();
     this.turnPromise = null;
@@ -158,16 +168,19 @@ class AppController extends EventEmitter {
     this.modelRefreshes = new Map();
     this.loadError = null;
     this.accountRecoveryError = null;
-    // Content of the history file as last written, to skip identical rewrites.
-    this.savedDigest = null;
     this.journal = new TurnJournal(path.join(this.dir, 'conversations.journal'), {
+      beforeFlush: () => this.blobs.flush(),
       onError: error => this.emitEvent({ type: 'error', message: this.t('保存失败：{error}', { error: error.message }) }),
     });
+    this.store.beforeWrite = async () => {
+      await this.blobs.flush();
+      try { await this.journal.flush(); } catch {}
+    };
     const hasSavedHistory = fs.existsSync(this.file);
     let hasAccountCommitMarker = false;
     if (hasSavedHistory) {
       try {
-        const data = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+        const data = this.store.read();
         if (!Array.isArray(data.sessions) || !data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) throw new Error('Invalid saved data');
         if (!data.sessions.every(s => s && typeof s.id === 'string' && typeof s.title === 'string' && typeof s.cwd === 'string' && Array.isArray(s.messages) && s.messages.every(m => m && ['user', 'assistant'].includes(m.role) && typeof m.text === 'string'))) throw new Error('Invalid session data');
         this.settings = { ...this.settings, ...data.settings };
@@ -192,9 +205,8 @@ class AppController extends EventEmitter {
           // A saved choice has not yet been confirmed by this Grok process.
           session.modelSelectionVerified = false;
           for (const m of session.messages || []) {
-            if (m.status === 'working') m.status = 'cancelled';
-            m.images = restoreMessageImages(m);
-            m.attachments = restoreMessageAttachments(m);
+            if (m.status === 'working') { m.status = 'cancelled'; this.dirtySessions.add(session.id); }
+            // Legacy media discovery happens only when this conversation opens.
           }
         }
       } catch {
@@ -204,6 +216,9 @@ class AppController extends EventEmitter {
         const stamp = Date.now();
         const backup = `${this.file}.unreadable-${stamp}`;
         fs.copyFileSync(this.file, backup);
+        const contentDirectory = path.join(this.dir, 'sessions');
+        if (fs.existsSync(contentDirectory)) fs.cpSync(contentDirectory, `${backup}.sessions`, { recursive: true, dereference: false });
+        this.store.files.clear();
         // Unfinished replies logged beside the unreadable history belong with it.
         try { if (this.journal.exists) fs.copyFileSync(this.journal.file, `${this.journal.file}.unreadable-${stamp}`); } catch {}
         this.loadError = this.t('历史记录文件无法读取，已保留备份：{path}', { path: backup });
@@ -224,6 +239,8 @@ class AppController extends EventEmitter {
       }
     }
     fs.mkdirSync(path.join(root, 'Workspace'), { recursive: true });
+    this.cleanupQueue = Promise.resolve();
+    if (!this.loadError) void this.cleanAttachments().catch(error => this.emitEvent({ type: 'error', message: error.message }));
   }
   emitEvent(event) { this.emit('event', event); }
   // The most recently reserved turn, or null when every conversation is idle.
@@ -235,159 +252,70 @@ class AppController extends EventEmitter {
   releaseTurn(turn) {
     if (this.turns.get(turn.sessionId) === turn) this.turns.delete(turn.sessionId);
   }
-  save() {
+  historyOperation(action) {
+    const operation = this.historyQueue.catch(() => {}).then(action);
+    this.historyQueue = operation;
+    return operation;
+  }
+  save({ content = [] } = {}) {
     if (this.accountRecoveryError) throw new Error(this.accountRecoveryError);
-    // Bring the reply journal up to date first: until the history file below
-    // is replaced, the journal is what restores unfinished replies.
-    try { this.journal.flush(); } catch {}
-    const json = JSON.stringify({ version: 2, settings: this.settings, accounts: this.accounts, activeAccountId: this.activeAccountId, sessions: this.sessions }, null, 2);
-    const digest = createHash('sha256').update(json).digest('hex');
-    if (digest !== this.savedDigest) {
-      const temp = this.file + '.tmp';
-      fs.writeFileSync(temp, json, 'utf8');
-      fs.renameSync(temp, this.file);
-      this.savedDigest = digest;
-    }
-    // The history file is saved. A journal failure here must not undo that;
-    // the journal keeps its entries and is rewritten on its next write.
-    try { this.journal.reset(this.runningReplies()); } catch {}
+    for (const id of content) this.dirtySessions.add(id);
+    const dirty = [...this.dirtySessions];
+    this.dirtySessions.clear();
+    const state = { settings: this.settings, accounts: this.accounts, activeAccountId: this.activeAccountId, sessions: this.sessions };
+    // Capture the changed arrays before awaiting I/O. Later stream updates stay
+    // in the journal and cannot leak into an earlier transaction.
+    const committedFinal = new Set(this.sessions.filter(session => dirty.includes(session.id)).flatMap(session => session.messages.filter(message => message.status !== 'working' && (this.turns.get(session.id)?.message !== message || this.turns.get(session.id)?.settled === true)).map(message => message.id)));
+    const unsettled = new Set([...this.turns.values()].filter(turn => !turn.settled && turn.message).map(turn => turn.message.id));
+    this.store.unsettled = unsettled;
+    const commit = this.store.save(state, dirty);
+    commit.catch(() => {});
+    const operation = this.saveQueue.catch(() => {}).then(async () => {
+      try { await this.journal.flush(); } catch {}
+      try { await commit; }
+      catch (error) { for (const id of dirty) this.dirtySessions.add(id); throw error; }
+      try { await this.journal.reset([...this.journal.replies.values()].filter(entry => !committedFinal.has(entry.message.id))); } catch {}
+    });
+    this.saveQueue = operation;
+    return operation;
   }
   runningReplies() {
-    return [...this.turns.values()].filter(turn => turn.message).map(turn => ({ sessionId: turn.sessionId, message: turn.message }));
+    return [...this.turns.values()].filter(turn => turn.message?.status === 'working').map(turn => ({ sessionId: turn.sessionId, message: turn.message }));
   }
   visibleSessions() { return this.sessions.filter(s => (s.accountId || 'local') === this.activeAccountId); }
-  getSession(id) { const s = this.visibleSessions().find(s => s.id === id); if (!s) throw new Error(this.t('会话不存在或属于其他账户')); return s; }
+  getSession(id) { const s = this.visibleSessions().find(s => s.id === id); if (!s) throw new Error(this.t('会话不存在或属于其他账户')); return this.prepareSession(s); }
+  prepareSession(session) {
+    for (const message of session.messages) {
+      if (message.mediaVersion === MEDIA_VERSION) continue;
+      message.images = restoreMessageImages(message);
+      message.attachments = restoreMessageAttachments(message);
+      Object.assign(message, this.blobs.externalize(message));
+      message.mediaVersion = MEDIA_VERSION;
+      this.dirtySessions.add(session.id);
+    }
+    return session;
+  }
+  readSession(id) { return this.getSession(id); }
   accountState() { return { accounts: this.accounts.map(a => this.accountManager.summary(a)), activeAccountId: this.activeAccountId, login: this.accountManager.loginState() }; }
-  snapshot(error = null) { return { settings: this.settings, sessions: this.visibleSessions(), info: this.normalizeInfo(), connected: this.connected, error, maxConcurrentTurns: MAX_CONCURRENT_TURNS, quota: this.quotaState(), ...this.accountState() }; }
+  snapshot(error = null) { return { settings: this.settings, sessions: this.visibleSessions().map(sessionMetadata), info: this.normalizeInfo(), connected: this.connected, error, maxConcurrentTurns: MAX_CONCURRENT_TURNS, quota: this.quotaState(), ...this.accountState() }; }
   // Local preferences and history are available before the CLI's initialize and
   // session-restore round trips. Reading them must not reserve or start the engine.
   initialState() { return this.snapshot(this.loadError); }
-  listAccounts() { return this.accountState(); }
-  accountName(name, exceptId) {
-    if (typeof name !== 'string' || !name.trim() || Array.from(name.trim()).length > 60) throw new Error(this.t('请输入 1 到 60 字的账户名称'));
-    const trimmed = name.trim();
-    const comparable = value => value.normalize('NFKC').toLowerCase();
-    if (this.accounts.some(account => account.id !== exceptId && comparable(account.name) === comparable(trimmed))) throw new Error(this.t('已存在同名账户，请使用其他名称'));
-    return trimmed;
-  }
-  async accountOperation(name, action) {
-    return this.idleOperation(name, () => {
-      if (this.accountManager.pending) throw new Error(this.t('请先完成或取消账户登录'));
-      return action();
-    });
-  }
-  async addAccount({ name } = {}) {
-    return this.accountOperation(this.t('添加账户'), async () => {
-      const account = { id: randomUUID(), name: this.accountName(name) };
-      this.accounts.push(account);
-      try { this.save(); } catch (error) { this.accounts.pop(); throw error; }
-      return this.accountManager.summary(account);
-    });
-  }
-  async renameAccount(id, name) {
-    return this.accountOperation(this.t('重命名账户'), async () => {
-      const account = this.accounts.find(a => a.id === id);
-      if (!account) throw new Error(this.t('账户不存在'));
-      const nextName = this.accountName(name, id);
-      const previousName = account.name;
-      const previousDefault = account.nameIsDefault;
-      account.name = nextName;
-      account.nameIsDefault = false;
-      try { this.save(); } catch (error) { account.name = previousName; account.nameIsDefault = previousDefault; throw error; }
-      const state = this.snapshot();
-      this.emitEvent({ type: 'account-changed', state });
-      return state;
-    });
-  }
-  async deleteAccount(id) {
-    return this.accountOperation(this.t('删除账户'), async () => {
-      if (!this.accounts.some(a => a.id === id)) throw new Error(this.t('账户不存在'));
-      if (id === 'local') throw new Error(this.t('本机 Grok 账户不能删除，新增账户可以移除'));
-      // Validate the actual owned directory before touching the engine or files.
-      this.accountManager.profileDirectory(id);
-      const wasActive = this.activeAccountId === id;
-      if (wasActive) {
-        this.invalidateConnection();
-        await this.closeAdapter();
-      }
-      const staged = this.accountManager.stageDelete(id);
-      const previous = { accounts: this.accounts, sessions: this.sessions, activeAccountId: this.activeAccountId };
-      this.accounts = this.accounts.filter(a => a.id !== id);
-      this.sessions = this.sessions.filter(s => (s.accountId || 'local') !== id);
-      if (wasActive) { this.activeAccountId = 'local'; this.resetQuota(); }
-      try { this.save(); }
-      catch (error) {
-        Object.assign(this, previous);
-        if (staged) {
-          try { this.accountManager.restoreDelete(id); }
-          catch { throw new Error(this.t('账户删除未保存，本地数据已保留，重启应用后会尝试恢复。保存错误：{error}', { error: error.message })); }
-        }
-        throw error;
-      }
-      const errors = [];
-      if (staged) {
-        try { this.accountManager.completeDelete(id); }
-        catch { errors.push(this.t('账户已移除，但登录凭据或缓存尚未完全清理；请检查 data/accounts 文件夹权限并重启应用以重试清理。')); }
-      }
-      this.emitEvent({ type: 'account-changed', state: this.snapshot(errors.join('\n') || null) });
-      if (wasActive) {
-        try {
-          await this._connect();
-          const session = this.visibleSessions()[0];
-          if (session) await this._ensureLoaded(session); else await this._createSession({});
-        } catch (error) { errors.push(this.t('账户已移除，已切回本机账户。{error}', { error: error.message })); }
-        this.scheduleQuotaRefresh(0);
-      }
-      return this.snapshot(errors.join('\n') || null);
-    });
-  }
-  async switchAccount(id) {
-    return this.idleOperation(this.t('切换账户'), async () => {
-      if (!this.accounts.some(a => a.id === id)) throw new Error(this.t('账户不存在'));
-      if (this.accountManager.pending) throw new Error(this.t('请先完成或取消账户登录'));
-      this.invalidateConnection();
-      await this.closeAdapter();
-      const previous = this.activeAccountId;
-      this.activeAccountId = id;
-      try { this.save(); } catch (error) { this.activeAccountId = previous; throw error; }
-      // Another account's quota must never remain visible after switching.
-      this.resetQuota();
-      // Clear the old account in the UI before connecting or replaying new history.
-      this.emitEvent({ type: 'account-changed', state: this.snapshot() });
-      let error = null;
-      try {
-        await this._connect();
-        const session = this.visibleSessions()[0];
-        if (session) await this._ensureLoaded(session); else await this._createSession({});
-      } catch (e) { error = e.message; }
-      this.scheduleQuotaRefresh(0);
-      return this.snapshot(error);
-    });
-  }
-  async loginAccount(id) {
-    return this.idleOperation(this.t('启动账户登录'), async () => {
-      const account = this.accounts.find(a => a.id === id);
-      if (!account) throw new Error(this.t('账户不存在'));
-      if (this.accountManager.pending) throw new Error(this.t('已有账户正在登录'));
-      if (!isExecutable(this.settings.executable)) throw new Error(this.t('请在设置中选择有效的 Grok CLI'));
-      if (id === this.activeAccountId) {
-        this.invalidateConnection();
-        await this.closeAdapter();
-      }
-      if (this.closing) throw new Error(this.t('应用正在关闭'));
-      return this.accountManager.startLogin(account, this.settings.executable, this.settings.workspace);
-    });
-  }
-  async cancelAccountLogin() { await this.accountManager.cancelLogin(); return this.accountState(); }
   attachmentDirectory(accountId = this.activeAccountId) {
     return accountId === 'local' ? path.join(this.dir, 'attachments', 'local') : path.join(this.accountManager.profileDirectory(accountId), 'attachments');
   }
   async importAttachments({ files, accountId = this.activeAccountId } = {}, fromPaths = false) {
     return this.idleOperation(this.t('选择图片或附件'), async () => {
       if (accountId !== this.activeAccountId) throw new Error(this.t('附件已失效，请重新添加'));
-      const attachments = await stageAttachments(files, this.attachmentDirectory(accountId), { fromPaths, t: this.t });
-      for (const { previewSrc, ...attachment } of attachments) this.pendingAttachments.set(attachment.id, { ...attachment, accountId });
-      return attachments;
+      const staging = this.cleanupQueue.catch(() => {}).then(async () => {
+        const attachments = await stageAttachments(files, this.attachmentDirectory(accountId), { fromPaths, t: this.t, nativeImage: this.nativeImage });
+        for (const { previewSrc, ...attachment } of attachments) this.pendingAttachments.set(attachment.id, { ...attachment, accountId });
+        return attachments;
+      });
+      // Cleanup shares this queue through staging and registration, so it cannot
+      // mistake a just-created upload directory for an abandoned draft.
+      this.cleanupQueue = staging.then(() => {});
+      return staging;
     }, { duringTurns: true });
   }
   getAttachment({ sessionId, attachmentId } = {}) {
@@ -399,22 +327,86 @@ class AppController extends EventEmitter {
   async attachmentBytes(args) {
     const { session, attachment } = this.getAttachment(args);
     const accountId = this.activeAccountId;
+    if (BLOB_REFERENCE.test(attachment.src)) { await this.blobs.flush(); return resolveAttachment(this.blobs.resolve(attachment.src), [this.blobs.directory], this.t); }
     const cache = /^(?:https?:\/\/|data:)/i.test(attachment.src) ? undefined : await findSessionImageDirectory(this.accountManager.homeFor(accountId), session.cwd, session.id);
     return resolveAttachment(attachment.src, [session.cwd, cache, this.attachmentDirectory(accountId)], this.t);
   }
-  async readImage({ sessionId, src } = {}) {
-    const session = this.getSession(sessionId);
-    try {
-      const uploaded = session.messages.flatMap(message => message.attachments || []).find(item => item.src === src && item.mimeType?.startsWith('image/'));
-      if (uploaded) {
-        const bytes = await resolveAttachment(src, [this.attachmentDirectory(), session.cwd], this.t);
-        return resolveImage(`data:${uploaded.mimeType};base64,${bytes.toString('base64')}`, session.cwd, undefined, this.t);
-      }
-      const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
-        : await findSessionImageDirectory(this.accountManager.homeFor(this.activeAccountId), session.cwd, session.id);
-      return await resolveImage(src, session.cwd, cache, this.t);
+  async imageURL({ sessionId, src } = {}) {
+    this.getSession(sessionId);
+    if (typeof src !== 'string' || !src || src.length > 30 * 1024 * 1024) throw new Error(this.t('不支持的图片地址'));
+    const accountId = this.activeAccountId;
+    // Validate before returning IPC so errors retain their localized details.
+    // The prepared response is consumed by the first protocol request, without
+    // decoding/encoding the image or downloading a remote image twice.
+    const response = await this.imageResponse({ sessionId, src });
+    const token = randomUUID();
+    const entry = { sessionId, src, accountId, response, timer: null };
+    entry.timer = setTimeout(() => { void entry.response?.body?.cancel().catch(() => {}); entry.response = null; }, 30000);
+    entry.timer.unref?.();
+    this.imageTokens.set(token, entry);
+    if (this.imageTokens.size > 2048) this.dropImageToken(this.imageTokens.keys().next().value);
+    return { src: `tokyo-image://media/${token}` };
+  }
+  dropImageToken(token) {
+    const entry = this.imageTokens.get(token);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    void entry.response?.body?.cancel().catch(() => {});
+    this.imageTokens.delete(token);
+  }
+  async serveImage(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return new Response(null, { status: 404 }); }
+    const token = parsed.pathname.slice(1);
+    const args = parsed.protocol === 'tokyo-image:' && parsed.hostname === 'media' && this.imageTokens.get(token);
+    if (!args || args.accountId !== this.activeAccountId || !this.visibleSessions().some(session => session.id === args.sessionId)) {
+      this.dropImageToken(token);
+      return new Response(null, { status: 404 });
     }
-    catch (error) { throw new Error(error.code === 'ENOENT' ? this.t('找不到图片文件，文件可能已移动或删除') : error.message); }
+    try {
+      if (args.response) { const response = args.response; args.response = null; clearTimeout(args.timer); return response; }
+      return await this.imageResponse(args);
+    } catch { return new Response(null, { status: 404 }); }
+  }
+  async imageResponse({ sessionId, src } = {}) {
+    const accountId = this.activeAccountId;
+    const session = this.getSession(sessionId);
+    const uploaded = session.messages.some(message => (message.attachments || []).some(item => item.src === src && item.mimeType?.startsWith('image/')));
+    const roots = uploaded ? [this.attachmentDirectory()] : [];
+    if (BLOB_REFERENCE.test(src)) {
+      const referenced = session.messages.some(message => (message.images || []).some(image => image.src === src) || (message.attachments || []).some(item => item.src === src && item.mimeType?.startsWith('image/')));
+      if (!referenced) throw new Error(this.t('不支持的图片地址'));
+      await this.blobs.flush();
+      src = this.blobs.resolve(src);
+      roots.push(this.blobs.directory);
+    }
+    const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
+      : await findSessionImageDirectory(this.accountManager.homeFor(accountId), session.cwd, session.id);
+    const response = await resolveImageResponse(src, session.cwd, cache, this.t, undefined, roots);
+    if (accountId !== this.activeAccountId) { await response.body?.cancel(); throw new Error(this.t('不支持的图片地址')); }
+    return response;
+  }
+  async readImage(args) {
+    // Headless callers retain the byte API; the desktop bridge uses imageURL.
+    const response = await this.imageResponse(args);
+    return { src: `data:${response.headers.get('content-type')};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}` };
+  }
+  cleanAttachments() {
+    const operation = this.cleanupQueue.catch(() => {}).then(async () => {
+      for (const account of this.accounts) {
+        const referenced = this.sessions.filter(session => (session.accountId || 'local') === account.id).flatMap(session => session.messages.flatMap(message => [...(message.attachments || []), ...(message.images || [])]));
+        referenced.push(...[...this.pendingAttachments.values()].filter(item => item.accountId === account.id));
+        await cleanupAttachments(this.attachmentDirectory(account.id), referenced);
+      }
+    });
+    this.cleanupQueue = operation;
+    return operation;
+  }
+  async releaseAttachments({ ids = [], accountId = this.activeAccountId } = {}) {
+    if (!Array.isArray(ids)) throw new Error(this.t('无效的附件'));
+    for (const id of ids) if (this.pendingAttachments.get(id)?.accountId === accountId) this.pendingAttachments.delete(id);
+    await this.cleanAttachments();
+    return true;
   }
   async idleOperation(name, action, { allowInterfaceSettings = false, background = false, duringTurns = false } = {}) {
     // A catalog readback is not a user action. Like a send, user operations
@@ -432,7 +424,7 @@ class AppController extends EventEmitter {
     // Reserve synchronously, before the first await, so a send cannot race settings.
     const operation = { name, allowInterfaceSettings, background };
     this.operation = operation;
-    operation.promise = Promise.resolve().then(action);
+    operation.promise = Promise.resolve().then(async () => { await this.historyQueue.catch(() => {}); return action(); });
     try { return await operation.promise; }
     finally {
       if (this.operation === operation) this.operation = null;
@@ -452,6 +444,7 @@ class AppController extends EventEmitter {
     return this.idleOperation(this.t('载入会话'), async () => {
       const revision = this.modelCatalogRevision;
       const adapter = this.adapter;
+      const updated = [];
       for (const session of this.visibleSessions()) {
         if (this.closing || this.turns.size || !this.connected || this.adapter !== adapter) break;
         if (!this.loaded.has(session.id) || (this.modelRefreshes.get(session.id) || 0) >= revision) continue;
@@ -463,10 +456,15 @@ class AppController extends EventEmitter {
           const restored = await adapter.loadSession({ sessionId: session.id, cwd: session.cwd, force: true });
           if (this.closing || !this.connected || this.adapter !== adapter || !this.loaded.has(session.id)) break;
           this.syncSession(session, restored);
-          this.publishSession(session);
+          updated.push(session);
         } catch (error) {
           this.emitEvent({ type: 'error', sessionId: session.id, message: error.message });
         }
+      }
+      if (updated.length) {
+        await this.historyOperation(() => this.save());
+        this.emitEvent({ type: 'sessions-updated', sessions: updated.map(sessionMetadata) });
+        this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: this.connected });
       }
     }, { allowInterfaceSettings: true, background: true });
   }
@@ -481,9 +479,9 @@ class AppController extends EventEmitter {
     session.modes = Array.isArray(state.modes) ? structuredClone(state.modes) : [];
     session.modelSelectionVerified = state.modelSelectionVerified === true;
   }
-  publishSession(session) {
-    this.save();
-    this.emitEvent({ type: 'session-updated', sessionId: session.id, session });
+  async publishSession(session) {
+    await this.historyOperation(() => this.save());
+    this.emitEvent({ type: 'session-updated', sessionId: session.id, session: sessionMetadata(session) });
     this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: this.connected });
   }
   invalidateConnection() {
@@ -496,8 +494,8 @@ class AppController extends EventEmitter {
     this.permissions.clear();
     for (const session of this.visibleSessions()) {
       session.modelSelectionVerified = false;
-      this.emitEvent({ type: 'session-updated', sessionId: session.id, session });
     }
+    this.emitEvent({ type: 'sessions-updated', sessions: this.visibleSessions().map(sessionMetadata) });
     this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: false });
   }
   normalizeInfo() {
@@ -586,7 +584,7 @@ class AppController extends EventEmitter {
     this.sessions.unshift(session);
     this.loaded.add(session.id);
     this.modelRefreshes.set(session.id, revision);
-    try { this.save(); }
+    try { await this.save(); }
     catch (error) { this.sessions = this.sessions.filter(item => item !== session); this.loaded.delete(session.id); this.modelRefreshes.delete(session.id); throw error; }
     this.emitEvent({ type: 'session-updated', sessionId: session.id, session });
     this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: this.connected });
@@ -614,10 +612,10 @@ class AppController extends EventEmitter {
     } catch (error) {
       session.modelSelectionVerified = false;
       this.loaded.delete(session.id);
-      this.publishSession(session);
+      await this.publishSession(session);
       throw error;
     }
-    this.publishSession(session);
+    await this.publishSession(session);
     return session;
   }
   async selectSession(id) {
@@ -652,7 +650,7 @@ class AppController extends EventEmitter {
       } finally {
         // A model may succeed before a mode fails. Report only the state Grok confirmed.
         this.syncSession(session, this.engineSession(sessionId));
-        this.publishSession(session);
+        await this.publishSession(session);
       }
     }, { duringTurns: true });
   }
@@ -688,27 +686,33 @@ class AppController extends EventEmitter {
       }
     } catch (e) { this.releaseTurn(turn); this.scheduleModelRefresh(); throw e; }
     if (turn.cancelled) { this.releaseTurn(turn); this.scheduleModelRefresh(); this.emitEvent({ type: 'status', sessionId, status: 'cancelled' }); return { accepted: false, cancelled: true }; }
-    const now = Date.now();
-    const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
-    session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
-    const message = { id: randomUUID(), role: 'assistant', text: '', responseSegments: [], thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
-    session.messages.push(message);
-    if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
-      // Truncate by code point so an emoji at the limit never leaves a broken half.
-      session.title = Array.from((text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ')).slice(0, 32).join('');
-      session.titleIsDefault = false;
-    }
-    session.updatedAt = now;
-    try { this.save(); }
-    catch (error) {
-      session.messages.length = previous.messages;
-      session.title = previous.title;
-      session.titleIsDefault = previous.titleIsDefault;
-      session.updatedAt = previous.updatedAt;
-      this.releaseTurn(turn);
-      this.scheduleModelRefresh();
-      throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
-    }
+    let message;
+    await this.historyOperation(async () => {
+      if (turn.cancelled) return;
+      const now = Date.now();
+      const previous = { messages: session.messages.length, title: session.title, titleIsDefault: session.titleIsDefault, updatedAt: session.updatedAt };
+      session.messages.push({ id: randomUUID(), role: 'user', text: text.trim(), ...(selected.length ? { attachments: selected, images: selected.filter(item => item.mimeType.startsWith('image/')).map(item => ({ src: item.src, alt: item.name })) } : {}), createdAt: now, status: 'complete' });
+      message = { id: randomUUID(), role: 'assistant', text: '', responseSegments: [], thought: '', tools: [], images: [], attachments: [], plan: [], createdAt: now, status: 'working' };
+      session.messages.push(message);
+      if (session.titleIsDefault === true || (session.titleIsDefault === undefined && session.title === '新会话' && previous.messages === 0)) {
+        // Truncate by code point so an emoji at the limit never leaves a broken half.
+        session.title = Array.from((text.trim() || selected.map(item => item.name).join(', ')).replace(/\s+/g, ' ')).slice(0, 32).join('');
+        session.titleIsDefault = false;
+      }
+      session.updatedAt = now;
+      try { await this.save({ content: [session.id] }); }
+      catch (error) {
+        session.messages.length = previous.messages;
+        session.title = previous.title;
+        session.titleIsDefault = previous.titleIsDefault;
+        session.updatedAt = previous.updatedAt;
+        this.releaseTurn(turn);
+        this.scheduleModelRefresh();
+        throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
+      }
+    });
+    if (!message) { this.releaseTurn(turn); this.scheduleModelRefresh(); return { accepted: false, cancelled: true }; }
+    for (const item of selected) this.pendingAttachments.delete(item.id);
     turn.message = message;
     this.journal.begin(sessionId, message);
     this.emitEvent({ type: 'session-updated', sessionId, session });
@@ -716,7 +720,7 @@ class AppController extends EventEmitter {
     const adapter = this.adapter;
     turn.promise = (async () => {
       try {
-        const result = await adapter.prompt({ sessionId, text: text.trim(), ...(selected.length ? { attachments: selected.map(item => ({ ...item, path: item.src, uri: pathToFileURL(item.src).href })) } : {}) });
+        const result = turn.cancelled ? { cancelled: true } : await adapter.prompt({ sessionId, text: text.trim(), ...(selected.length ? { attachments: selected.map(item => ({ ...item, path: item.src, uri: pathToFileURL(item.src).href })) } : {}) });
         if (message.status === 'working') message.status = result?.cancelled || result?.stopReason === 'cancelled' ? 'cancelled' : 'complete';
         if (typeof result?.stopReason === 'string') message.stopReason = result.stopReason;
         if (message.status !== 'cancelled' && Object.hasOwn(STOP_NOTICES, result?.stopReason)) message.noticeKey = STOP_NOTICES[result.stopReason];
@@ -726,14 +730,17 @@ class AppController extends EventEmitter {
           this.emitEvent({ type: 'error', sessionId, message: e.message });
         }
       } finally {
-        this.releaseTurn(turn);
+        turn.settled = true;
+        applyReplyUpdate(message, { type: 'scan-attachments' }, sessionId, nested => this.emitEvent(nested));
+        message.mediaVersion = MEDIA_VERSION;
         // Other conversations keep their own pending permission requests.
         for (const [requestId, permission] of this.permissions) {
           if (permission.sessionId === sessionId || (!permission.sessionId && !this.turns.size)) this.permissions.delete(requestId);
         }
         session.updatedAt = Date.now();
-        try { this.save(); }
+        try { await this.historyOperation(() => this.save({ content: [session.id] })); }
         catch (error) { this.emitEvent({ type: 'error', sessionId, message: this.t('保存失败：{error}', { error: error.message }) }); }
+        this.releaseTurn(turn);
         this.emitEvent({ type: 'session-updated', sessionId, session });
         this.emitEvent({ type: 'status', sessionId, status: message.status === 'cancelled' ? 'cancelled' : 'idle' });
         this.scheduleModelRefresh();
@@ -743,7 +750,7 @@ class AppController extends EventEmitter {
       }
     })();
     this.turnPromise = turn.promise;
-    return { accepted: true };
+    return { accepted: true, ...(turn.cancelled ? { cancelled: true } : {}) };
   }
   handleEvent(event) {
     if (event.replay || (['text', 'image', 'attachment'].includes(event.type) && event.role === 'user')) return;
@@ -759,7 +766,7 @@ class AppController extends EventEmitter {
       const session = this.visibleSessions().find(item => item.id === event.sessionId);
       if (session) {
         this.syncSession(session, this.engineSession(session.id));
-        this.publishSession(session);
+        void this.publishSession(session).catch(error => this.emitEvent({ type: 'error', message: error.message }));
       }
     }
     if (event.type === 'permission') this.permissions.set(String(event.requestId), event);
@@ -768,6 +775,7 @@ class AppController extends EventEmitter {
     // session ID is only unambiguous while exactly one conversation is running.
     const current = event.sessionId ? this.turns.get(event.sessionId) : this.turns.size === 1 ? this.active : undefined;
     const message = current?.message;
+    event = this.blobs.externalize(event);
     const isPlan = event.type === 'status' && event.status === 'plan';
     if ((['text', 'thought', 'tool', 'image', 'attachment', 'response-boundary'].includes(event.type) || isPlan) && !message) return;
     if (message) {
@@ -841,7 +849,7 @@ class AppController extends EventEmitter {
       changes.quotaEnabled = patch.quotaEnabled;
     }
     const changed = ['executable', 'workspace', 'subagentsEnabled'].some(key => Object.hasOwn(changes, key) && changes[key] !== this.settings[key]);
-    const persist = async () => {
+    const persist = () => this.historyOperation(async () => {
       if (changed) {
         this.invalidateConnection();
         await this.closeAdapter();
@@ -850,7 +858,7 @@ class AppController extends EventEmitter {
       // Interface preferences may have been saved while this change waited for
       // a background catalog refresh. Preserve fields this request did not set.
       this.settings = { ...previous, ...changes };
-      try { this.save(); } catch (error) { this.settings = previous; throw error; }
+      try { await this.save(); } catch (error) { this.settings = previous; throw error; }
       if (this.settings.quotaEnabled !== previous.quotaEnabled) {
         // Turning the quota off stops all further requests immediately.
         this.resetQuota();
@@ -858,7 +866,7 @@ class AppController extends EventEmitter {
         else this.setQuota({ status: 'disabled' });
       }
       return this.settings;
-    };
+    });
     // Startup does not write settings, so interface preferences can be saved
     // while initialize/session restore is pending, just as during generation.
     // Other operations may have captured settings before awaiting a teardown;
@@ -881,41 +889,45 @@ class AppController extends EventEmitter {
       return this.normalizeInfo();
     });
   }
-  renameSession({ sessionId, title }) {
+  async renameSession({ sessionId, title }) {
+    if (this.operation && !this.operation.allowInterfaceSettings) throw new Error(this.t('正在{name}，请稍后再试。', { name: this.operation.name }));
     if (typeof title !== 'string' || !title.trim()) throw new Error(this.t('请输入会话名称'));
     const s = this.getSession(sessionId);
     const previous = s.title;
     const previousDefault = s.titleIsDefault;
     s.title = Array.from(title.trim()).slice(0, 120).join('');
     s.titleIsDefault = false;
-    try { this.save(); } catch (error) { s.title = previous; s.titleIsDefault = previousDefault; throw error; }
+    try { await this.save(); } catch (error) { s.title = previous; s.titleIsDefault = previousDefault; throw error; }
     return s;
   }
-  deleteSession(id) {
+  async deleteSession(id) {
     if (this.turns.has(id)) throw new Error(this.t('请先停止当前回复'));
     if (this.operation) throw new Error(this.t('正在{name}，请稍后再删除会话。', { name: this.operation.name }));
     this.getSession(id);
     const previous = this.sessions;
     this.sessions = this.sessions.filter(s => s.id !== id || (s.accountId || 'local') !== this.activeAccountId);
-    try { this.save(); } catch (error) { this.sessions = previous; throw error; }
+    try { await this.save(); } catch (error) { this.sessions = previous; throw error; }
     this.loaded.delete(id);
+    await this.cleanAttachments();
     return true;
   }
   sessionTitle(session) {
     return session.titleIsDefault === true ? this.t('新会话') : session.title;
   }
+  exportSource(src) { return BLOB_REFERENCE.test(src) ? this.blobs.resolve(src) : src; }
   exportMarkdown(id) {
     const s = this.getSession(id);
     return `# ${this.sessionTitle(s)}\n\n${this.t('工作目录：{path}', { path: s.cwd })}\n\n` + s.messages.map(m => {
       const plan = Array.isArray(m.plan) && m.plan.length ? `\n\n### ${this.t('执行计划')}\n\n` + m.plan.map(entry => `- [${entry.status === 'completed' ? 'x' : ' '}] ${entry.content}`).join('\n') : '';
-      const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${image.src.replace(/>/g, '%3E')}>)`).join('');
+      const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${this.exportSource(image.src).replace(/>/g, '%3E')}>)`).join('');
       const notice = m.noticeKey ? `\n\n${this.t(m.noticeKey)}` : '';
-      const attachments = (m.attachments || []).filter(item => !item.mimeType?.startsWith('image/')).map(item => `\n\n[${String(item.name).replace(/[\[\]\\]/g, '')}](<${item.src.replace(/>/g, '%3E')}>)`).join('');
+      const attachments = (m.attachments || []).filter(item => !item.mimeType?.startsWith('image/')).map(item => `\n\n[${String(item.name).replace(/[\[\]\\]/g, '')}](<${this.exportSource(item.src).replace(/>/g, '%3E')}>)`).join('');
       return `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${plan}${images}${attachments}${notice}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`;
     }).join('\n');
   }
   async close() {
     this.closing = true;
+    for (const token of this.imageTokens.keys()) this.dropImageToken(token);
     clearTimeout(this.modelRefreshTimer);
     this.modelRefreshTimer = null;
     this.resetQuota();
@@ -934,72 +946,24 @@ class AppController extends EventEmitter {
     if (this.accountManager.pending && this.accountManager.pending !== initialLogin) {
       try { await this.accountManager.cancelLogin(); } catch (error) { failure ||= error; }
     }
-    try { this.save(); } catch (error) { failure ||= error; }
+    try { await this.historyOperation(() => this.save({ content: [...this.turns.keys()] })); } catch (error) { failure ||= error; }
     try {
       const running = [...this.turns.values()].map(turn => turn.promise).filter(Boolean);
       // A full/unavailable disk must never leave the owned Grok process running.
       await this.closeAdapter();
       await Promise.all(running);
     } catch (error) { failure ||= error; }
-    finally { this.journal.cancel(); }
+    finally { this.journal.cancel(); await this.cleanupQueue.catch(() => {}); await this.saveQueue.catch(() => {}); }
     if (failure) throw failure;
   }
-  // Quota values are derived in the main process. Credentials and the raw
-  // billing response never cross IPC; the renderer only receives this summary.
-  quotaState() { return structuredClone(this.quota); }
-  setQuota(quota, accountId = this.activeAccountId) {
-    this.quota = { ...quota, accountId };
-    this.emitEvent({ type: 'quota', quota: this.quotaState() });
-    return this.quotaState();
-  }
-  resetQuota() {
-    clearTimeout(this.quotaTimer);
-    this.quotaTimer = null;
-    this.quotaRequest = null;
-    this.quota = { status: 'idle', accountId: this.activeAccountId };
-  }
-  scheduleQuotaRefresh(delay = 0, minInterval = 0) {
-    if (this.closing || !this.quotaFetch || !this.settings.quotaEnabled) return;
-    clearTimeout(this.quotaTimer);
-    this.quotaTimer = setTimeout(() => {
-      this.quotaTimer = null;
-      // Even an immediate refresh skips a read that just completed.
-      void this.refreshQuota({ minInterval: Math.max(minInterval, QUOTA_FORCE_INTERVAL) }).catch(() => {});
-    }, delay);
-    this.quotaTimer.unref?.();
-    // A slow periodic read lets a weekly reset appear while the window is idle.
-    if (!this.quotaPoll) {
-      this.quotaPoll = setInterval(() => { if (!this.closing) void this.refreshQuota().catch(() => {}); }, QUOTA_POLL_INTERVAL);
-      this.quotaPoll.unref?.();
-    }
-  }
-  async refreshQuota({ force = false, minInterval = QUOTA_MIN_INTERVAL } = {}) {
-    if (this.closing) return this.quotaState();
-    const accountId = this.activeAccountId;
-    if (!this.quotaFetch || !this.settings.quotaEnabled) return this.quota.status === 'disabled' ? this.quotaState() : this.setQuota({ status: 'disabled' });
-    const account = this.accounts.find(item => item.id === accountId);
-    let auth;
-    try { auth = account && this.accountManager.credential(account); } catch { auth = null; }
-    if (!auth?.credential && !auth?.apiKey) return this.setQuota({ status: 'signed-out' });
-    if (this.quotaRequest?.accountId === accountId) return this.quotaRequest.promise;
-    const previous = this.quota.accountId === accountId ? this.quota : null;
-    const since = Date.now() - (previous?.checkedAt || 0);
-    if (previous?.checkedAt && since < (force ? QUOTA_FORCE_INTERVAL : minInterval)) return this.quotaState();
-    const retained = previous?.usage ? { usage: previous.usage, fetchedAt: previous.fetchedAt } : {};
-    this.setQuota({ status: previous?.usage ? 'ok' : 'loading', ...retained, refreshing: true, ...(previous?.checkedAt ? { checkedAt: previous.checkedAt } : {}) });
-    const request = { accountId };
-    request.promise = (async () => {
-      const result = await fetchAccountQuota(auth, { fetch: this.quotaFetch, clientVersion: this.normalizeInfo().version });
-      // Discard a response for an account that is no longer displayed.
-      if (this.closing || this.activeAccountId !== accountId || this.quotaRequest !== request) return this.quotaState();
-      const checkedAt = Date.now();
-      if (result.usage) return this.setQuota({ status: 'ok', usage: result.usage, fetchedAt: checkedAt, checkedAt });
-      // Keep the last confirmed value visible, marked with why it is stale.
-      if (retained.usage) return this.setQuota({ status: 'ok', ...retained, reason: result.reason, checkedAt });
-      return this.setQuota({ status: 'unavailable', reason: result.reason, checkedAt });
-    })().finally(() => { if (this.quotaRequest === request) this.quotaRequest = null; });
-    this.quotaRequest = request;
-    return request.promise;
-  }
+
+}
+for (const name of ['renameSession', 'deleteSession']) {
+  const method = AppController.prototype[name];
+  AppController.prototype[name] = function (...args) { return this.historyOperation(() => method.apply(this, args)); };
+}
+for (const group of [ControllerAccounts, ControllerQuota]) {
+  const { constructor, ...methods } = Object.getOwnPropertyDescriptors(group.prototype);
+  Object.defineProperties(AppController.prototype, methods);
 }
 module.exports = { AppController, MAX_CONCURRENT_TURNS };

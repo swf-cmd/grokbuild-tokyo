@@ -3,16 +3,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { pathToFileURL } = require('node:url');
 const { packageFiles, ignorePackagePath, validatePackageSource, installPackagedBuild } = require('../scripts/package-policy.cjs');
 const root = path.resolve(__dirname, '..');
 
-test('the real packager filter excludes secrets and unknown files at every depth', async () => {
-  const { userPathFilter } = await import(pathToFileURL(path.join(root, 'node_modules/@electron/packager/dist/copy-filter.js')).href);
-  const filter = userPathFilter({ dir: root, out: path.join(root, 'work/package'), ignore: ignorePackagePath, prune: false });
-  for (const file of packageFiles) assert.equal(await filter(path.join(root, file)), true, file);
+test('the public package ignore callback excludes secrets and unknown files at every depth', () => {
+  // Packager documents a root-relative path (with a leading slash) for ignore.
+  // verify-package.cjs checks the actual produced ASAR inventory after building.
+  for (const file of packageFiles) assert.equal(ignorePackagePath('/' + file), false, file);
   for (const file of ['.env', '.env.production', '.npmrc', 'auth.json', 'private-key.pem', 'debug.log', 'backup.zip', '.git/config', 'data/conversations.json', 'dist/old.zip', 'out/report.json', 'coverage/credentials.json', 'src/.env', 'src/secret.cjs', 'src/renderer/assets/private.png', 'node_modules/example/index.js']) {
-    assert.equal(await filter(path.join(root, file)), false, `must not ship ${file}`);
+    assert.equal(ignorePackagePath('/' + file), true, `must not ship ${file}`);
+    assert.equal(ignorePackagePath('\\' + file.replaceAll('/', '\\')), true, `Windows must not ship ${file}`);
   }
 });
 

@@ -13,7 +13,7 @@
 
 ## 开发环境
 
-需要 Windows x64，或 macOS 13 及以上的 Intel / Apple Silicon Mac，以及 Node.js 22.12.0 或更高版本。CI 使用 Node.js 24；复现 CI 问题时建议使用相同版本。正常使用应用需要本机安装 [Grok Build CLI](https://github.com/xai-org/grok-build)，默认自动测试则使用隔离的模拟引擎。
+需要 Windows x64，或 macOS 13 及以上的 Intel / Apple Silicon Mac，以及 Node.js 22.13.0 或更高版本。CI 使用 Node.js 24；复现 CI 问题时建议使用相同版本。正常使用应用需要本机安装 [Grok Build CLI](https://github.com/xai-org/grok-build)，默认自动测试则使用隔离的模拟引擎。
 
 Fork 仓库，克隆自己的分支仓库，然后创建用于修改的分支：
 
@@ -44,24 +44,17 @@ Mac 的源码运行和打包程序共用 `~/Library/Application Support/Grokbuil
 
 ```sh
 npm ci
-npm test
+npm run test:all
 npm audit --audit-level=moderate
-npm run test:ui
-npm run test:security
-npm run test:accounts
-npm run test:attachments
-npm run test:i18n
-npm run test:models
-npm run test:time
 npm run build
-node scripts/verify-package.cjs
-node tests/ui-security.cjs --packaged
-node scripts/images-accounts-smoke.cjs --packaged
-node tests/i18n-ui.cjs --packaged
-npm run test:models -- --packaged
-node tests/ui-attachments.cjs --packaged
-node tests/time-ui.cjs --packaged
+npm run test:packaged
 ```
+
+`test:all` 顺序运行 ESLint、JavaScript 类型检查、单元测试及全部离线界面测试，包括渲染性能回归。`test:packaged` 验证压缩包清单和发布版 Fuses，启动实际的加固后可执行文件，再针对包内 ASAR 资源运行界面测试。两者遇到首次失败即退出，直接调用 Node，兼容 Windows 与 macOS 命令行。附加 `-- --list` 可只查看命令；原有的单项测试命令仍可使用。
+
+`npm run lint` 检查自行编写的 JavaScript，不包含第三方和生成文件。`npm run typecheck` 通过 `checkJs` 与 `noEmit` 检查路径、模型、额度、blob 和历史存储模块以及打包、测试运行脚本；增量覆盖范围明确列在 `tsconfig.json`，拆分其他控制器或界面模块时应继续扩展。检查不会引入应用运行时依赖。受支持的新版 ESLint 需要开发环境使用 Node.js 22.13.0 或更高版本，CI 使用 Node.js 24。
+
+发布包通过 Electron Fuses 禁用 `ELECTRON_RUN_AS_NODE`、`NODE_OPTIONS` 和 Node 调试参数，并启用内嵌 ASAR 完整性校验及仅从 ASAR 加载。Mac 在合并通用架构后、最终签名前设置 Fuses。实际可执行文件的冒烟测试通过渲染器 CDP 检查界面，保持发布版 Node 调试功能关闭；原生生命周期及菜单行为仍由开发版 Electron 的测试夹具覆盖。CI 只在 Apple Silicon 构建一次通用 ZIP，再在 Intel 运行同一个压缩包。
 
 构建前完全退出客户端（Mac 使用 **Cmd+Q**，关闭窗口只会隐藏它）。构建会整体替换 `App/`，并将旧目录保存在 `work/package-backups/`。分发 Windows 程序时保留完整 `App/` 目录及其许可文件。
 
@@ -69,8 +62,7 @@ Mac 发布时，在 Mac 上构建通用版并验证两种架构：
 
 ```sh
 npm run build:mac
-node scripts/verify-package.cjs --platform darwin --arch universal
-node scripts/packaged-launch-smoke.cjs
+npm run test:packaged -- --platform darwin --arch universal
 ```
 
 这会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip` 和 `.zip.sha256` 校验文件。`npm run build:mac:arm64` 与 `npm run build:mac:x64` 生成对应单架构版本。

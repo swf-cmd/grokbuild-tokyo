@@ -5,6 +5,8 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
+const { HistoryStore, sessionMetadata } = require('../src/history-store.cjs');
+const readHistory = controller => ({ ...new HistoryStore(controller.dir).read(), version: 2 });
 const { AppController, MAX_CONCURRENT_TURNS } = require('../src/app-controller.cjs');
 const { attachmentsFromContent } = require('../src/attachments.cjs');
 const { executableName } = require('../src/platform.cjs');
@@ -123,7 +125,7 @@ test('late model catalog refreshes loaded session choices once without changing 
   assert.deepEqual(session.models, models);
   assert.equal(session.model, 'grok-test');
   assert.equal(session.mode, 'balanced');
-  assert.equal(events.some(event => event.type === 'session-updated' && event.session.models.some(model => model.id === 'grok-4.7')), true);
+  assert.equal(events.some(event => event.type === 'sessions-updated' && event.sessions.some(item => item.models.some(model => model.id === 'grok-4.7'))), true);
   adapter.emit('event', { type: 'status', status: 'models_changed', revision: 2 });
   await controller.refreshModels();
   assert.equal(adapter.loads.length, 1);
@@ -340,7 +342,7 @@ test('automatic and renamed titles never split an emoji at the length limit', as
   assert.equal(session.title.isWellFormed(), true);
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
-  controller.renameSession({ sessionId: session.id, title: `${'b'.repeat(119)}😀😀` });
+  await controller.renameSession({ sessionId: session.id, title: `${'b'.repeat(119)}😀😀` });
   assert.equal(session.title, `${'b'.repeat(119)}😀`);
   assert.equal(session.title.isWellFormed(), true);
 });
@@ -432,9 +434,10 @@ test('read resources never become live reply attachments, and legacy echoes are 
   // Simulate a history saved by the previous client, including already-promoted
   // read resources. Loading must also remove them from export and reply cards.
   session.messages[1].attachments = attachmentsFromContent(resources);
-  controller.save();
+  delete session.messages[1].mediaVersion;
+  await controller.save({ content: [session.id] });
   const restored = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
-  assert.deepEqual(restored.sessions[0].messages[1].attachments, []);
+  assert.deepEqual(restored.readSession(session.id).messages[1].attachments, []);
   assert.equal(restored.sessions[0].messages[0].attachments.length, 1);
   assert.equal((await restored.attachmentBytes({ sessionId: session.id, attachmentId: file.id })).toString(), 'uploaded text');
   assert(!restored.exportMarkdown(session.id).includes('table.csv'));
@@ -491,7 +494,7 @@ test('execution plans replace prior entries, ignore replay and other sessions, a
   assert.deepEqual(session.messages[1].plan, expected);
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  const saved = readHistory(controller);
   assert.deepEqual(saved.sessions[0].messages[1].plan, expected);
   const restored = fixture(t, saved).controller;
   assert.deepEqual(restored.sessions[0].messages[1].plan, expected);
@@ -516,7 +519,7 @@ test('Grok turn limits and refusal preserve a translatable notice without blocki
     assert.equal(message.stopReason, stopReason);
     assert.equal(message.noticeKey, notice);
     assert.equal(controller.active, null);
-    const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+    const saved = readHistory(controller);
     assert.equal(saved.sessions[0].messages.at(-1).noticeKey, notice);
     assert.ok(controller.exportMarkdown(session.id).includes(notice));
   }
@@ -546,7 +549,7 @@ test('a new conversation remembers the model and mode selected by Grok', async t
   const { controller, session } = await started(t);
   assert.equal(session.model, 'grok-test');
   assert.equal(session.mode, 'balanced');
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  const saved = readHistory(controller);
   assert.equal(saved.sessions[0].model, 'grok-test');
 });
 
@@ -564,7 +567,7 @@ test('streamed assistant text and tool updates persist without echoing user or r
   ]) adapter.emit('event', { sessionId: session.id, ...event });
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0];
+  const saved = readHistory(controller).sessions[0];
   assert.equal(saved.messages.length, 2);
   assert.equal(saved.messages[0].text, 'hello');
   assert.equal(saved.messages[1].text, 'Hello Tokyo.');
@@ -595,7 +598,7 @@ test('response segments keep progress separate from the answer across streaming,
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
   const expected = [{ text: 'Checking the files.', kind: 'commentary' }, { text: 'The answer.', kind: 'response' }];
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  const saved = readHistory(controller);
   assert.deepEqual(saved.sessions[0].messages[1].responseSegments, expected);
   assert.equal(saved.sessions[0].messages[1].text, 'Checking the files.\n\nThe answer.');
   assert.equal(saved.sessions[0].messages[1].thought, 'Reasoning stays separate.More reasoning.');
@@ -615,7 +618,7 @@ test('a response ending at a tool boundary remains progress when no final answer
   adapter.emit('event', { sessionId: session.id, type: 'response-boundary' });
   adapter.prompts[0].gate.resolve({ stopReason: 'cancelled' });
   await controller.turnPromise;
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages[1];
+  const saved = readHistory(controller).sessions[0].messages[1];
   assert.equal(saved.status, 'cancelled');
   assert.deepEqual(saved.responseSegments, [{ text: 'Checking now.', kind: 'commentary' }]);
   assert.equal(saved.text, 'Checking now.');
@@ -754,7 +757,7 @@ test('restoring and selecting a session replace stale settings with actual engin
   assert.deepEqual(selected.modes, adapter.loadResult.modes);
   assert.equal(selected.modelSelectionVerified, true);
   assert.deepEqual(adapter.configurations, [], 'restoring must not reapply old local choices');
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0];
+  const saved = readHistory(controller).sessions[0];
   assert.equal(saved.model, 'server-model');
   assert.equal(saved.mode, 'medium');
 });
@@ -807,7 +810,7 @@ test('a failed mode configuration reports the model and mode the engine actually
   assert.equal(session.mode, 'medium');
   assert.equal(session.modelSelectionVerified, true);
   assert.equal(controller.operation, null);
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0];
+  const saved = readHistory(controller).sessions[0];
   assert.equal(saved.model, 'canonical-model');
   assert.equal(saved.mode, 'medium');
 });
@@ -840,7 +843,7 @@ test('a failed configuration that invalidates adapter state forces restoration b
   assert.equal(session.model, 'server-model');
   assert.equal(session.mode, 'high');
   assert.equal(session.modelSelectionVerified, true);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].model, 'server-model');
+  assert.equal(readHistory(controller).sessions[0].model, 'server-model');
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
 });
@@ -909,7 +912,7 @@ test('the subagent setting defaults to enabled, validates booleans and restarts 
   assert.equal(controller.connected, false);
   assert.equal(session.modelSelectionVerified, false);
   assert.equal(controller.loaded.size, 0);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings.subagentsEnabled, false);
+  assert.equal(readHistory(controller).settings.subagentsEnabled, false);
   await controller.reconnect();
   assert.equal(instances[1].options.subagentsEnabled, false);
   assert.equal(controller.connected, true);
@@ -938,7 +941,7 @@ test('engine settings queued behind a catalog refresh preserve preferences saved
   await refreshing;
   assert.deepEqual(await saving, expected);
   assert.deepEqual(controller.settings, expected);
-  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, expected);
+  assert.deepEqual(readHistory(controller).settings, expected);
   assert.equal(adapter.closeCount, 1);
   assert.equal(controller.operation, null);
 });
@@ -981,7 +984,7 @@ test('supported interface languages persist across restarts without reconnecting
   for (const language of ['ja', 'en', 'ko', 'es', 'de', 'fr', 'zh-CN']) {
     await controller.saveSettings({ language });
     assert.equal(adapter.options.getLanguage(), language);
-    assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings.language, language);
+    assert.equal(readHistory(controller).settings.language, language);
     const reloaded = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
     try { assert.equal(reloaded.settings.language, language); assert.equal(reloaded.loadError, null); }
     finally { await reloaded.close(); }
@@ -1043,7 +1046,7 @@ test('default labels are marked for translation while explicitly renamed default
   const { controller, session, adapter, root } = await started(t);
   assert.equal(session.titleIsDefault, true);
   assert.equal(controller.accountState().accounts[0].nameIsDefault, true);
-  controller.renameSession({ sessionId: session.id, title: '新会话' });
+  await controller.renameSession({ sessionId: session.id, title: '新会话' });
   await controller.renameAccount('local', '本机 Grok 账户');
   assert.equal(session.titleIsDefault, false);
   assert.equal(controller.accountState().accounts[0].nameIsDefault, false);
@@ -1072,7 +1075,7 @@ test('Markdown export localizes generated labels while preserving authored text 
   assert.ok(exported.includes('## You\n\n保留作者原文 {name}'));
   assert.ok(exported.includes('![Image returned by Grok](<https://example.test/generated.png>)'));
   assert.ok(exported.includes('![Grok 返回的图片](<https://example.test/authored.png>)'));
-  controller.renameSession({ sessionId: session.id, title: '新会话' });
+  await controller.renameSession({ sessionId: session.id, title: '新会话' });
   assert.ok(controller.exportMarkdown(session.id).startsWith('# 新会话\n'));
 });
 
@@ -1130,7 +1133,7 @@ test('atmosphere settings can be saved during generation without changing the ru
   assert.equal(adapter.closeCount, 0);
   assert.equal(controller.connected, true);
   assert.equal(session.modelSelectionVerified, true);
-  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, settings);
+  assert.deepEqual(readHistory(controller).settings, settings);
   await controller.saveSettings({ musicEnabled: true, musicVolume: 40 });
   assert.equal(controller.active, active);
   assert.equal(adapter.prompts.length, 1);
@@ -1185,7 +1188,7 @@ test('a failed initial message write releases send controls and avoids duplicati
   const { controller, adapter, session } = await started(t);
   const save = controller.save.bind(controller);
   let saves = 0;
-  controller.save = () => { if (++saves === 2) throw new Error('disk unavailable'); save(); };
+  controller.save = (...args) => { if (++saves === 2) throw new Error('disk unavailable'); return save(...args); };
   await assert.rejects(controller.send({ sessionId: session.id, text: 'not sent' }), /消息尚未发送/);
   controller.save = save;
   assert.equal(controller.active, null);
@@ -1350,7 +1353,7 @@ test('startup exposes saved preferences and history while slow engine steps keep
       assert.equal(initial.settings.musicEnabled, false);
       assert.equal(initial.settings.musicVolume, 25);
       assert.equal(initial.settings.rainEnabled, false);
-      assert.equal(initial.sessions[0].messages[0].text, 'Existing history');
+      assert.equal(controller.readSession(initial.sessions[0].id).messages[0].text, 'Existing history');
       assert.equal(initial.connected, false);
       assert.equal(controller.operation, null);
       assert.equal(instances.length, 0, 'reading local state must not start the CLI');
@@ -1368,7 +1371,7 @@ test('startup exposes saved preferences and history while slow engine steps keep
       const preferences = { language: 'en', musicEnabled: true, musicVolume: 45, rainEnabled: true };
       await controller.saveSettings(preferences);
       for (const [key, value] of Object.entries(preferences)) assert.equal(controller.settings[key], value);
-      assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, controller.settings);
+      assert.deepEqual(readHistory(controller).settings, controller.settings);
       assert.equal(controller.operation, operation, 'preference saves must not release the engine lock');
       assert.equal(instances[0].closeCount, 0);
       await assert.rejects(controller.saveSettings({ subagentsEnabled: false }));
@@ -1425,7 +1428,7 @@ test('restoring older startup history allows preference saves while reserving th
   assert.equal(controller.operation, null);
   assert.equal(controller.settings.language, 'ja');
   assert.equal(controller.settings.musicVolume, 15);
-  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings, controller.settings);
+  assert.deepEqual(readHistory(controller).settings, controller.settings);
   await controller.configureSession({ sessionId: older.id, model: 'selected-model' });
   await controller.send({ sessionId: older.id, text: 'continue older history' });
   assert.equal(adapter.configurations[0].sessionId, older.id);
@@ -1454,18 +1457,18 @@ test('failed history writes leave rename, delete and create actions safe to retr
   const { controller, session } = await started(t);
   const save = controller.save.bind(controller);
   controller.save = () => { throw new Error('disk unavailable'); };
-  assert.throws(() => controller.renameSession({ sessionId: session.id, title: 'new title' }), /disk unavailable/);
+  await assert.rejects(() => controller.renameSession({ sessionId: session.id, title: 'new title' }), /disk unavailable/);
   assert.equal(session.title, '新会话');
-  assert.throws(() => controller.deleteSession(session.id), /disk unavailable/);
+  await assert.rejects(() => controller.deleteSession(session.id), /disk unavailable/);
   assert.equal(controller.getSession(session.id), session);
   assert.equal(controller.loaded.has(session.id), true);
   await assert.rejects(controller.createSession(), /disk unavailable/);
   assert.deepEqual(controller.sessions, [session]);
   assert.deepEqual([...controller.loaded], [session.id]);
   controller.save = save;
-  controller.renameSession({ sessionId: session.id, title: 'saved title' });
+  await controller.renameSession({ sessionId: session.id, title: 'saved title' });
   assert.equal(controller.getSession(session.id).title, 'saved title');
-  assert.equal(controller.deleteSession(session.id), true);
+  assert.equal(await controller.deleteSession(session.id), true);
   assert.deepEqual(controller.sessions, []);
 });
 
@@ -1475,7 +1478,7 @@ test('per-session model menus are saved independently of the global engine selec
   adapter.info.models = [{ id: 'grok-other', name: 'Other model' }];
   await controller.selectSession(session.id);
   assert.deepEqual(session.models, [{ id: 'grok-session', name: 'Session model' }]);
-  assert.deepEqual(JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].models, session.models);
+  assert.deepEqual(readHistory(controller).sessions[0].models, session.models);
 });
 
 test('closing still stops the engine and releases an active turn when the final save fails', async t => {
@@ -1493,7 +1496,7 @@ test('closing still stops the engine and releases an active turn when the final 
 
 test('account switching isolates sessions, credentials and stale engine events across restart', async t => {
   const { controller, session, adapter, root } = await started(t);
-  controller.renameSession({ sessionId: session.id, title: 'Local history' });
+  await controller.renameSession({ sessionId: session.id, title: 'Local history' });
   const account = await controller.addAccount({ name: 'Work' }); signIn(controller, account);
   const switched = await controller.switchAccount(account.id);
   assert.equal(adapter.closeCount, 1);
@@ -1508,7 +1511,7 @@ test('account switching isolates sessions, credentials and stale engine events a
   const restored = await controller.switchAccount('local');
   assert.equal(restored.sessions[0].title, 'Local history'); assert.equal(restored.sessions[0].id, session.id);
   assert.equal(restored.sessions.some(s => s.id === workSession.id), false);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions.length, 2);
+  assert.equal(readHistory(controller).sessions.length, 2);
   await controller.switchAccount(account.id);
   const next = new AppController({ root, home: path.join(root, 'home'), Adapter: controller.Adapter });
   try {
@@ -1593,9 +1596,9 @@ test('image chunks and tool images persist once, survive reload and appear in Ma
   adapter.emit('event', { type: 'image', sessionId: 'another-session', image: { src: 'wrong' } });
   adapter.emit('event', { type: 'tool', sessionId: session.id, toolCallId: 'image-tool', content: [{ type: 'content', content: { type: 'image', mimeType: 'image/png', data: png } }] });
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
-  const stored = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages.at(-1);
-  assert.equal(stored.images.length, 1); assert.deepEqual(stored.images[0], { ...image, origin: 'assistant' });
-  assert.ok(controller.exportMarkdown(session.id).includes('![Preview](<data:image/png;base64,'));
+  const stored = readHistory(controller).sessions[0].messages.at(-1);
+  assert.equal(stored.images.length, 1); assert.deepEqual(stored.images[0], { ...image, src: controller.blobs.externalize(image.src), origin: 'assistant' });
+  assert.ok(controller.exportMarkdown(session.id).includes('![Preview](<' + controller.blobs.directory));
   assert.equal((await controller.readImage({ sessionId: session.id, src: image.src })).src, image.src);
 });
 
@@ -1638,12 +1641,12 @@ test('generated tool images stream once even when partial status updates follow'
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' }); await controller.turnPromise;
 });
 
-test('legacy saved tool images become visible and historical records migrate to the local account', t => {
+test('legacy saved tool images migrate when the conversation opens', async t => {
   const data = { type: 'image', mimeType: 'image/png', data: fs.readFileSync(path.resolve(__dirname, '../src/renderer/assets/icon.png')).toString('base64') };
   const { controller } = fixture(t, { version: 1, settings: {}, sessions: [{ id: 'old', title: 'Old image', cwd: process.cwd(), messages: [{ role: 'assistant', text: 'An image', tools: [{ content: [{ type: 'content', content: data }] }] }] }] });
   assert.equal(controller.visibleSessions()[0].accountId, 'local');
-  assert.equal(controller.visibleSessions()[0].messages[0].images.length, 1);
-  assert.ok(controller.exportMarkdown('old').includes('data:image/png;base64,'));
+  assert.equal(controller.readSession('old').messages[0].images.length, 1);
+  assert.ok(controller.exportMarkdown('old').includes('/blobs/'));
 });
 
 test('account names are trimmed, unique across casing and width, and rename returns a complete snapshot', async t => {
@@ -1657,9 +1660,9 @@ test('account names are trimmed, unique across casing and width, and rename retu
   const state = await controller.renameAccount(account.id, '  Personal  ');
   assert.equal(state.accounts.find(a => a.id === account.id).name, 'Personal');
   assert.equal(state.activeAccountId, 'local');
-  assert.deepEqual(state.sessions, [session]);
+  assert.deepEqual(state.sessions, [sessionMetadata(session)]);
   assert.equal(state.error, null);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).accounts[1].name, 'Personal');
+  assert.equal(readHistory(controller).accounts[1].name, 'Personal');
   await controller.renameAccount(account.id, 'Personal');
 });
 
@@ -1686,13 +1689,13 @@ test('deleting an inactive profile removes its credentials, cache and conversati
   const localMarker = path.join(controller.accountManager.homeFor('local'), 'keep.txt');
   fs.writeFileSync(localMarker, 'local account data');
   controller.sessions.push({ id: 'profile-history', accountId: account.id, title: 'Profile chat', cwd: controller.settings.workspace, messages: [{ role: 'user', text: 'private profile fixture' }] });
-  controller.save();
+  await controller.save();
   const state = await controller.deleteAccount(account.id);
   assert.deepEqual(state.accounts.map(a => a.id), ['local']);
   assert.equal(state.activeAccountId, 'local');
   assert.equal(state.connected, true);
   assert.equal(state.error, null);
-  assert.deepEqual(state.sessions, [session]);
+  assert.deepEqual(state.sessions, [sessionMetadata(session)]);
   assert.equal(adapter.closeCount, 0, 'deleting an inactive account must not interrupt the active engine');
   assert.equal(fs.existsSync(profile), false);
   assert.equal(fs.existsSync(controller.accountManager.profileDirectory(account.id, true)), false);
@@ -1720,7 +1723,7 @@ test('deleting the active account succeeds offline and switches history to local
   assert.deepEqual(state.sessions.map(s => s.id), [session.id]);
   assert.equal(controller.sessions.some(s => s.id === workState.sessions[0].id), false);
   assert.equal(events.find(e => e.type === 'account-changed').state.activeAccountId, 'local');
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).activeAccountId, 'local');
+  assert.equal(readHistory(controller).activeAccountId, 'local');
   assert.equal(fs.existsSync(controller.accountManager.profileDirectory(account.id)), false);
 });
 
@@ -1953,7 +1956,7 @@ test('conversations run side by side with separate output, permissions and stop'
   await assert.rejects(controller.send({ sessionId: other.id, text: 'again' }), /已有回复/);
   // Engine-wide changes still wait for every running conversation.
   for (const action of [() => controller.reconnect(), () => controller.saveSettings({ subagentsEnabled: false }), () => controller.switchAccount('local')]) await assert.rejects(action(), /当前回复/);
-  assert.throws(() => controller.deleteSession(session.id), /停止/);
+  await assert.rejects(() => controller.deleteSession(session.id), /停止/);
   const first = controller.turns.get(session.id);
   await controller.cancel(session.id);
   await first.promise;
@@ -2069,7 +2072,7 @@ test('turning the quota display off stops requests, persists and validates the s
   assert.equal(controller.quotaState().status, 'disabled');
   assert.equal((await controller.refreshQuota({ force: true })).status, 'disabled');
   assert.equal(requests.length, 0);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).settings.quotaEnabled, false);
+  assert.equal(readHistory(controller).settings.quotaEnabled, false);
   await assert.rejects(controller.saveSettings({ quotaEnabled: 'yes' }), /布尔值/);
   await controller.saveSettings({ quotaEnabled: true });
   assert.equal((await controller.refreshQuota()).status, 'ok');
@@ -2097,10 +2100,10 @@ test('a finished turn schedules a quota refresh and closing clears quota timers'
 // Loading a history that holds `message` exactly as it was on screen is what
 // an ideal snapshot taken at that moment would restore.
 function restoredFromSnapshot(t, controller, sessionId, message) {
-  const history = JSON.parse(fs.readFileSync(controller.file, 'utf8'));
+  const history = readHistory(controller);
   const session = history.sessions.find(item => item.id === sessionId);
   session.messages = session.messages.map(item => item.id === message.id ? structuredClone(message) : item);
-  return fixture(t, history).controller.sessions.find(item => item.id === sessionId).messages.find(item => item.id === message.id);
+  return fixture(t, history).controller.readSession(sessionId).messages.find(item => item.id === message.id);
 }
 
 function reopen(t, controller) {
@@ -2130,7 +2133,7 @@ test('streamed reply updates are journaled instead of rewriting the whole histor
   assert.ok(fs.readFileSync(controller.journal.file, 'utf8').includes('chunk 39 '), 'updates reach the journal within the flush delay');
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
   await controller.turnPromise;
-  const saved = JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].messages[1];
+  const saved = readHistory(controller).sessions[0].messages[1];
   assert.equal(saved.text, expected);
   assert.deepEqual(saved.responseSegments, [{ text: expected, kind: 'response' }]);
   assert.equal(saved.status, 'complete');
@@ -2154,10 +2157,10 @@ test('a reply interrupted by an unexpected exit is restored exactly as it was sh
   emit({ type: 'text', text: 'Done: [report](https://example.com/report.pdf)', segmentStart: true });
   emit({ type: 'status', status: 'usage', usage: { totalTokens: 10 } });
   emit({ type: 'thought', text: ' Then summarise.' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const shown = structuredClone(session.messages[1]);
   assert.equal(shown.status, 'working');
-  const restored = reopen(t, controller).sessions[0].messages[1];
+  const restored = reopen(t, controller).readSession(session.id).messages[1];
   assert.deepEqual(restored, restoredFromSnapshot(t, controller, session.id, shown));
   assert.equal(restored.status, 'cancelled');
   assert.equal(restored.text, 'Checking the files.\n\nDone: [report](https://example.com/report.pdf)');
@@ -2170,7 +2173,7 @@ test('a finished reply is never rolled back by a stale journal', async t => {
   const { controller, session, adapter } = await started(t);
   await controller.send({ sessionId: session.id, text: 'first' });
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'partial' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const stale = fs.readFileSync(controller.journal.file, 'utf8');
   adapter.emit('event', { sessionId: session.id, type: 'text', text: ' and final' });
   adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
@@ -2195,7 +2198,7 @@ test('finishing one of two running replies keeps the other recoverable', async t
   const lines = fs.readFileSync(controller.journal.file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(lines.map(line => line.sessionId), [second.id], 'the journal keeps only replies still generating');
   adapter.emit('event', { sessionId: second.id, type: 'text', text: 'still going' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const restored = reopen(t, controller);
   const first = restored.sessions.find(item => item.id === session.id).messages[1];
   const other = restored.sessions.find(item => item.id === second.id).messages[1];
@@ -2208,7 +2211,7 @@ test('a journal write failure is reported and the next write replaces the journa
   await controller.send({ sessionId: session.id, text: 'stream' });
   const errors = []; controller.on('event', event => { if (event.type === 'error') errors.push(event.message); });
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'before ' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const { appendFileSync } = fs;
   fs.appendFileSync = (file, data, ...rest) => {
     // Leave a torn line, as a full disk might.
@@ -2221,7 +2224,7 @@ test('a journal write failure is reported and the next write replaces the journa
   assert.match(errors.join('\n'), /fixture disk full/);
   fs.appendFileSync = appendFileSync;
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'after' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const restored = reopen(t, controller).sessions[0].messages[1];
   assert.equal(restored.text, 'before lost? after', 'no update is lost or replayed twice');
 });
@@ -2230,7 +2233,7 @@ test('a torn final journal line is ignored when recovering', async t => {
   const { controller, session, adapter } = await started(t);
   await controller.send({ sessionId: session.id, text: 'stream' });
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'kept' });
-  controller.journal.flush();
+  await controller.journal.flush();
   fs.appendFileSync(controller.journal.file, '{"sessionId":"' + session.id + '","messageId":"' + session.messages[1].id + '","event":{"type":"te');
   const restored = reopen(t, controller).sessions[0].messages[1];
   assert.equal(restored.text, 'kept');
@@ -2240,8 +2243,10 @@ test('a full disk at turn completion preserves the reply already saved in the jo
   const { controller, session, adapter } = await started(t);
   await controller.send({ sessionId: session.id, text: 'stream' });
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'persisted reply' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const savedJournal = fs.readFileSync(controller.journal.file, 'utf8');
+  const historyWrite = controller.store.write;
+  controller.store.write = async () => { throw new Error('fixture disk full'); };
   const errors = []; controller.on('event', event => { if (event.type === 'error') errors.push(event.message); });
   const { appendFileSync, writeFileSync } = fs;
   try {
@@ -2251,7 +2256,7 @@ test('a full disk at turn completion preserves the reply already saved in the jo
       throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
     };
     adapter.emit('event', { sessionId: session.id, type: 'text', text: ' not yet saved' });
-    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    await assert.rejects(() => controller.journal.flush(), /fixture disk full/);
     fs.writeFileSync = (file, ...rest) => {
       if (file === controller.file + '.tmp' || file === controller.journal.file + '.tmp') {
         throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
@@ -2269,6 +2274,7 @@ test('a full disk at turn completion preserves the reply already saved in the jo
   } finally {
     fs.appendFileSync = appendFileSync;
     fs.writeFileSync = writeFileSync;
+    controller.store.write = historyWrite;
   }
 });
 
@@ -2280,9 +2286,11 @@ test('journal repair retains a finished reply until its history save succeeds', 
   await controller.send({ sessionId: second.id, text: 'two' });
   adapter.emit('event', { sessionId: session.id, type: 'text', text: 'first reply' });
   adapter.emit('event', { sessionId: second.id, type: 'text', text: 'second ' });
-  controller.journal.flush();
+  await controller.journal.flush();
   const { appendFileSync, writeFileSync } = fs;
   let journalWritable = false;
+  const historyWrite = controller.store.write;
+  controller.store.write = async () => { throw new Error('fixture disk full'); };
   try {
     fs.appendFileSync = (file, data, ...rest) => {
       if (file !== controller.journal.file) return appendFileSync.call(fs, file, data, ...rest);
@@ -2290,7 +2298,7 @@ test('journal repair retains a finished reply until its history save succeeds', 
       throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
     };
     adapter.emit('event', { sessionId: second.id, type: 'text', text: 'pending ' });
-    assert.throws(() => controller.journal.flush(), /fixture disk full/);
+    await assert.rejects(() => controller.journal.flush(), /fixture disk full/);
     fs.writeFileSync = (file, ...rest) => {
       if (file === controller.file + '.tmp' || (!journalWritable && file === controller.journal.file + '.tmp')) {
         throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
@@ -2305,7 +2313,7 @@ test('journal repair retains a finished reply until its history save succeeds', 
     journalWritable = true;
     fs.appendFileSync = appendFileSync;
     adapter.emit('event', { sessionId: second.id, type: 'text', text: 'continued' });
-    controller.journal.flush();
+    await controller.journal.flush();
     const restored = reopen(t, controller);
     const first = restored.sessions.find(item => item.id === session.id).messages[1];
     const other = restored.sessions.find(item => item.id === second.id).messages[1];
@@ -2316,24 +2324,25 @@ test('journal repair retains a finished reply until its history save succeeds', 
   } finally {
     fs.appendFileSync = appendFileSync;
     fs.writeFileSync = writeFileSync;
+    controller.store.write = historyWrite;
   }
-  controller.save();
+  await controller.save();
   const entries = fs.readFileSync(controller.journal.file, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(entries.map(entry => entry.sessionId), [second.id], 'a successful history save can discard the finished reply');
 });
 
-test('the history file is rewritten only when its content changes', async t => {
+test('unchanged metadata saves do not serialize or rewrite message files', async t => {
   const { controller, session } = await started(t);
-  const renames = [];
-  const { renameSync } = fs;
-  fs.renameSync = (from, to) => { renames.push(String(to)); return renameSync.call(fs, from, to); };
-  t.after(() => { fs.renameSync = renameSync; });
+  const writes = [];
+  const write = controller.store.write;
+  controller.store.write = async payload => { writes.push(payload); return write(payload); };
   for (let i = 0; i < 3; i++) await controller.selectSession(session.id);
-  controller.save();
-  assert.deepEqual(renames.filter(file => file === controller.file), []);
-  controller.renameSession({ sessionId: session.id, title: 'Renamed' });
-  assert.deepEqual(renames.filter(file => file === controller.file), [controller.file]);
-  assert.equal(JSON.parse(fs.readFileSync(controller.file, 'utf8')).sessions[0].title, 'Renamed');
+  await controller.save();
+  assert.equal(writes.length, 0);
+  await controller.renameSession({ sessionId: session.id, title: 'Renamed' });
+  assert.equal(writes.length, 1);
+  assert.deepEqual(writes[0].updates, []);
+  assert.equal(readHistory(controller).sessions[0].title, 'Renamed');
 });
 
 test('an unreadable history keeps a backup of the reply journal beside it', async t => {
@@ -2348,4 +2357,46 @@ test('an unreadable history keeps a backup of the reply journal beside it', asyn
   assert.equal(backups.length, 1);
   assert.equal(fs.readFileSync(path.join(root, 'data', backups[0]), 'utf8'), journal);
   assert.equal(fs.readFileSync(controller.file, 'utf8'), '{broken', 'the unreadable history itself is never overwritten at startup');
+});
+
+test('streamed Markdown attachment scans are throttled and completion always scans the tail', async t => {
+  const { controller, session, adapter } = await started(t);
+  await controller.send({ sessionId: session.id, text: 'links' });
+  const emit = text => adapter.emit('event', { type: 'text', sessionId: session.id, text });
+  emit('[first](first.pdf) ');
+  assert.equal(session.messages[1].attachments.length, 1);
+  for (let i = 0; i < 100; i++) emit(`[file ${i}](file-${i}.pdf) `);
+  assert.equal(session.messages[1].attachments.length, 1, 'chunks inside the scan interval do not reparse the growing reply');
+  adapter.prompts[0].gate.resolve({ stopReason: 'end_turn' });
+  await controller.turnPromise;
+  assert.equal(session.messages[1].attachments.length, 101);
+  assert.equal(readHistory(controller).sessions[0].messages[1].attachments.length, 101);
+});
+
+test('startup publishes metadata and defers legacy Markdown discovery until opening a session', async t => {
+  const { controller } = fixture(t, { settings: {}, sessions: [
+    { id: 'legacy', title: 'Legacy', cwd: process.cwd(), messages: [{ id: 'legacy-reply', role: 'assistant', text: '[report](report.pdf)', status: 'complete' }] },
+  ] });
+  assert.equal(controller.sessions[0].messages[0].attachments, undefined);
+  const initial = controller.initialState();
+  assert.equal(initial.sessions[0].messages, undefined);
+  assert.equal(initial.sessions[0].messageCount, 1);
+  const full = controller.readSession('legacy');
+  assert.equal(full.messages[0].attachments[0].src, 'report.pdf');
+  await controller.save();
+  const restored = reopen(t, controller);
+  const savedAttachments = restored.sessions[0].messages[0].attachments;
+  assert.equal(restored.readSession('legacy').messages[0].attachments, savedAttachments, 'versioned media is reused by reference');
+});
+
+test('connection invalidation emits one metadata batch for every visible conversation', async t => {
+  const { controller } = await started(t);
+  for (let i = 0; i < 5; i++) await controller.createSession();
+  const events = []; controller.on('event', event => events.push(event));
+  controller.invalidateConnection();
+  assert.equal(events.filter(event => event.type === 'session-updated').length, 0);
+  const batch = events.filter(event => event.type === 'sessions-updated');
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].sessions.length, 6);
+  assert.ok(batch[0].sessions.every(session => !Object.hasOwn(session, 'messages')));
 });

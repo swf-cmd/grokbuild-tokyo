@@ -16,7 +16,7 @@ const icon = fs.readFileSync(path.join(root, 'src/renderer/assets/icon.png'));
 fs.writeFileSync(path.join(workspace, '东京 image.png'), png);
 fs.writeFileSync(path.join(workspace, 'absolute.png'), icon);
 fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false, language: 'zh-CN' }, sessions: [] }));
-const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/conversations.json'), 'utf8'));
+const readState = () => require('../tests/fixtures/read-history.cjs')(path.join(testRoot, 'data/conversations.json'));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
@@ -110,7 +110,11 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await desktop.evaluate((_e, file) => globalThis.__tokyoUITest.dialogs.push({ canceled: false, filePath: file }), exportFile);
       await page.locator('#export-button').click();
       await page.waitForFunction(() => document.querySelector('#toast-container').textContent.includes('已导出'));
-      assert.ok(fs.readFileSync(exportFile, 'utf8').includes('![ACP 内嵌图片](<data:image/png;base64,'));
+      const exportedImage = fs.readFileSync(exportFile, 'utf8').match(/!\[ACP 内嵌图片\]\(<([^>]+)>\)/)?.[1];
+      assert.ok(exportedImage, 'export must include the generated image');
+      const exportedBytes = exportedImage.startsWith('data:image/png;base64,')
+        ? Buffer.from(exportedImage.split(',')[1], 'base64') : fs.readFileSync(exportedImage);
+      assert.deepEqual(exportedBytes, icon, 'exported image reference must resolve to the original bytes');
       await page.locator('.image-thumbnail').first().scrollIntoViewIfNeeded();
       await page.screenshot({ path: path.join(testRoot, 'conversation-images.png') });
     });

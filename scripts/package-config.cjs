@@ -30,7 +30,8 @@ function packageOptions(root, target) {
     dir: root, name: 'Grokbuild Tokyo', executableName: 'Grokbuild Tokyo',
     ...target, electronVersion: manifest.devDependencies.electron,
     appVersion: manifest.version,
-    out: path.join(root, 'work', 'package'), overwrite: true, asar: true,
+    out: path.join(root, 'work', 'package'), overwrite: true, asar: true, asarIntegrityDigest: true,
+    ...(process.env.electron_config_cache ? { download: { cacheRoot: process.env.electron_config_cache } } : {}),
     ignore: ignorePackagePath,
   };
   if (target.platform === 'darwin') {

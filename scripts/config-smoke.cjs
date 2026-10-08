@@ -30,7 +30,7 @@ let stage = 'launch';
     page.on('pageerror', error => errors.push(error.message));
     stage = 'connect';
     await page.waitForFunction(() => document.querySelector('#connection-label').textContent.includes('已连接') && !document.querySelector('#settings-button').disabled, null, { timeout: 60000 });
-    const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data', 'conversations.json'), 'utf8'));
+    const readState = () => require('../tests/fixtures/read-history.cjs')(path.join(testRoot, 'data', 'conversations.json'));
     const boot = await page.evaluate(() => window.tokyo.bootstrap());
     assert.equal(boot.connected, true);
     const initial = boot.sessions[0];

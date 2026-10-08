@@ -39,7 +39,7 @@ function decodeBase64(data, t = defaultT) {
   return bytes;
 }
 
-async function stageAttachments(files, directory, { fromPaths = false, t = defaultT } = {}) {
+async function stageAttachments(files, directory, { fromPaths = false, t = defaultT, nativeImage } = {}) {
   if (!Array.isArray(files) || !files.length || files.length > MAX_ATTACHMENTS) throw new Error(t('每条消息最多添加 10 个附件'));
   const result = [];
   const created = [];
@@ -61,13 +61,61 @@ async function stageAttachments(files, directory, { fromPaths = false, t = defau
       await fs.mkdir(folder); created.push(folder);
       const src = path.join(folder, name);
       await fs.writeFile(src, bytes, { flag: 'wx', mode: 0o600 });
-      result.push({ id, name, mimeType, size: bytes.length, src, ...(mimeType.startsWith('image/') ? { previewSrc: `data:${mimeType};base64,${bytes.toString('base64')}` } : {}) });
+      const previewSrc = mimeType.startsWith('image/') ? thumbnailPreview(bytes, mimeType, nativeImage) : undefined;
+      result.push({ id, name, mimeType, size: bytes.length, src, ...(previewSrc ? { previewSrc } : {}) });
     }
     return result;
   } catch (error) {
     for (const folder of created) if (within(root, folder) && folder !== root) await fs.rm(folder, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+}
+
+function thumbnailPreview(bytes, mimeType, nativeImage) {
+  if (nativeImage) {
+    try {
+      const image = nativeImage.createFromBuffer(bytes);
+      if (image.isEmpty()) return undefined;
+      const { width, height } = image.getSize();
+      const resized = Math.max(width, height) > 320
+        ? image.resize(width >= height ? { width: 320 } : { height: 320 }) : image;
+      const preview = resized.toPNG();
+      if (preview.length <= 512 * 1024) return `data:image/png;base64,${preview.toString('base64')}`;
+    } catch { /* A failed preview must not prevent attaching the original. */ }
+    return undefined;
+  }
+  // Headless callers have no Electron decoder. Small images remain previewable;
+  // never copy a large original into renderer state as a fallback thumbnail.
+  return bytes.length <= 64 * 1024 ? `data:${mimeType};base64,${bytes.toString('base64')}` : undefined;
+}
+
+// Only delete directories created by staging. A symlink or an unrelated folder
+// is never traversed; references from every account/session and live draft must
+// be collected by the controller before invoking this helper.
+async function cleanupAttachments(directory, referencedAttachments = []) {
+  let root;
+  try {
+    const stat = await fs.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return [];
+    root = await fs.realpath(directory);
+  } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const retained = new Set();
+  for (const attachment of referencedAttachments) {
+    const src = typeof attachment === 'string' ? attachment : attachment?.src;
+    if (typeof src !== 'string' || !path.isAbsolute(src)) continue;
+    const relative = path.relative(root, path.resolve(src));
+    if (within(root, path.resolve(src))) retained.add(relative.split(path.sep)[0]);
+  }
+  const removed = [];
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(entry.name) || retained.has(entry.name)) continue;
+    const folder = path.join(root, entry.name);
+    const stat = await fs.lstat(folder);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !within(root, await fs.realpath(folder))) continue;
+    await fs.rm(folder, { recursive: true, force: true });
+    removed.push(entry.name);
+  }
+  return removed;
 }
 
 function attachmentsFromContent(content) {
@@ -87,7 +135,7 @@ function attachmentsFromContent(content) {
     try { const bytes = decodeBase64(resource.blob); src = `data:${mimeType};base64,${bytes.toString('base64')}`; size = bytes.length; } catch { return []; }
   }
   if (typeof src !== 'string' || !src || src.length > MAX_ATTACHMENT_BYTES * 1.4) return [];
-  const fileName = sourceName(resource.uri);
+  const fileName = resource.fileName ? safeName(resource.fileName) : sourceName(resource.uri);
   const name = safeName(resource.name || resource.title || fileName || 'attachment');
   const id = createHash('sha256').update(src).update('\0').update(name).digest('hex').slice(0, 32);
   return [{ id, name, fileName: fileName || name, mimeType, src, ...(Number.isFinite(size) && size >= 0 ? { size } : {}) }];
@@ -159,4 +207,4 @@ async function resolveAttachment(src, directories, t = defaultT, fetcher) {
   throw new Error(t('找不到附件文件，文件可能已移动或删除'));
 }
 
-module.exports = { MAX_ATTACHMENT_BYTES, MAX_TOTAL_BYTES, MAX_ATTACHMENTS, safeName, stageAttachments, attachmentsFromContent, attachmentsFromText, attachmentsFromTools, restoreMessageAttachments, resolveAttachment };
+module.exports = { MAX_ATTACHMENT_BYTES, MAX_TOTAL_BYTES, MAX_ATTACHMENTS, safeName, stageAttachments, thumbnailPreview, cleanupAttachments, attachmentsFromContent, attachmentsFromText, attachmentsFromTools, restoreMessageAttachments, resolveAttachment };

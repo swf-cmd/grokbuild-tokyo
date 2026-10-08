@@ -113,7 +113,7 @@ async function assertEngineBlocked(page) {
 
 (async () => {
   await run('saved-history', { hold: 'start,loadSession', musicEnabled: true }, async test => {
-    const { page, desktop, gate, release, readState, openSettings, closeSettings, saveSettings } = test;
+    const { page, gate, release, readState, openSettings, closeSettings, saveSettings } = test;
     await gate('start'); await test.audioBeforeInteraction('playing');
     assert.equal(await page.locator('#rain-layer').evaluate(element => element.hidden), true);
     assert.equal(await page.locator('.session-select').count(), 2);

@@ -19,7 +19,7 @@ const imageFile = path.join(workspace, '东京 photo.png');
 const documentFile = path.join(workspace, 'notes.txt');
 fs.writeFileSync(imageFile, png); fs.writeFileSync(documentFile, 'Attachment test 日本語 中文\n');
 fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify({ version: 1, settings: { executable, workspace, musicEnabled: false, language: 'zh-CN' }, sessions: [] }));
-const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/conversations.json'), 'utf8'));
+const readState = () => require('./fixtures/read-history.cjs')(path.join(testRoot, 'data/conversations.json'));
 
 (async () => {
   const env = { ...process.env, TOKYO_TEST_ROOT: testRoot };
@@ -65,7 +65,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await choose([imageFile], 1);
       await page.locator('#prompt').fill('WAIT describe uploaded picture');
       await page.locator('#send-button').click();
-      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden);
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       await desktop.evaluate((_electron, data) => {
         const fixture = globalThis.__tokyoUITest;
         const sessionId = fixture.calls.filter(item => item.method === 'prompt').at(-1).sessionId;
@@ -90,7 +90,7 @@ const readState = () => JSON.parse(fs.readFileSync(path.join(testRoot, 'data/con
       await choose([documentFile], 1);
       await page.locator('#prompt').fill('WAIT summarize uploaded document');
       await page.locator('#send-button').click();
-      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden);
+      await page.waitForFunction(() => !document.querySelector('#stop-button').hidden && !document.querySelector('#prompt').disabled);
       const embedded = { type: 'content', content: { type: 'resource', resource: { uri: 'notes.txt', mimeType: 'text/plain', text: fs.readFileSync(documentFile, 'utf8') } } };
       const linked = { type: 'content', content: { type: 'resource_link', uri: documentFile, name: 'notes.txt', mimeType: 'text/plain' } };
       const updates = [
