@@ -1646,7 +1646,7 @@ test('legacy saved tool images migrate when the conversation opens', async t => 
   const { controller } = fixture(t, { version: 1, settings: {}, sessions: [{ id: 'old', title: 'Old image', cwd: process.cwd(), messages: [{ role: 'assistant', text: 'An image', tools: [{ content: [{ type: 'content', content: data }] }] }] }] });
   assert.equal(controller.visibleSessions()[0].accountId, 'local');
   assert.equal(controller.readSession('old').messages[0].images.length, 1);
-  assert.ok(controller.exportMarkdown('old').includes('/blobs/'));
+  assert.ok(controller.exportMarkdown('old').includes(controller.blobs.directory));
 });
 
 test('account names are trimmed, unique across casing and width, and rename returns a complete snapshot', async t => {
