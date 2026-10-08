@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { collectBlobReferences } = require('./blob-store.cjs');
 
 // A reply streams in as many small updates. Rewriting the whole history file
 // for each of them wrote gigabytes per hour once the history held long
@@ -32,6 +33,13 @@ class TurnJournal {
     // An append failed part-way. Appending after a torn line could replay the
     // same update twice, so the next write replaces the log with snapshots.
     this.broken = false;
+    this.blobReferences = new Set();
+    // Include all persisted events, even superseded tool payloads. A failed
+    // reset must never let collection invalidate the existing recovery log.
+    try {
+      const text = fs.readFileSync(file, 'utf8');
+      for (const match of text.matchAll(/grok-blob:[a-f0-9]{64}/g)) this.blobReferences.add(match[0]);
+    } catch (error) { this.referencesUnreadable = error.code !== 'ENOENT'; }
   }
 
   // Starts a reply from a complete snapshot.
@@ -47,6 +55,7 @@ class TurnJournal {
   push(entry) {
     // Serialize now: the live objects keep changing after this point.
     const serialized = JSON.stringify(entry);
+    collectBlobReferences(entry, this.blobReferences);
     this.pending.push(serialized);
     this.pendingBytes += Buffer.byteLength(serialized) + 1;
     this.dirty = true;
@@ -102,14 +111,22 @@ class TurnJournal {
         try { fs.unlinkSync(this.file); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
+      // An interrupted snapshot replacement can leave a complete private reply
+      // in the temporary file even after the final conversation is deleted.
+      try { fs.unlinkSync(this.file + '.tmp'); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
       this.exists = false;
       this.bytes = 0;
       this.compactAt = this.maxBytes;
+      this.blobReferences.clear();
+      this.referencesUnreadable = false;
     } else if (this.dirty || this.broken || entries.length !== this.replies.size) {
       const temp = this.file + '.tmp';
       const snapshots = entries.map(({ sessionId, message }) => JSON.stringify({ sessionId, messageId: message.id, base: message }) + '\n').join('');
       fs.writeFileSync(temp, snapshots, 'utf8');
       fs.renameSync(temp, this.file);
+      this.blobReferences = collectBlobReferences(entries);
+      this.referencesUnreadable = false;
       this.bytes = Buffer.byteLength(snapshots);
       // A single reply can exceed the budget. Give its next deltas room before
       // compacting again; repeated tool snapshots cannot grow without bound.

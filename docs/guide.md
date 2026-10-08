@@ -132,6 +132,10 @@ The data root on Windows is the source checkout, or the folder containing the pa
 
 `data` contains personal information and should be backed up separately when migrating or backing up the client. A fresh clone does not include the developer's accounts, conversations, or configuration. The renderer uses isolation, sandboxing, and limited IPC; local image reads are restricted to the current session's allowed directories.
 
+Embedded reply images and files are stored under `data/blobs`. After a successful history save, the client removes files no longer referenced by any conversation or recovery journal, including after deleting a conversation or account. Shared files remain while another conversation needs them. Cleanup failures are reported and retried on the next save. Explicit `.unreadable-*` corruption-recovery snapshots retain the files needed for manual recovery.
+
+The temporary `conversations.v2-backup.json` migration backup is removed after the next successful startup validates the new history, or after a conversation/account deletion commits during the migration run. Images are read or downloaded only when they approach the visible conversation area.
+
 ## Validation and development
 
 ```powershell

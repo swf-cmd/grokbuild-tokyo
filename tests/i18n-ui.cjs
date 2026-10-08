@@ -236,8 +236,15 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
       });
       await page.locator('#prompt').fill('Image locale regression'); await page.locator('#send-button').click(); await idle();
       await page.waitForFunction(() => document.querySelectorAll('.chat-image').length === 3);
-      for (const image of await page.locator('.chat-image img').all()) {
-        await image.evaluate(element => { element.loading = 'eager'; });
+      // Images are prepared near the viewport, so visit each figure before
+      // asserting translations of its loaded/error state.
+      for (let index = 0; index < 3; index++) {
+        await page.locator('.chat-image').nth(index).scrollIntoViewIfNeeded();
+        await page.waitForFunction(index => {
+          const figure = document.querySelectorAll('.chat-image')[index];
+          const image = figure.querySelector('img');
+          return !figure.querySelector('.image-retry').hidden || (image.complete && image.naturalWidth > 0);
+        }, index);
       }
       await page.waitForFunction(() => [...document.querySelectorAll('.chat-image img')].filter(image => !image.hidden).every(image => image.complete && image.naturalWidth > 0));
       await page.locator('.image-retry').last().waitFor({ state: 'visible' });

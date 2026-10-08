@@ -6,6 +6,15 @@ const { createHash, randomUUID } = require('node:crypto');
 const MAX_BLOB_BYTES = 20 * 1024 * 1024;
 const BLOB_REFERENCE = /^grok-blob:([a-f0-9]{64})$/;
 
+function collectBlobReferences(value, references = new Set()) {
+  if (typeof value === 'string') {
+    if (value.startsWith('grok-blob:') && BLOB_REFERENCE.test(value)) references.add(value);
+  } else if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) collectBlobReferences(child, references);
+  }
+  return references;
+}
+
 function resourceFileName(uri) {
   if (typeof uri !== 'string' || /^data:/i.test(uri) || BLOB_REFERENCE.test(uri)) return '';
   try {
@@ -19,12 +28,17 @@ class BlobStore {
     this.directory = path.resolve(directory);
     this.pending = new Map();
     this.known = new Set();
+    this.deleting = new Map();
+    this.touched = new Map();
+    this.revision = 0;
+    this.collection = Promise.resolve();
   }
 
   store(bytes) {
     if (bytes.length > MAX_BLOB_BYTES) return null;
     const hash = createHash('sha256').update(bytes).digest('hex');
     const ref = `grok-blob:${hash}`;
+    this.touched.set(hash, ++this.revision);
     if (!this.known.has(hash) && !this.pending.has(hash)) {
       const entry = { bytes, write: null };
       this.pending.set(hash, entry);
@@ -36,6 +50,9 @@ class BlobStore {
   writeBlob(hash, entry) {
     const { bytes } = entry;
     const operation = (async () => {
+      // A caller can reuse content while collection is unlinking its previous
+      // copy. Wait for that unlink before checking or replacing the file.
+      await this.deleting.get(hash);
       await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
       const target = path.join(this.directory, hash);
       const temporary = path.join(this.directory, `.${hash}.${randomUUID()}.tmp`);
@@ -100,6 +117,42 @@ class BlobStore {
     return path.join(this.directory, match[1]);
   }
 
+  collect(referenceProvider) {
+    const operation = this.collection.catch(() => {}).then(async () => {
+      const revision = this.revision;
+      const references = () => typeof referenceProvider === 'function' ? referenceProvider() : referenceProvider;
+      const retained = references();
+      const files = await fs.readdir(this.directory, { withFileTypes: true }).catch(error => {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      });
+      for (const file of files) {
+        const hash = file.name;
+        if (!file.isFile()) continue;
+        const temporary = /^\.([a-f0-9]{64})\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.tmp$/.exec(hash);
+        if (temporary) {
+          if (!this.pending.has(temporary[1])) await fs.unlink(path.join(this.directory, hash)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+          continue;
+        }
+        if (!/^[a-f0-9]{64}$/.test(hash)) continue;
+        const ref = `grok-blob:${hash}`;
+        if (retained.has(ref) || this.pending.has(hash) || (this.touched.get(hash) || 0) > revision || references().has(ref)) continue;
+        // Evict synchronously before yielding so store() retains fresh bytes
+        // and queues their write behind this deletion, even for known content.
+        this.known.delete(hash);
+        const removal = fs.unlink(path.join(this.directory, hash)).catch(error => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+        this.deleting.set(hash, removal);
+        try { await removal; }
+        finally { this.deleting.delete(hash); }
+        if ((this.touched.get(hash) || 0) <= revision) this.touched.delete(hash);
+      }
+    });
+    this.collection = operation;
+    return operation;
+  }
+
   async flush() {
     while (this.pending.size) {
       const writes = [...this.pending].map(([hash, entry]) => entry.write || this.writeBlob(hash, entry));
@@ -108,4 +161,4 @@ class BlobStore {
   }
 }
 
-module.exports = { BlobStore, BLOB_REFERENCE, MAX_BLOB_BYTES };
+module.exports = { BlobStore, BLOB_REFERENCE, MAX_BLOB_BYTES, collectBlobReferences };
