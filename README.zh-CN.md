@@ -16,7 +16,7 @@
 ![Windows x64](https://img.shields.io/badge/platform-Windows_x64-86b7f9)
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 
-**[下载 Mac 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip) · [下载 Windows 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip) · [全部版本](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
+**[下载 Mac 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip) · [下载 Windows 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip) · [全部版本](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
 
 <sub>免费开源 · 非官方 · 需另行安装官方 <a href="#安装-grok-build">Grok Build CLI</a></sub>
 
@@ -74,10 +74,10 @@ irm https://x.ai/cli/install.ps1 | iex
 
 **[前往最新 Release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**：公开下载，无需登录 GitHub。
 
-| v1.2.4 下载 | 适用环境 | 校验文件 |
+| v1.2.5 下载 | 适用环境 | 校验文件 |
 | --- | --- | --- |
-| **[Mac 通用版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** · 238 MB | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
-| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** · 168 MB | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
+| **[Mac 通用版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip)** | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256) |
+| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip)** | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256) |
 
 - **Mac**：解压一次，将 **Grokbuild Tokyo.app** 拖入**应用程序**。应用使用临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。如首次启动被 macOS 阻止，请确认下载来自本仓库，再按照**系统设置 → 隐私与安全性 → 仍要打开**操作（[Apple 说明](https://support.apple.com/en-us/102445)）。
 - **Windows**：将 ZIP 完整解压到可写入的目录，运行 **`App\Grokbuild Tokyo.exe`**。请保留**整个 `App` 文件夹**；这是便携版，不是安装器。应用尚未进行代码签名。如果出现 SmartScreen 提示，请先核实下载来源；如果系统提供相应选项，可点击**更多信息 → 仍要运行**。
@@ -89,14 +89,14 @@ irm https://x.ai/cli/install.ps1 | iex
 将 ZIP 与对应的 `.sha256` 文件保存在同一目录。Mac 上运行：
 
 ```sh
-shasum -a 256 -c Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256
+shasum -a 256 -c Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256
 ```
 
 在 Windows PowerShell 中，将计算出的哈希值与 `.sha256` 文件中的值比对：
 
 ```powershell
-Get-FileHash .\Grokbuild-Tokyo-1.2.4-win-x64.zip -Algorithm SHA256
-Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
+Get-FileHash .\Grokbuild-Tokyo-1.2.5-win-x64.zip -Algorithm SHA256
+Get-Content .\Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256
 ```
 
 </details>
@@ -216,7 +216,7 @@ npm start
 之后按[首次启动](#首次启动)完成设置。开发检查见[贡献指南](CONTRIBUTING.zh-CN.md)。
 
 > [!WARNING]
-> `main` 分支可能包含尚未发布的改动。自 2026-10-08 起，它以新格式保存聊天记录，v1.2.4 无法读取：v1.2.4 打开后历史为空，来回切换可能丢失已保存的会话。Mac 上源码运行与打包程序共用同一数据目录，因此运行 `main` 前请先备份 `data`，之后只用源码版本或更新的 Release 打开这份数据。
+> v1.2.5 与当前 `main` 使用新格式保存聊天记录，v1.2.4 无法读取：v1.2.4 打开后历史为空，来回切换可能丢失已保存的会话。Mac 上源码运行与打包程序共用同一数据目录，因此升级前请先备份 `data`，之后只用 v1.2.5 或更新版本打开这份数据。
 
 <details>
 <summary><b>打包桌面程序</b></summary>
@@ -239,7 +239,7 @@ node scripts/verify-package.cjs --platform darwin --arch universal
 open "App/Grokbuild Tokyo.app"
 ```
 
-可分发文件为 `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`，旁边附有 `.zip.sha256` 校验文件。也可用 `npm run build:mac:arm64` 或 `npm run build:mac:x64` 生成体积较小的单架构版本。`npm run build` 为当前电脑构建；Mac 上使用当前 Node.js 进程的架构。
+可分发文件为 `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`，旁边附有 `.zip.sha256` 校验文件。也可用 `npm run build:mac:arm64` 或 `npm run build:mac:x64` 生成体积较小的单架构版本。`npm run build` 为当前电脑构建；Mac 上使用当前 Node.js 进程的架构。
 
 Mac 构建使用本地临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。两版共用相同界面和功能；Mac 增加原生窗口按钮与菜单。关闭 Mac 窗口后应用和正在进行的工作仍会运行，点击 Dock 图标可重新打开；按 **Cmd+Q** 完全退出。
 

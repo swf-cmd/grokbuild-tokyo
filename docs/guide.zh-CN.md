@@ -4,7 +4,7 @@
 
 为 Grok Build CLI 制作的非官方 Windows 与 Mac 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片与附件发送、回复文件保存和独立账户管理。
 
-当前版本：**1.2.4**。项目采用 [MIT 许可证](../LICENSE)。第三方组件声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，安全边界及漏洞反馈说明见 [SECURITY.zh-CN.md](../SECURITY.zh-CN.md)。
+当前版本：**1.2.5**。项目采用 [MIT 许可证](../LICENSE)。第三方组件声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，安全边界及漏洞反馈说明见 [SECURITY.zh-CN.md](../SECURITY.zh-CN.md)。
 
 Mac 与 Windows Release 下载、校验文件及首次启动步骤见[下载说明](../README.zh-CN.md#下载说明)。
 
@@ -42,7 +42,7 @@ node scripts/verify-package.cjs --platform darwin --arch universal
 open "App/Grokbuild Tokyo.app"
 ```
 
-构建会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`，以及 `.zip.sha256` 校验文件。解压后将 **Grokbuild Tokyo.app** 拖入**应用程序**，所需运行文件与许可证已包含在 `.app` 内。若需要体积较小的单架构版本，Apple Silicon 使用 `npm run build:mac:arm64`，Intel 使用 `npm run build:mac:x64`；两种版本均可在 Mac 上构建。`npm run build` 使用当前平台，Mac 上按当前 Node.js 进程的架构构建；`npm run build:win` 则明确构建 Windows x64。
+构建会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`，以及 `.zip.sha256` 校验文件。解压后将 **Grokbuild Tokyo.app** 拖入**应用程序**，所需运行文件与许可证已包含在 `.app` 内。若需要体积较小的单架构版本，Apple Silicon 使用 `npm run build:mac:arm64`，Intel 使用 `npm run build:mac:x64`；两种版本均可在 Mac 上构建。`npm run build` 使用当前平台，Mac 上按当前 Node.js 进程的架构构建；`npm run build:win` 则明确构建 Windows x64。
 
 Mac 构建使用本地临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。下载并确认来源可信后，可能需要通过**系统设置 → 隐私与安全性 → 仍要打开**批准首次启动，请参照 [Apple 说明](https://support.apple.com/en-us/102445)。
 

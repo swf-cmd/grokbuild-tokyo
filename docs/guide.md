@@ -4,7 +4,7 @@
 
 Grokbuild Tokyo is an unofficial Windows and Mac desktop client for Grok Build CLI. It connects to your locally installed Grok through ACP, with a rainy Tokyo backdrop, streaming chat, image and file uploads, downloadable reply attachments, and separate account profiles.
 
-Current version: **1.2.4**. The project uses the [MIT License](../LICENSE). See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for component notices and [SECURITY.md](../SECURITY.md) for security boundaries and vulnerability reporting.
+Current version: **1.2.5**. The project uses the [MIT License](../LICENSE). See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for component notices and [SECURITY.md](../SECURITY.md) for security boundaries and vulnerability reporting.
 
 For Mac and Windows release downloads, checksums and first-launch instructions, see [Downloads](../README.md#downloads).
 
@@ -42,7 +42,7 @@ node scripts/verify-package.cjs --platform darwin --arch universal
 open "App/Grokbuild Tokyo.app"
 ```
 
-The build creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`, plus a `.zip.sha256` checksum file. Unzip the archive and drag **Grokbuild Tokyo.app** to **Applications**. The `.app` includes its runtime files and licenses. For a smaller, single-architecture build, use `npm run build:mac:arm64` on Apple Silicon or `npm run build:mac:x64` for Intel. Both can be built on a Mac. `npm run build` targets the host platform and, on Mac, the current Node.js architecture; `npm run build:win` explicitly selects Windows x64.
+The build creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`, plus a `.zip.sha256` checksum file. Unzip the archive and drag **Grokbuild Tokyo.app** to **Applications**. The `.app` includes its runtime files and licenses. For a smaller, single-architecture build, use `npm run build:mac:arm64` on Apple Silicon or `npm run build:mac:x64` for Intel. Both can be built on a Mac. `npm run build` targets the host platform and, on Mac, the current Node.js architecture; `npm run build:win` explicitly selects Windows x64.
 
 Mac builds use an ad-hoc local signature. They are not Developer ID signed or Apple notarized. For a downloaded copy whose source you trust, macOS may require **System Settings → Privacy & Security → Open Anyway**; follow [Apple’s instructions](https://support.apple.com/en-us/102445).
 

@@ -65,9 +65,9 @@ npm run build:mac
 npm run test:packaged -- --platform darwin --arch universal
 ```
 
-这会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip` 和 `.zip.sha256` 校验文件。`npm run build:mac:arm64` 与 `npm run build:mac:x64` 生成对应单架构版本。
+这会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip` 和 `.zip.sha256` 校验文件。`npm run build:mac:arm64` 与 `npm run build:mac:x64` 生成对应单架构版本。
 
-`npm run build:win` 明确构建 Windows x64，生成 `dist/Grokbuild-Tokyo-1.2.4-win-x64.zip` 及其 `.zip.sha256` 校验文件。这是便携版压缩包，不是安装器：完整解压 `App/` 目录，然后启动 `App/Grokbuild Tokyo.exe`。压缩包保留运行时许可文件，不包含开发环境的 `data/` 与 `Workspace/` 目录。Windows 使用系统自带的 PowerShell `Compress-Archive`，macOS 交叉构建使用 `ditto`（Linux 交叉构建需要 `zip`）。
+`npm run build:win` 明确构建 Windows x64，生成 `dist/Grokbuild-Tokyo-1.2.5-win-x64.zip` 及其 `.zip.sha256` 校验文件。这是便携版压缩包，不是安装器：完整解压 `App/` 目录，然后启动 `App/Grokbuild Tokyo.exe`。压缩包保留运行时许可文件，不包含开发环境的 `data/` 与 `Workspace/` 目录。Windows 使用系统自带的 PowerShell `Compress-Archive`，macOS 交叉构建使用 `ditto`（Linux 交叉构建需要 `zip`）。
 
 Mac 包使用本地临时签名（ad hoc），未使用 Developer ID 证书或经过 Apple 公证，不应将其标记为已公证的发布包。安装及首次启动说明见[使用指南](docs/guide.zh-CN.md#启动)。只有在两种架构上分别验证运行后，才应宣称两者均通过运行检查；检查 Mach-O 中包含两种架构本身不能代替运行测试。
 

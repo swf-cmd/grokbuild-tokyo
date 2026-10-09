@@ -16,7 +16,7 @@ A desktop app for the [Grok Build](https://x.ai/cli) coding agent: streaming cha
 ![Windows x64](https://img.shields.io/badge/platform-Windows_x64-86b7f9)
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 
-**[Download for Mac](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip) · [Download for Windows](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip) · [All releases](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
+**[Download for Mac](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip) · [Download for Windows](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip) · [All releases](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
 
 <sub>Free and open source · Unofficial · Uses the official <a href="#install-grok-build">Grok Build CLI</a>, installed separately</sub>
 
@@ -74,10 +74,10 @@ If you have already signed in to Grok Build in a terminal, the app reuses the si
 
 **[Get the latest release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**: public downloads, with no GitHub sign-in required.
 
-| v1.2.4 download | Requirements | Checksum |
+| v1.2.5 download | Requirements | Checksum |
 | --- | --- | --- |
-| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** · 238 MB | macOS 13 Ventura or later · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
-| **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** · 168 MB | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
+| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip)** | macOS 13 Ventura or later · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256) |
+| **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip)** | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256) |
 
 - **Mac:** unzip once, then move **Grokbuild Tokyo.app** to **Applications**. The app uses an ad-hoc signature, without a Developer ID certificate or Apple notarization. If macOS blocks the first launch, verify that you downloaded it from this repository, then follow **System Settings → Privacy & Security → Open Anyway** ([Apple's instructions](https://support.apple.com/en-us/102445)).
 - **Windows:** extract the ZIP to a folder you can write to, then run **`App\Grokbuild Tokyo.exe`**. Keep the entire **`App`** folder together; this is a portable app, not an installer. The app is not code-signed. If SmartScreen appears, verify the download source before using **More info → Run anyway**, if that option is available.
@@ -89,14 +89,14 @@ If you have already signed in to Grok Build in a terminal, the app reuses the si
 Save the ZIP and its matching `.sha256` file in the same folder. On Mac:
 
 ```sh
-shasum -a 256 -c Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256
+shasum -a 256 -c Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256
 ```
 
 In Windows PowerShell, compare the computed hash with the value in the `.sha256` file:
 
 ```powershell
-Get-FileHash .\Grokbuild-Tokyo-1.2.4-win-x64.zip -Algorithm SHA256
-Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
+Get-FileHash .\Grokbuild-Tokyo-1.2.5-win-x64.zip -Algorithm SHA256
+Get-Content .\Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256
 ```
 
 </details>
@@ -214,7 +214,7 @@ npm start
 Then follow [First launch](#first-launch). See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
 
 > [!WARNING]
-> `main` can contain changes that are not in a release yet. Since 2026-10-08, it saves chat history in a new format that v1.2.4 cannot read: v1.2.4 opens with an empty history, and switching back and forth can lose saved conversations. On Mac, source and packaged runs share one data folder, so back up `data` before running `main`, and afterwards open that data only with source builds or a newer release.
+> v1.2.5 and current `main` save chat history in a new format that v1.2.4 cannot read: v1.2.4 opens with an empty history, and switching back and forth can lose saved conversations. On Mac, source and packaged runs share one data folder, so back up `data` before upgrading, and afterwards open that data only with v1.2.5 or newer builds.
 
 <details>
 <summary><b>Package the desktop app</b></summary>
@@ -237,7 +237,7 @@ node scripts/verify-package.cjs --platform darwin --arch universal
 open "App/Grokbuild Tokyo.app"
 ```
 
-The shareable archive is `dist/Grokbuild-Tokyo-1.2.4-mac-universal.zip`, with a matching `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` create smaller builds for a single architecture. `npm run build` targets the current computer; on Mac this uses its current Node.js architecture.
+The shareable archive is `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`, with a matching `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` create smaller builds for a single architecture. `npm run build` targets the current computer; on Mac this uses its current Node.js architecture.
 
 Mac builds are locally signed (ad hoc), without a Developer ID certificate or Apple notarization. Both versions share the same interface and features; Mac adds native window controls and menus. Closing the Mac window keeps the app and ongoing work running; click its Dock icon to reopen, or press **Cmd+Q** to quit.
 
