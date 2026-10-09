@@ -76,8 +76,8 @@ irm https://x.ai/cli/install.ps1 | iex
 
 | v1.2.4 下载 | 适用环境 | 校验文件 |
 | --- | --- | --- |
-| **[Mac 通用版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
-| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
+| **[Mac 通用版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** · 238 MB | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
+| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** · 168 MB | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
 
 - **Mac**：解压一次，将 **Grokbuild Tokyo.app** 拖入**应用程序**。应用使用临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。如首次启动被 macOS 阻止，请确认下载来自本仓库，再按照**系统设置 → 隐私与安全性 → 仍要打开**操作（[Apple 说明](https://support.apple.com/en-us/102445)）。
 - **Windows**：将 ZIP 完整解压到可写入的目录，运行 **`App\Grokbuild Tokyo.exe`**。请保留**整个 `App` 文件夹**；这是便携版，不是安装器。应用尚未进行代码签名。如果出现 SmartScreen 提示，请先核实下载来源；如果系统提供相应选项，可点击**更多信息 → 仍要运行**。
@@ -105,7 +105,7 @@ Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
 
 应用首次启动显示英文界面，以下按钮名称在括号中附上英文。
 
-1. Windows 默认寻找 `%USERPROFILE%\.grok\bin\grok.exe`，Mac 默认寻找 `~/.grok/bin/grok`。如果安装在其他位置，在左下角**偏好设置**（Preferences）中选择对应的可执行文件；Mac 上选择不带 `.exe` 后缀的 `grok`。
+1. Windows 默认寻找 `%USERPROFILE%\.grok\bin\grok.exe`，Mac 默认寻找 `~/.grok/bin/grok`，即官方安装脚本的默认位置。如果安装在其他位置（例如设置了 `GROK_BIN_DIR` 或通过 WinGet 安装），在左下角**偏好设置**（Preferences）中选择对应的可执行文件；可在 PowerShell 中运行 `(Get-Command grok).Source`，或在 Mac 终端运行 `command -v grok` 查看路径。Mac 上选择不带 `.exe` 后缀的 `grok`。
 2. 如果尚未保存登录，点击消息输入区上方的**登录 Grok ↗**（Sign in to Grok ↗），再点击**打开登录页面 ↗**（Open sign-in page ↗），在浏览器中登录并核对验证码；授权完成后应用会自动连接。需要更多账户时，使用**账户切换**（Switch account）添加。
 3. 在**偏好设置**中选择项目目录，再开启新对话。Windows 默认使用打包后 `App` 文件夹旁的 `Workspace`（源码运行时位于源码目录中），Mac 默认使用 `~/Library/Application Support/Grokbuild Tokyo/Workspace`；已有会话保留各自原来的工作目录。
 
@@ -117,6 +117,13 @@ Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
 <summary><b>这是官方应用吗？</b></summary>
 
 不是。Grokbuild Tokyo 是采用 MIT 许可证的独立项目，与 SpaceXAI 或 xAI 无隶属关系，也未获其背书。它不内置、也不修改 CLI，只是启动你安装的 Grok Build CLI，并显示 CLI 返回的内容。
+
+</details>
+
+<details>
+<summary><b>它和 Grok 应用里的 Grok Build 是一回事吗？</b></summary>
+
+不是。Grok 网页版和手机 App 也使用 Grok Build 这个名字，指在对话中生成应用的功能。Grokbuild Tokyo 配合的是终端版 Grok Build，也就是在你电脑上的项目文件夹中工作的 `grok` 命令行编程智能体。如果终端里能运行 `grok --version`，就说明已安装本应用所需的 CLI。
 
 </details>
 
@@ -208,6 +215,9 @@ npm start
 
 之后按[首次启动](#首次启动)完成设置。开发检查见[贡献指南](CONTRIBUTING.zh-CN.md)。
 
+> [!WARNING]
+> `main` 分支可能包含尚未发布的改动。自 2026-10-08 起，它以新格式保存聊天记录，v1.2.4 无法读取：v1.2.4 打开后历史为空，来回切换可能丢失已保存的会话。Mac 上源码运行与打包程序共用同一数据目录，因此运行 `main` 前请先备份 `data`，之后只用源码版本或更新的 Release 打开这份数据。
+
 <details>
 <summary><b>打包桌面程序</b></summary>
 
@@ -240,13 +250,11 @@ Mac 构建使用本地临时签名（ad hoc），尚未使用 Developer ID 证�
 ## 开发与贡献
 
 ```sh
-npm test
-npm run test:ui
-npm run test:models
-npm run test:security
+npm ci
+npm run test:all
 ```
 
-默认测试使用隔离环境，不发送真实模型请求。CI 在配置的 Windows 与 Mac 运行器上检查账户、附件、语言、时钟、依赖和打包后的应用。[贡献指南](CONTRIBUTING.zh-CN.md)包含完整检查命令、贡献流程及需主动开启的真实模型测试说明。
+`test:all` 依次运行 ESLint、JavaScript 类型检查、单元测试和全部离线 UI 测试。测试使用隔离环境与模拟 CLI，不发送真实模型请求。CI 还会审计依赖、构建 Windows 版与 Mac 通用版，并在 Windows、Apple Silicon 和 Intel Mac 上对打包后的应用重跑 UI 测试。[贡献指南](CONTRIBUTING.zh-CN.md)包含完整检查命令、贡献流程及需主动开启的真实模型测试说明。
 
 欢迎反馈问题、提交范围清晰的修复、完善翻译和文档。敏感安全问题请使用 [GitHub 私密漏洞报告](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new)。
 

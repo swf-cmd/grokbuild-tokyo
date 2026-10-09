@@ -76,8 +76,8 @@ If you have already signed in to Grok Build in a terminal, the app reuses the si
 
 | v1.2.4 download | Requirements | Checksum |
 | --- | --- | --- |
-| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** | macOS 13 Ventura or later · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
-| **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
+| **[Mac universal ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip)** · 238 MB | macOS 13 Ventura or later · Intel and Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-mac-universal.zip.sha256) |
+| **[Windows x64 portable ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip)** · 168 MB | Windows x64 · complete app folder, no installer | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.4/Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256) |
 
 - **Mac:** unzip once, then move **Grokbuild Tokyo.app** to **Applications**. The app uses an ad-hoc signature, without a Developer ID certificate or Apple notarization. If macOS blocks the first launch, verify that you downloaded it from this repository, then follow **System Settings → Privacy & Security → Open Anyway** ([Apple's instructions](https://support.apple.com/en-us/102445)).
 - **Windows:** extract the ZIP to a folder you can write to, then run **`App\Grokbuild Tokyo.exe`**. Keep the entire **`App`** folder together; this is a portable app, not an installer. The app is not code-signed. If SmartScreen appears, verify the download source before using **More info → Run anyway**, if that option is available.
@@ -103,7 +103,7 @@ Get-Content .\Grokbuild-Tokyo-1.2.4-win-x64.zip.sha256
 
 ### First launch
 
-1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac. If yours is elsewhere, choose the executable in **Preferences** at the bottom left. On Mac, select `grok` without a `.exe` extension.
+1. The client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows and `~/.grok/bin/grok` on Mac, where the official installers put it. If yours is elsewhere (for example, with a custom `GROK_BIN_DIR` or a WinGet install), choose the executable in **Preferences** at the bottom left. `(Get-Command grok).Source` in PowerShell or `command -v grok` in a Mac terminal shows where it is. On Mac, select `grok` without a `.exe` extension.
 2. If no sign-in is saved yet, choose **Sign in to Grok ↗** above the message box, then **Open sign-in page ↗**, and confirm the code in your browser. The app connects automatically once you approve. Use **Switch account** to add more profiles.
 3. Choose a project folder in **Preferences**, then start a new conversation. On Windows, the default is `Workspace` beside the packaged `App` folder (or in the checkout when running from source). On Mac, it is `~/Library/Application Support/Grokbuild Tokyo/Workspace`. Existing conversations keep their original folder.
 
@@ -115,6 +115,13 @@ English is the initial interface language. Change it in **Preferences → Interf
 <summary><b>Is this an official app?</b></summary>
 
 No. Grokbuild Tokyo is an independent project under the MIT License and is not affiliated with or endorsed by SpaceXAI or xAI. It does not bundle or modify the CLI: it starts the Grok Build CLI you installed and shows what that CLI reports.
+
+</details>
+
+<details>
+<summary><b>Is this the Grok Build in the Grok app?</b></summary>
+
+No. The Grok web and mobile apps also use the Grok Build name for building apps in a chat. Grokbuild Tokyo works with Grok Build for the terminal: the `grok` command-line coding agent that works in project folders on your computer. If `grok --version` runs in a terminal, you have the CLI this app needs.
 
 </details>
 
@@ -206,6 +213,9 @@ npm start
 
 Then follow [First launch](#first-launch). See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
 
+> [!WARNING]
+> `main` can contain changes that are not in a release yet. Since 2026-10-08, it saves chat history in a new format that v1.2.4 cannot read: v1.2.4 opens with an empty history, and switching back and forth can lose saved conversations. On Mac, source and packaged runs share one data folder, so back up `data` before running `main`, and afterwards open that data only with source builds or a newer release.
+
 <details>
 <summary><b>Package the desktop app</b></summary>
 
@@ -238,13 +248,11 @@ Packaging uses an explicit list of runtime files and licenses; the previous `App
 ## Development and contributions
 
 ```sh
-npm test
-npm run test:ui
-npm run test:models
-npm run test:security
+npm ci
+npm run test:all
 ```
 
-Default tests use isolated fixtures without real model requests. CI checks accounts, attachments, languages, clocks, dependencies and the packaged application on the configured Windows and Mac runners. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete checks, contribution workflow and opt-in live tests.
+`test:all` runs ESLint, the JavaScript type check, unit tests and every offline UI suite. Tests use isolated fixtures and a mock CLI, so they make no real model requests. CI also audits dependencies, builds the Windows and universal Mac apps, and repeats the UI suites against the packaged builds on Windows, Apple Silicon and Intel Mac. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete checks, contribution workflow and opt-in live tests.
 
 Bug reports, focused fixes, translations and documentation improvements are welcome. Please use [private vulnerability reporting](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new) for sensitive security findings.
 
