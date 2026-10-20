@@ -23,6 +23,19 @@ const MEDIA_VERSION = 1;
 // simultaneous turns so a burst of tasks cannot exhaust tools or the account.
 const MAX_CONCURRENT_TURNS = 4;
 
+function isInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..';
+}
+
+// Renames a path saved under an earlier name of the data folder to the same
+// place under its current name. Anything else is returned unchanged.
+function underRoot(value, root, aliases) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return value;
+  const alias = aliases.find(folder => isInside(folder, value));
+  return alias ? path.join(root, path.relative(alias, value)) : value;
+}
+
 function isPathType(value, type) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
   try { return fs.statSync(value)[type](); } catch { return false; }
@@ -128,7 +141,7 @@ function recoverReply(message, sessionId, logged) {
 }
 
 class AppController extends EventEmitter {
-  constructor({ root, home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null, nativeImage = null }) {
+  constructor({ root, movedFrom = null, aliases = [], home, Adapter = GrokAdapter, Accounts = AccountManager, quotaFetch = null, nativeImage = null }) {
     super();
     this.root = root;
     this.nativeImage = nativeImage;
@@ -180,12 +193,18 @@ class AppController extends EventEmitter {
     const hasSavedHistory = fs.existsSync(this.file);
     let hasAccountCommitMarker = false;
     let validatedV3 = false;
+    let repointed = false;
     if (hasSavedHistory) {
       try {
         const data = this.store.read();
         if (!Array.isArray(data.sessions) || !data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) throw new Error('Invalid saved data');
         if (!data.sessions.every(s => s && typeof s.id === 'string' && typeof s.title === 'string' && typeof s.cwd === 'string' && Array.isArray(s.messages) && s.messages.every(m => m && ['user', 'assistant'].includes(m.role) && typeof m.text === 'string'))) throw new Error('Invalid session data');
         this.settings = { ...this.settings, ...data.settings };
+        // After the Mac data folder moved to the new app name, new conversations
+        // start under its new path. Saved conversations keep theirs: the old
+        // path is a link to the new folder, and the CLI knows them by it.
+        const earlierNames = [...new Set([movedFrom, ...aliases].filter(folder => typeof folder === 'string' && path.isAbsolute(folder) && folder !== root))];
+        this.settings.workspace = underRoot(this.settings.workspace, root, earlierNames);
         this.settings.language = normalizeLanguage(this.settings.language);
         this.settings.theme = normalizeTheme(this.settings.theme);
         for (const key of ['rainEnabled', 'musicEnabled', 'subagentsEnabled', 'quotaEnabled']) {
@@ -193,7 +212,14 @@ class AppController extends EventEmitter {
         }
         if (!Number.isInteger(this.settings.musicVolume) || this.settings.musicVolume < 0 || this.settings.musicVolume > 100) this.settings.musicVolume = 90;
         const replies = readTurnJournal(this.journal.file);
-        if (replies.size) for (const session of data.sessions) session.messages = session.messages.map(message => recoverReply(message, session.id, replies.get(message.id)));
+        // A recovered reply exists only in the journal, which the next save
+        // deletes. Its conversation must be written with it, whatever status
+        // it ended in (Stop leaves 'cancelled' before the CLI confirms).
+        if (replies.size) for (const session of data.sessions) session.messages = session.messages.map(message => {
+          const recovered = recoverReply(message, session.id, replies.get(message.id));
+          if (recovered !== message) this.dirtySessions.add(session.id);
+          return recovered;
+        });
         this.sessions = data.sessions;
         if (data.accounts !== undefined) {
           if (!Array.isArray(data.accounts) || !data.accounts.some(a => a?.id === 'local') || !data.accounts.every(a => a && typeof a.name === 'string' && (a.id === 'local' || ACCOUNT_ID.test(a.id))) || new Set(data.accounts.map(a => a.id)).size !== data.accounts.length) throw new Error('Invalid accounts');
@@ -209,6 +235,13 @@ class AppController extends EventEmitter {
           session.modelSelectionVerified = false;
           for (const m of session.messages || []) {
             if (m.status === 'working') { m.status = 'cancelled'; this.dirtySessions.add(session.id); }
+            // Uploaded and returned files saved under an earlier folder name
+            // now name the folder itself. The conversation's own folder stays
+            // as the CLI knows it.
+            for (const item of [...(Array.isArray(m.attachments) ? m.attachments : []), ...(Array.isArray(m.images) ? m.images : [])]) {
+              const src = item && underRoot(item.src, root, earlierNames);
+              if (src !== item?.src) { item.src = src; this.dirtySessions.add(session.id); repointed = true; }
+            }
             // Legacy media discovery happens only when this conversation opens.
           }
         }
@@ -252,6 +285,9 @@ class AppController extends EventEmitter {
       // first migration boot retains it unless a deletion commits meanwhile.
       this.store.backupRetirementAllowed = validatedV3;
       this.cleanupQueue = this.store.cleanupLegacyBackup().catch(error => this.emitEvent({ type: 'error', message: error.message }));
+      // Write re-pointed file paths now: an older build opened before the next
+      // save would not recognize the old ones as this folder's files.
+      if (repointed && !this.accountRecoveryError) void this.save().catch(error => this.emitEvent({ type: 'error', message: error.message }));
       void this.cleanAttachments().catch(error => this.emitEvent({ type: 'error', message: error.message }));
     }
   }
@@ -394,14 +430,18 @@ class AppController extends EventEmitter {
     const session = this.getSession(sessionId);
     const uploaded = session.messages.some(message => (message.attachments || []).some(item => item.src === src && item.mimeType?.startsWith('image/')));
     const roots = uploaded ? [this.attachmentDirectory()] : [];
-    if (BLOB_REFERENCE.test(src)) {
+    const stored = BLOB_REFERENCE.test(src);
+    if (stored) {
       const referenced = session.messages.some(message => (message.images || []).some(image => image.src === src) || (message.attachments || []).some(item => item.src === src && item.mimeType?.startsWith('image/')));
       if (!referenced) throw new Error(this.t('不支持的图片地址'));
       await this.blobs.flush();
       src = this.blobs.resolve(src);
       roots.push(this.blobs.directory);
     }
-    const cache = typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim()) ? undefined
+    // Stored and uploaded images are read from their own folders. Only an image
+    // the CLI names by path may live in its session cache, which takes a scan
+    // of the CLI's session folders to find.
+    const cache = stored || uploaded || (typeof src === 'string' && /^(?:https?:\/\/|data:)/i.test(src.trim())) ? undefined
       : await findSessionImageDirectory(this.accountManager.homeFor(accountId), session.cwd, session.id);
     const response = await resolveImageResponse(src, session.cwd, cache, this.t, undefined, roots);
     if (accountId !== this.activeAccountId || !this.sessions.includes(session)) { await response.body?.cancel(); throw new Error(this.t('不支持的图片地址')); }
@@ -414,10 +454,13 @@ class AppController extends EventEmitter {
   }
   cleanAttachments() {
     const operation = this.cleanupQueue.catch(() => {}).then(async () => {
+      // A backup of unreadable history keeps the uploads it names, as it keeps
+      // its images, so restoring it later still finds them.
+      const kept = await this.store.readRecoveryAttachmentFolders();
       for (const account of this.accounts) {
         const referenced = this.sessions.filter(session => (session.accountId || 'local') === account.id).flatMap(session => session.messages.flatMap(message => [...(message.attachments || []), ...(message.images || [])]));
         referenced.push(...[...this.pendingAttachments.values()].filter(item => item.accountId === account.id));
-        await cleanupAttachments(this.attachmentDirectory(account.id), referenced);
+        await cleanupAttachments(this.attachmentDirectory(account.id), referenced, kept);
       }
     });
     this.cleanupQueue = operation;
@@ -564,11 +607,18 @@ class AppController extends EventEmitter {
     this.connecting = (async () => {
       if (!isExecutable(this.settings.executable)) throw new Error(this.t('没有找到 Grok。请在设置中选择 Grok CLI。'));
       if (!isPathType(this.settings.workspace, 'isDirectory')) throw new Error(this.t('工作目录不存在，请在设置中重新选择。'));
-      await this.closeAdapter();
-      this.loaded.clear();
-      this.adapter = new this.Adapter({ executable: this.settings.executable, cwd: this.settings.workspace, subagentsEnabled: this.settings.subagentsEnabled, env: this.accountManager.environment(this.activeAccountId), getLanguage: () => this.settings.language });
-      const adapter = this.adapter;
-      adapter.on('event', event => { if (this.adapter === adapter && !this.retiredAdapters.has(adapter)) this.handleEvent(event); });
+      // After a crash the adapter starts its engine again by itself when a reply
+      // needs it, and that reply may be running now. Reuse the adapter, which
+      // keeps that engine; replacing it would stop the reply. A different
+      // account, CLI, folder or Reconnect closes the adapter first.
+      let adapter = this.adapter && !this.retiredAdapters.has(this.adapter) ? this.adapter : null;
+      if (!adapter) {
+        await this.closeAdapter();
+        this.loaded.clear();
+        adapter = this.adapter = new this.Adapter({ executable: this.settings.executable, cwd: this.settings.workspace, subagentsEnabled: this.settings.subagentsEnabled, env: this.accountManager.environment(this.activeAccountId), getLanguage: () => this.settings.language });
+        const owned = adapter;
+        owned.on('event', event => { if (this.adapter === owned && !this.retiredAdapters.has(owned)) this.handleEvent(event); });
+      }
       try { await adapter.start(); }
       catch (error) {
         this.invalidateConnection();
@@ -746,7 +796,7 @@ class AppController extends EventEmitter {
         session.updatedAt = previous.updatedAt;
         this.releaseTurn(turn);
         this.scheduleModelRefresh();
-        throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }));
+        throw new Error(this.t('保存失败，消息尚未发送：{error}', { error: error.message }), { cause: error });
       }
     });
     if (!message) { this.releaseTurn(turn); this.scheduleModelRefresh(); return { accepted: false, cancelled: true }; }
@@ -780,7 +830,8 @@ class AppController extends EventEmitter {
         catch (error) { this.emitEvent({ type: 'error', sessionId, message: this.t('保存失败：{error}', { error: error.message }) }); }
         this.releaseTurn(turn);
         this.emitEvent({ type: 'session-updated', sessionId, session });
-        this.emitEvent({ type: 'status', sessionId, status: message.status === 'cancelled' ? 'cancelled' : 'idle' });
+        this.emitEvent({ type: 'status', sessionId, status: message.status === 'cancelled' ? 'cancelled' : 'idle',
+          ...(message.status === 'error' ? { failed: true } : {}), ...(message.stopReason ? { stopReason: message.stopReason } : {}) });
         this.scheduleModelRefresh();
         // Stopped and failed turns can still consume usage. The CLI records it
         // when the turn ends, so read the quota again shortly afterwards.
@@ -793,6 +844,15 @@ class AppController extends EventEmitter {
   handleEvent(event) {
     if (event.replay || (['text', 'image', 'attachment'].includes(event.type) && event.role === 'user')) return;
     if (event.type === 'status' && event.status === 'disconnected') this.invalidateConnection();
+    // The adapter restarted its engine for a reply after a crash: it is connected again.
+    if (event.type === 'status' && event.status === 'ready' && !this.connected && !this.connecting) {
+      this.connected = true;
+      this.emitEvent({ type: 'info', info: this.normalizeInfo(), connected: true });
+    }
+    // A conversation stays busy until its reply is saved and its turn released;
+    // the controller then reports the end itself. Passing on the engine's own
+    // "idle" earlier would offer Send while a new message is still refused.
+    if (event.type === 'status' && ['idle', 'cancelled'].includes(event.status) && event.sessionId && this.turns.has(event.sessionId)) return;
     if (event.type === 'status' && event.status === 'models_changed') {
       if (Number.isSafeInteger(event.revision) && event.revision > this.modelCatalogRevision) {
         this.modelCatalogRevision = event.revision;
@@ -826,7 +886,8 @@ class AppController extends EventEmitter {
   }
   async cancel(sessionId) {
     const turn = this.turns.get(sessionId);
-    if (!turn) return { cancelled: false };
+    // A finished reply stays registered while it saves; Stop no longer applies to it.
+    if (!turn || turn.settled) return { cancelled: false };
     turn.cancelled = true;
     // During connection/restore there is no prompt for the adapter to cancel yet.
     if (!turn.message) return { cancelled: true };
@@ -922,6 +983,8 @@ class AppController extends EventEmitter {
   async reconnect() {
     return this.idleOperation(this.t('重新连接 Grok'), async () => {
       this.invalidateConnection();
+      // Reconnect always means a fresh engine, also when the old one still answers.
+      await this.closeAdapter();
       await this._connect();
       if (this.visibleSessions()[0]) {
         try { await this._ensureLoaded(this.visibleSessions()[0]); }
@@ -961,9 +1024,9 @@ class AppController extends EventEmitter {
     const s = this.getSession(id);
     return `# ${this.sessionTitle(s)}\n\n${this.t('工作目录：{path}', { path: s.cwd })}\n\n` + s.messages.map(m => {
       const plan = Array.isArray(m.plan) && m.plan.length ? `\n\n### ${this.t('执行计划')}\n\n` + m.plan.map(entry => `- [${entry.status === 'completed' ? 'x' : ' '}] ${entry.content}`).join('\n') : '';
-      const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[\[\]\\]/g, '')}](<${this.exportSource(image.src).replace(/>/g, '%3E')}>)`).join('');
+      const images = (m.images || []).map(image => `\n\n![${String(image.altIsDefault === true || (image.altIsDefault === undefined && image.alt === 'Grok 返回的图片') ? this.t('Grok 返回的图片') : image.alt || this.t('图片')).replace(/[[\]\\]/g, '')}](<${this.exportSource(image.src).replace(/>/g, '%3E')}>)`).join('');
       const notice = m.noticeKey ? `\n\n${this.t(m.noticeKey)}` : '';
-      const attachments = (m.attachments || []).filter(item => !item.mimeType?.startsWith('image/')).map(item => `\n\n[${String(item.name).replace(/[\[\]\\]/g, '')}](<${this.exportSource(item.src).replace(/>/g, '%3E')}>)`).join('');
+      const attachments = (m.attachments || []).filter(item => !item.mimeType?.startsWith('image/')).map(item => `\n\n[${String(item.name).replace(/[[\]\\]/g, '')}](<${this.exportSource(item.src).replace(/>/g, '%3E')}>)`).join('');
       return `## ${m.role === 'user' ? this.t('你') : 'Grok'}\n\n${m.text || ''}${plan}${images}${attachments}${notice}${m.error ? '\n\n' + this.t('错误：') + m.error : ''}\n`;
     }).join('\n');
   }
@@ -977,6 +1040,8 @@ class AppController extends EventEmitter {
     this.quotaPoll = null;
     // Cancel pending sends before waiting on a possibly slow login shutdown.
     for (const turn of this.turns.values()) {
+      // A finished reply still waiting for its save keeps its final status.
+      if (turn.settled) continue;
       turn.cancelled = true;
       if (turn.message) turn.message.status = 'cancelled';
     }
@@ -988,7 +1053,12 @@ class AppController extends EventEmitter {
     if (this.accountManager.pending && this.accountManager.pending !== initialLogin) {
       try { await this.accountManager.cancelLogin(); } catch (error) { failure ||= error; }
     }
-    try { await this.historyOperation(() => this.save({ content: [...this.turns.keys()] })); } catch (error) { failure ||= error; }
+    // While staged account data could not be quarantined, history is deliberately
+    // never written (save() refuses). Quitting must still work: the message asks
+    // the user to restart after fixing the folder.
+    if (!this.accountRecoveryError) {
+      try { await this.historyOperation(() => this.save({ content: [...this.turns.keys()] })); } catch (error) { failure ||= error; }
+    }
     try {
       const running = [...this.turns.values()].map(turn => turn.promise).filter(Boolean);
       // A full/unavailable disk must never leave the owned Grok process running.

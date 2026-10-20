@@ -110,6 +110,7 @@ function comparableDirectory(value) {
 }
 
 const sessionImageDirectories = new Map();
+const sessionImageSearches = new Map();
 const CACHE_LIMIT = 256;
 const CACHE_TTL = 5 * 60 * 1000;
 
@@ -135,8 +136,15 @@ async function findSessionImageDirectory(grokHome, cwd, sessionId) {
     } catch { /* The CLI may rotate a session cache. Search again. */ }
     sessionImageDirectories.delete(key);
   }
-  const directory = await locateSessionImageDirectory(grokHome, cwd, sessionId);
-  if (directory) {
+  // A conversation that opens with many CLI images asks for all of them at
+  // once. Share one search instead of scanning the session folders per image.
+  let search = sessionImageSearches.get(key);
+  if (!search) {
+    search = locateSessionImageDirectory(grokHome, cwd, sessionId).finally(() => sessionImageSearches.delete(key));
+    sessionImageSearches.set(key, search);
+  }
+  const directory = await search;
+  if (directory && !sessionImageDirectories.has(key)) {
     if (sessionImageDirectories.size >= CACHE_LIMIT) sessionImageDirectories.delete(sessionImageDirectories.keys().next().value);
     sessionImageDirectories.set(key, { directory, metadataVersion: await cacheMetadataVersion(directory), expires: Date.now() + CACHE_TTL });
   }

@@ -49,7 +49,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $archive = "dist/Grokbuild-Tokyo-$version-win-x64.zip"
+          $archive = "dist/Dirth-$version-win-x64.zip"
           $expected = (Get-Content "$archive.sha256").Split(' ')[0]
           if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Windows ZIP checksum mismatch' }
           Move-Item App work/windows-build-before-extraction
@@ -82,6 +82,7 @@ jobs:
             work/model-refresh-qa/run-*/*.png
             work/theme-qa/run-*/*.png
             work/theme-qa/run-*/results.json
+            work/renderer-regressions/run-*/*.png
           retention-days: 7
           if-no-files-found: ignore
 
@@ -182,5 +183,6 @@ jobs:
             work/model-refresh-qa/run-*/*.png
             work/theme-qa/run-*/*.png
             work/theme-qa/run-*/results.json
+            work/renderer-regressions/run-*/*.png
           retention-days: 7
           if-no-files-found: ignore

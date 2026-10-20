@@ -1,8 +1,8 @@
-# Grokbuild Tokyo 使用指南
+# Dirth 使用指南
 
 [English](guide.md) · [返回项目首页](../README.zh-CN.md)
 
-为 Grok Build CLI 制作的非官方 Windows 与 Mac 桌面客户端。通过 ACP 连接本机安装的 Grok，提供雨夜背景、流式聊天、图片与附件发送、回复文件保存和独立账户管理。
+为 Grok Build CLI 制作的非官方 Windows 与 Mac 桌面客户端。通过 ACP 连接本机安装的 Grok，提供东京、京都、冲绳、北海道四座城市主题、流式聊天、图片与附件发送、回复文件保存和独立账户管理。
 
 当前版本：**1.2.5**。项目采用 [MIT 许可证](../LICENSE)。第三方组件声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)，安全边界及漏洞反馈说明见 [SECURITY.zh-CN.md](../SECURITY.zh-CN.md)。
 
@@ -15,21 +15,21 @@ Mac 与 Windows Release 下载、校验文件及首次启动步骤见[下载说�
 从源码运行或构建还需要 Git、Node.js 22.13.0 或更高版本及 npm。开发与自动测试使用 Node.js 24。打包后的程序自带 Electron，无需另外安装 Node.js。
 
 ```sh
-git clone https://github.com/swf-cmd/grokbuild-tokyo.git
-cd grokbuild-tokyo
+git clone https://github.com/swf-cmd/dirth.git
+cd dirth
 npm ci
 npm start
 ```
 
 Windows 默认在当前用户的 `%USERPROFILE%\.grok\bin\grok.exe` 查找 CLI，Mac 默认使用 `~/.grok/bin/grok`。若安装在别处，打开左下角设置，选择对应可执行文件（Mac 上为不带 `.exe` 后缀的 `grok`）。本机账户沿用 CLI 的登录和配置。尚未登录时，点击输入框上方的“登录 Grok ↗”，再打开浏览器登录页面并核对验证码。可直接使用默认账户登录，无需先添加账户；添加其他账户为可选操作。完成授权后自动连接，并保留已写好的草稿。若需选择 CLI 可执行文件，点击“设置 Grok CLI”。
 
-Windows 默认工作目录为源码项目中的 `Workspace`（打包运行时位于 `App` 旁边）；Mac 默认使用 `~/Library/Application Support/Grokbuild Tokyo/Workspace`，首次启动自动创建。要处理已有项目，在设置中选择该目录，再新建会话；已有会话继续使用自己的原始工作目录。
+Windows 默认工作目录为源码项目中的 `Workspace`（打包运行时位于 `App` 旁边）；Mac 默认使用 `~/Library/Application Support/Dirth/Workspace`，首次启动自动创建。要处理已有项目，在设置中选择该目录，再新建会话；已有会话继续使用自己的原始工作目录。
 
 Windows 上运行：
 
 ```powershell
 npm run build
-& '.\App\Grokbuild Tokyo.exe'
+& '.\App\Dirth.exe'
 ```
 
 运行或分发 Windows 版时，需要保留整个 `App` 目录及其配套文件。
@@ -39,10 +39,10 @@ Mac 上先安装 Apple 命令行工具（如未安装，运行 `xcode-select --i
 ```sh
 npm run build:mac
 node scripts/verify-package.cjs --platform darwin --arch universal
-open "App/Grokbuild Tokyo.app"
+open "App/Dirth.app"
 ```
 
-构建会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`，以及 `.zip.sha256` 校验文件。解压后将 **Grokbuild Tokyo.app** 拖入**应用程序**，所需运行文件与许可证已包含在 `.app` 内。若需要体积较小的单架构版本，Apple Silicon 使用 `npm run build:mac:arm64`，Intel 使用 `npm run build:mac:x64`；两种版本均可在 Mac 上构建。`npm run build` 使用当前平台，Mac 上按当前 Node.js 进程的架构构建；`npm run build:win` 则明确构建 Windows x64。
+构建会生成 `App/Dirth.app`、`dist/Dirth-1.2.5-mac-universal.zip`，以及 `.zip.sha256` 校验文件。解压后将 **Dirth.app** 拖入**应用程序**，所需运行文件与许可证已包含在 `.app` 内。若需要体积较小的单架构版本，Apple Silicon 使用 `npm run build:mac:arm64`，Intel 使用 `npm run build:mac:x64`；两种版本均可在 Mac 上构建。`npm run build` 使用当前平台，Mac 上按当前 Node.js 进程的架构构建；`npm run build:win` 则明确构建 Windows x64。
 
 Mac 构建使用本地临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。下载并确认来源可信后，可能需要通过**系统设置 → 隐私与安全性 → 仍要打开**批准首次启动，请参照 [Apple 说明](https://support.apple.com/en-us/102445)。
 
@@ -126,7 +126,7 @@ Markdown 图片、图片链接、HTML 图片及 ACP 回复或生成工具返回�
 
 ## 本地数据与仓库内容
 
-Windows 数据根目录是源码目录，或打包后 `App` 所在的父目录。Mac 的源码运行和打包程序统一使用 **`~/Library/Application Support/Grokbuild Tokyo`**，因此下表中的 `data` 对应 Mac 上的 `~/Library/Application Support/Grokbuild Tokyo/data`，`Workspace` 则与它并列。账户、附件、设置和浏览器缓存保存在 `.app` 之外，更换或移动 Mac 应用不会替换个人数据。本机 CLI 账户还可能使用 `GROK_HOME`（默认 `~/.grok`）。
+Windows 数据根目录是源码目录，或打包后 `App` 所在的父目录。Mac 的源码运行和打包程序统一使用 **`~/Library/Application Support/Dirth`**，因此下表中的 `data` 对应 Mac 上的 `~/Library/Application Support/Dirth/data`，`Workspace` 则与它并列。v1.2.5 及更早版本使用 `~/Library/Application Support/Grokbuild Tokyo`；Dirth 首次启动时会把该文件夹移到新位置（如果你曾把它换成指向其他磁盘的链接，则移动的是这个链接），并在旧路径留下符号链接。已保存的附件会改为指向新文件夹；更早的会话仍通过这个链接在旧路径下运行，请保留它。如果 Grokbuild Tokyo 仍在运行，打开 Dirth 会切换到正在运行的旧版；请先退出旧版，再打开 Dirth 迁移数据。账户、附件、设置和浏览器缓存保存在 `.app` 之外，更换或移动 Mac 应用不会替换个人数据。本机 CLI 账户还可能使用 `GROK_HOME`（默认 `~/.grok`）。
 
 | 路径 | 用途 | 上传 Git |
 | --- | --- | --- |

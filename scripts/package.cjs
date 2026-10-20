@@ -20,7 +20,7 @@ const root = path.resolve(__dirname, '..');
   if (builds.length !== 1) throw new Error(`Expected one build, received ${builds.length}`);
   await hardenPackagedBuild(builds[0], target.platform);
   if (target.platform === 'darwin') {
-    const bundle = path.join(builds[0], 'Grokbuild Tokyo.app');
+    const bundle = path.join(builds[0], 'Dirth.app');
     // Electron places these next to the bundle. Keep them inside the .app so
     // the ZIP and a drag-to-Applications install retain the runtime notices.
     for (const [source, destination] of [['LICENSE', 'LICENSE.electron.txt'], ['LICENSES.chromium.html', 'LICENSES.chromium.html']]) {

@@ -1,19 +1,19 @@
 {
-  "name": "grokbuild-tokyo",
-  "productName": "Grokbuild Tokyo",
+  "name": "dirth",
+  "productName": "Dirth",
   "version": "1.2.5",
-  "description": "A Tokyo rainy-night desktop client for the locally installed Grok Build CLI",
+  "description": "An unofficial desktop app for the locally installed Grok Build CLI, set in four Japanese cities",
   "main": "src/main.cjs",
   "private": true,
   "author": "swf-cmd",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/swf-cmd/grokbuild-tokyo.git"
+    "url": "git+https://github.com/swf-cmd/dirth.git"
   },
-  "homepage": "https://github.com/swf-cmd/grokbuild-tokyo#readme",
+  "homepage": "https://github.com/swf-cmd/dirth#readme",
   "bugs": {
-    "url": "https://github.com/swf-cmd/grokbuild-tokyo/issues"
+    "url": "https://github.com/swf-cmd/dirth/issues"
   },
   "engines": {
     "node": ">=22.13.0"

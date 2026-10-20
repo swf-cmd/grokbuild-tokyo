@@ -7,14 +7,17 @@ const { createI18n, languages } = require('./i18n.js');
 const { themes, normalizeTheme } = require('./themes.js');
 const { AppController } = require('./app-controller.cjs');
 const { safeName } = require('./attachments.cjs');
-const { appRoot } = require('./app-paths.cjs');
+const { appRoot, adoptLegacyRoot, rootAliases } = require('./app-paths.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'tokyo-image', privileges: { secure: true, standard: true, stream: true } }]);
 const isMac = process.platform === 'darwin';
-const root = appRoot({ testRoot: process.env.TOKYO_TEST_ROOT, appData: app.getPath('appData'), isPackaged: app.isPackaged, executablePath: process.execPath, sourceRoot: path.resolve(__dirname, '..') });
+const { root, movedFrom } = adoptLegacyRoot(
+  appRoot({ testRoot: process.env.TOKYO_TEST_ROOT, appData: app.getPath('appData'), isPackaged: app.isPackaged, executablePath: process.execPath, sourceRoot: path.resolve(__dirname, '..') }),
+  { appData: app.getPath('appData'), testRoot: process.env.TOKYO_TEST_ROOT });
 fs.mkdirSync(path.join(root, 'data', 'browser'), { recursive: true });
+const aliases = rootAliases(root, { appData: app.getPath('appData'), testRoot: process.env.TOKYO_TEST_ROOT });
 app.setPath('userData', path.join(root, 'data', 'browser'));
-app.setName('Grokbuild Tokyo');
-if (process.platform === 'win32') app.setAppUserModelId('local.grokbuild.tokyo');
+app.setName('Dirth');
+if (process.platform === 'win32') app.setAppUserModelId('com.swf-cmd.dirth');
 let win, controller, quitPending = false, quitAllowed = false;
 const t = createI18n(() => controller?.settings.language);
 const entry = path.join(__dirname, 'renderer', 'index.html');
@@ -48,18 +51,19 @@ else {
     const quotaSession = session.fromPartition('tokyo-quota', { cache: false });
     quotaSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     quotaSession.setPermissionCheckHandler(() => false);
-    controller = new AppController({ root, home: os.homedir(), nativeImage, quotaFetch: (url, init) => quotaSession.fetch(url, init) });
+    controller = new AppController({ root, movedFrom, aliases, home: os.homedir(), nativeImage, quotaFetch: (url, init) => quotaSession.fetch(url, init) });
     protocol.handle('tokyo-image', request => controller.serveImage(request.url));
     // Only presentation preferences travel with the renderer startup. This lets
     // the first frame use the saved language and city without synchronous IPC or disk I/O.
     const initialPreferences = Object.fromEntries(['language', 'theme', 'rainEnabled', 'musicEnabled', 'musicVolume'].map(key => [key, controller.settings[key]]));
-    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: isMac, ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}), show: false, backgroundColor: themes[normalizeTheme(controller.settings.theme)].windowBackground, title: 'Grokbuild Tokyo', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--tokyo-preferences=${encodeURIComponent(JSON.stringify(initialPreferences))}`], autoplayPolicy: 'no-user-gesture-required', contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
+    win = new BrowserWindow({ width: 1440, height: 940, minWidth: 980, minHeight: 680, frame: isMac, ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 14 } } : {}), show: false, backgroundColor: themes[normalizeTheme(controller.settings.theme)].windowBackground, title: 'Dirth', icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'), webPreferences: { preload: path.join(__dirname, 'preload.cjs'), additionalArguments: [`--tokyo-preferences=${encodeURIComponent(JSON.stringify(initialPreferences))}`], autoplayPolicy: 'no-user-gesture-required', contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false } });
     installMenu();
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event, url) => { if (url !== entryURL) event.preventDefault(); });
     win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     win.webContents.session.setPermissionCheckHandler(() => false);
-    controller.on('event', payload => { if (win && !win.isDestroyed()) win.webContents.send('tokyo:event', payload); });
+    // A window that is reloading or closing can refuse a message; the controller carries on.
+    controller.on('event', payload => { if (win && !win.isDestroyed()) { try { win.webContents.send('tokyo:event', payload); } catch { /* No frame to receive it. */ } } });
     const handle = (name, fn) => ipcMain.handle(`tokyo:${name}`, (event, ...args) => {
       if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame?.url !== entryURL) throw new Error('Invalid IPC sender');
       return fn(...args);
@@ -111,7 +115,7 @@ else {
     win.once('ready-to-show', () => win.show());
     win.on('close', event => { if (!quitAllowed) { event.preventDefault(); if (isMac && !quitPending) win.hide(); else app.quit(); } });
     win.loadFile(entry);
-  }).catch(error => { dialog.showErrorBox(t('Grokbuild Tokyo 启动失败'), error.message); app.exit(1); });
+  }).catch(error => { dialog.showErrorBox(t('Dirth 启动失败'), error.message); app.exit(1); });
   app.on('window-all-closed', () => { if (!isMac) app.quit(); });
   app.on('before-quit', event => {
     if (quitAllowed || !controller) return;
@@ -120,6 +124,6 @@ else {
     quitPending = true;
     controller.close()
       .then(() => { quitAllowed = true; app.quit(); })
-      .catch(error => { quitPending = false; dialog.showErrorBox(t('关闭 Grokbuild Tokyo 时出错'), error.message); });
+      .catch(error => { quitPending = false; dialog.showErrorBox(t('关闭 Dirth 时出错'), error.message); });
   });
 }

@@ -12,8 +12,8 @@ const root = path.resolve(__dirname, '..');
 function extract(archive, destination) {
   if (process.platform === 'win32') {
     execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-      "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:GROKBUILD_TEST_ARCHIVE -DestinationPath $env:GROKBUILD_TEST_EXTRACTION"], {
-      env: { ...process.env, GROKBUILD_TEST_ARCHIVE: archive, GROKBUILD_TEST_EXTRACTION: destination },
+      "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:DIRTH_TEST_ARCHIVE -DestinationPath $env:DIRTH_TEST_EXTRACTION"], {
+      env: { ...process.env, DIRTH_TEST_ARCHIVE: archive, DIRTH_TEST_EXTRACTION: destination },
     });
   } else if (process.platform === 'darwin') {
     execFileSync('/usr/bin/ditto', ['-x', '-k', archive, destination]);
@@ -29,7 +29,7 @@ test('Windows release ZIP extracts a complete clean App folder with matching che
     fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({ version: '1.2.4' }));
     const staged = path.join(fixture, 'work/package/fresh');
     const files = {
-      'Grokbuild Tokyo.exe': 'test executable',
+      'Dirth.exe': 'test executable',
       'LICENSE': 'Electron runtime license',
       'LICENSES.chromium.html': 'Chromium runtime notices',
       'resources/app.asar': 'app sources and project licenses',
@@ -46,7 +46,7 @@ test('Windows release ZIP extracts a complete clean App folder with matching che
     }
     installPackagedBuild(fixture, staged);
     const { archive, checksum } = await archivePackagedBuild(fixture, { platform: 'win32', arch: 'x64' });
-    assert.equal(path.basename(archive), 'Grokbuild-Tokyo-1.2.4-win-x64.zip');
+    assert.equal(path.basename(archive), 'Dirth-1.2.4-win-x64.zip');
     assert.equal(fs.readFileSync(checksum, 'utf8'), `${crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex')}  ${path.basename(archive)}\n`);
     const extracted = path.join(fixture, 'extracted');
     extract(archive, extracted);
@@ -74,17 +74,17 @@ test('Mac release ZIP still preserves bundle symlinks and executable modes', { s
   const fixture = fs.mkdtempSync(path.join(root, 'work/mac-archive-'));
   try {
     fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({ version: '1.2.4' }));
-    const bundle = path.join(fixture, 'App/Grokbuild Tokyo.app');
+    const bundle = path.join(fixture, 'App/Dirth.app');
     fs.mkdirSync(path.join(bundle, 'Contents/MacOS'), { recursive: true });
-    fs.writeFileSync(path.join(bundle, 'Contents/MacOS/Grokbuild Tokyo'), 'test executable', { mode: 0o755 });
-    fs.symlinkSync('MacOS/Grokbuild Tokyo', path.join(bundle, 'Contents/current'));
+    fs.writeFileSync(path.join(bundle, 'Contents/MacOS/Dirth'), 'test executable', { mode: 0o755 });
+    fs.symlinkSync('MacOS/Dirth', path.join(bundle, 'Contents/current'));
     const { archive } = await archivePackagedBuild(fixture, { platform: 'darwin', arch: 'universal' });
-    assert.equal(path.basename(archive), 'Grokbuild-Tokyo-1.2.4-mac-universal.zip');
+    assert.equal(path.basename(archive), 'Dirth-1.2.4-mac-universal.zip');
     const extracted = path.join(fixture, 'extracted');
     extract(archive, extracted);
-    assert.deepEqual(fs.readdirSync(extracted), ['Grokbuild Tokyo.app']);
-    const contents = path.join(extracted, 'Grokbuild Tokyo.app/Contents');
-    assert.equal(fs.readlinkSync(path.join(contents, 'current')), 'MacOS/Grokbuild Tokyo');
-    assert.equal(fs.statSync(path.join(contents, 'MacOS/Grokbuild Tokyo')).mode & 0o777, 0o755);
+    assert.deepEqual(fs.readdirSync(extracted), ['Dirth.app']);
+    const contents = path.join(extracted, 'Dirth.app/Contents');
+    assert.equal(fs.readlinkSync(path.join(contents, 'current')), 'MacOS/Dirth');
+    assert.equal(fs.statSync(path.join(contents, 'MacOS/Dirth')).mode & 0o777, 0o755);
   } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
 });

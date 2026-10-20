@@ -155,7 +155,7 @@ test('changing cities while playing crossfades to the new track from its start',
   complete();
   await settle();
   assert.equal(player.getStatus().state, 'playing');
-  assert.match(calls.urls[0], /assets\/tokyo-afterimage\.wav$/);
+  assert.match(calls.urls[0], /assets\/tokyo-afterimage\.flac$/);
   player.setPreferences({ theme: 'kyoto' });
   await settle();
   assert.equal(player.getStatus().state, 'starting', 'the current track keeps playing while the next one loads');
@@ -208,7 +208,7 @@ test('returning to the playing city before the next loads keeps it playing', asy
   player.setPreferences({ theme: 'hokkaido' });
   await settle();
   assert.equal(player.getStatus().state, 'playing');
-  complete('tokyo-afterimage.wav');
+  complete('tokyo-afterimage.flac');
   await settle();
   assert.equal(calls.start, 1, 'the original source was never interrupted');
   assert.equal(calls.stops, 0);
@@ -300,4 +300,27 @@ test('a city that fails to load also silences the previous city', async t => {
   await settle();
   assert.equal(calls.decode, 2, 'Tokyo comes back from its fading buffer');
   assert.equal(player.getStatus().state, 'playing');
+});
+
+test('a start that fails again is not retried on every later key press', async t => {
+  const { player, calls, fail } = fixture();
+  t.after(() => player.dispose());
+  player.setPreferences({ musicEnabled: true });
+  await settle();
+  fail();
+  await settle();
+  void player.unlock();
+  await settle();
+  assert.equal(calls.decode, 2, 'the first gesture retries once');
+  fail();
+  await settle();
+  for (let press = 0; press < 10; press++) void player.unlock();
+  await settle();
+  assert.equal(calls.decode, 2, 'later gestures do not fetch and decode the track again');
+  assert.equal(player.getStatus().state, 'error');
+  // Turning music off and on again retries, as the status message says.
+  player.setPreferences({ musicEnabled: false });
+  player.setPreferences({ musicEnabled: true });
+  await settle();
+  assert.equal(calls.decode, 3);
 });

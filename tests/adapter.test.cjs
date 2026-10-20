@@ -603,6 +603,10 @@ test('a broken transport retains its CLI until shutdown observes process exit', 
   child.stdin.emit('error', Object.assign(new Error('test pipe failure'), { code: 'EPIPE' }));
   assert.equal(adapter.ready, false);
   assert.equal(adapter.process, child);
+  // Nothing more is sent to it: a request now fails at once instead of
+  // waiting, unanswered, for a process that is on its way out.
+  await assert.rejects(adapter._request('session/prompt', {}, 0), { code: 'NOT_CONNECTED' });
+  assert.equal(adapter.pending.size, 0);
   await adapter.close();
   assert.equal(adapter.process, null);
 });

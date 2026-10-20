@@ -17,6 +17,12 @@ const { labelModel, isLegacyGrok4Label, servedModelFromUsage } = require('./mode
 const { cliEnvironment } = require('./platform.cjs');
 
 const CONTROL_TIMEOUT = 60000;
+// Restoring replays the whole conversation, which can take a while for a long one.
+const LOAD_TIMEOUT = 3 * 60000;
+// After the CLI exits, how long its pipes may take to deliver what it wrote last.
+const EXIT_DRAIN_TIMEOUT = 2000;
+// How long the CLI gets to stop its own tools before its process group is killed.
+const TERMINATE_GRACE = 1500;
 // A 50 MB attachment batch needs roughly 67 MB when base64-encoded in ACP.
 const MAX_LINE = 80 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -34,7 +40,7 @@ function failure(message, code) {
 function safeMessage(value, fallback) {
   return String(value || fallback)
     .replace(/\b(?:xai|sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/g, '[redacted]')
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+/gi, '$1[redacted]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1[redacted]')
     .replace(/((?:access_token|refresh_token|api_key|authorization)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[redacted]')
     .slice(0, 8000);
 }
@@ -94,11 +100,16 @@ class GrokAdapter extends EventEmitter {
     this.configuring = new Set();
     this.process = null;
     this.processGroups = new WeakSet();
+    // A disconnected CLI can outlive its pipes for a moment; nothing more is written to it.
+    this.disconnectedProcesses = new WeakSet();
     this.pending = new Map();
     this.permissions = new Map();
     this.sessions = new Map();
     this.modelResolutions = new Map();
     this.active = new Map();
+    // Turns accepted by prompt() that are still waiting for the engine to start
+    // or the conversation to load. Stop applies to them as well.
+    this.preparing = new Map();
     this.creating = 0;
     this.loading = new Set();
     this.sessionLoads = new Map();
@@ -114,7 +125,10 @@ class GrokAdapter extends EventEmitter {
   }
 
   _event(event) {
-    this.emit('event', { timestamp: Date.now(), ...event });
+    // Listeners run inside stdout handling. One that throws (a window closing
+    // mid-send) must not be mistaken for a protocol failure that stops the CLI.
+    try { this.emit('event', { timestamp: Date.now(), ...event }); }
+    catch (error) { console.error('Grok event listener failed:', error); }
   }
 
   getInfo() {
@@ -156,13 +170,18 @@ class GrokAdapter extends EventEmitter {
     const framer = new LineFramer();
     let stderr = '';
     let disconnected = false;
+    // After it exits, the CLI is no longer this adapter's process, but what it
+    // wrote before exiting is still read and answers what it was asked.
+    let draining = false;
+    const owns = () => this.process === child || (draining && this.process === null);
     const disconnect = (error, exited = false) => {
-      const ownsChild = this.process === child;
+      const ownsChild = owns();
       // A pipe error is not proof that the process (or its tools) has exited.
-      if (ownsChild && exited) this.process = null;
+      if (this.process === child && exited) this.process = null;
       if (disconnected) return;
       disconnected = true;
       if (ownsChild) {
+        this.disconnectedProcesses.add(child);
         this.ready = false;
         this.info.connected = false;
         for (const session of this.sessions.values()) { session.loaded = false; session.modelSelectionVerified = false; }
@@ -178,37 +197,62 @@ class GrokAdapter extends EventEmitter {
     };
     child.on('error', error => disconnect(failure(
       error.code === 'ENOENT' ? this.t('找不到 Grok CLI，请在设置中选择 Grok CLI。') : this.safeMessage(error.message), error.code), child.pid == null));
+    const onLine = value => {
+      const line = value.trim();
+      if (!line) return;
+      try { this._message(JSON.parse(line)); }
+      catch (error) {
+        // A non-JSON startup notice is not a protocol response. Never echo it.
+        if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: this.safeMessage(error.message) });
+      }
+    };
+    const receive = text => {
+      try { framer.push(text, onLine); }
+      catch (error) {
+        disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), error.code || 'PROTOCOL_LIMIT'));
+        this._kill(child);
+      }
+    };
+    // Node reports the exit before the pipes have delivered everything the CLI
+    // wrote, so its last answer (a long final reply or the error explaining a
+    // failure) and the tail of stderr would be lost. Wait for the pipes to
+    // close, briefly, then read a last line written without a newline.
+    let exit = null;
+    let drained = false;
+    const exited = () => {
+      if (drained) return;
+      drained = true;
+      clearTimeout(exit?.timer);
+      if (owns() && !disconnected) receive(decoder.end() + '\n');
+      const { code, signal } = exit || {};
+      disconnect(failure(
+        this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
+        'PROCESS_EXIT'), true);
+      draining = false;
+    };
     child.on('exit', (code, signal) => {
       // A CLI may exit before its tools; the isolated POSIX process group lets
       // us stop those descendants without signalling the desktop application's group.
       this._killProcessGroup(child);
-      disconnect(failure(
-        this.closed ? this.t('Grok 连接已关闭。') : this.t('Grok 进程已退出 ({code}).{detail}', { code: signal || code, detail: stderr ? ` ${this.safeMessage(stderr.trim())}` : '' }),
-        'PROCESS_EXIT'), true);
+      // Nothing more can be written to it; what it already sent is still read.
+      this.disconnectedProcesses.add(child);
+      if (this.process === child) { this.process = null; draining = !disconnected; }
+      exit = { code, signal, timer: setTimeout(exited, EXIT_DRAIN_TIMEOUT) };
+      exit.timer.unref?.();
     });
+    child.on('close', (code, signal) => { exit ||= { code, signal, timer: null }; exited(); });
     child.stdin.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
+    // A read error on either output pipe (ECONNRESET on Windows) ends the connection too.
+    for (const stream of [child.stdout, child.stderr]) stream.on('error', error => disconnect(failure(this.safeMessage(error.message), error.code)));
     child.stderr.on('data', data => { stderr = (stderr + data.toString('utf8')).slice(-8000); });
     child.stdout.on('data', data => {
-      if (this.process !== child || disconnected) return;
-      try {
-        framer.push(decoder.write(data), value => {
-          const line = value.trim();
-          if (!line) return;
-          try { this._message(JSON.parse(line)); }
-          catch (error) {
-            // A non-JSON startup notice is not a protocol response. Never echo it.
-            if (!(error instanceof SyntaxError)) this._event({ type: 'error', message: this.safeMessage(error.message) });
-          }
-        });
-      } catch (error) {
-        disconnect(failure(this.t('Grok 返回的数据超过了客户端支持的大小。'), error.code || 'PROTOCOL_LIMIT'));
-        this._kill(child);
-      }
+      if (disconnected || !owns()) return;
+      receive(decoder.write(data));
     });
     try {
       const result = await this._request('initialize', {
         protocolVersion: PROTOCOL_VERSION,
-        clientInfo: { name: 'grokbuild-tokyo', title: 'Grokbuild Tokyo', version: clientVersion },
+        clientInfo: { name: 'dirth', title: 'Dirth', version: clientVersion },
         // Grok runs its own tools; do not claim filesystem/terminal delegation.
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
@@ -243,7 +287,7 @@ class GrokAdapter extends EventEmitter {
 
   _write(message) {
     const child = this.process;
-    if (!child || child.stdin.destroyed || child.stdin.writableEnded) throw failure(this.t('Grok 尚未连接，请重新连接。'), 'NOT_CONNECTED');
+    if (!child || this.disconnectedProcesses.has(child) || child.stdin.destroyed || child.stdin.writableEnded) throw failure(this.t('Grok 尚未连接，请重新连接。'), 'NOT_CONNECTED');
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
@@ -448,12 +492,19 @@ class GrokAdapter extends EventEmitter {
     if (this.sessionLoads.has(sessionId)) return this.sessionLoads.get(sessionId);
     const load = (async () => {
       cwd = await this._validateCwd(cwd);
-      if (this.active.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+      // A restore that timed out may still be replaying. Its output must stay
+      // marked as replay, so it can never join a new reply in this conversation.
+      if (this.active.has(sessionId) || this.loading.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
       this.loading.add(sessionId);
-      try {
-        const result = await this._request('session/load', { sessionId, cwd, mcpServers: [] });
-        return this._rememberSession(result, sessionId, cwd);
-      } finally { this.loading.delete(sessionId); }
+      const request = this._request('session/load', { sessionId, cwd, mcpServers: [] }, 0);
+      request.then(() => this.loading.delete(sessionId), () => this.loading.delete(sessionId));
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(failure(this.t('Grok 请求超时：{method}', { method: 'session/load' }), 'TIMEOUT')), LOAD_TIMEOUT);
+        timer.unref?.();
+      });
+      try { return this._rememberSession(await Promise.race([request, timeout]), sessionId, cwd); }
+      finally { clearTimeout(timer); }
     })();
     this.sessionLoads.set(sessionId, load);
     try { return await load; }
@@ -517,7 +568,10 @@ class GrokAdapter extends EventEmitter {
     } catch (error) {
       if (sent && !verified) {
         const current = this.sessions.get(sessionId);
-        if (current) { current.loaded = false; current.modelSelectionVerified = false; }
+        // A restore reads the engine's real selection again. Without session/load
+        // there is no restore, and marking the session unloaded would make every
+        // later message in it fail; it stays usable with an unconfirmed choice.
+        if (current) { current.modelSelectionVerified = false; if (this.info.capabilities.loadSession === true) current.loaded = false; }
       }
       throw error;
     } finally { this.configuring.delete(sessionId); }
@@ -549,7 +603,9 @@ class GrokAdapter extends EventEmitter {
         turn.textBoundaryPending = false;
       }
       if (text) this._event({ ...common, type, text, delta: true, role, ...(segmentStart ? { segmentStart: true } : {}) });
-      if (type === 'text') {
+      // Replayed media is already saved with the conversation; decoding it again
+      // (base64, hashing) only to be discarded would stall a restore.
+      if (type === 'text' && !common.replay) {
         for (const image of imagesFromContent(update.content)) this._event({ ...common, type: 'image', image, role });
         for (const attachment of attachmentsFromContent(update.content)) this._event({ ...common, type: 'attachment', attachment, role });
       }
@@ -611,7 +667,7 @@ class GrokAdapter extends EventEmitter {
         // cannot decode Windows file URIs for automatic @ expansion, so keep
         // the link as a reference and supply the exact tool path below.
         prompt.push({ type: 'resource_link', uri, name: attachment.name, mimeType: attachment.mimeType, size: stat.size,
-          _meta: { 'grokbuild-tokyo/source': 'attachment' } });
+          _meta: { 'dirth/source': 'attachment' } });
       }
       manifest.push({ name: attachment.name, path: attachment.path, mimeType: attachment.mimeType, size: stat.size,
         delivery: inlineImage ? 'inline image' : 'local file reference' });
@@ -625,13 +681,26 @@ class GrokAdapter extends EventEmitter {
   async prompt({ sessionId, text = '', attachments = [] } = {}) {
     if (!Array.isArray(attachments)) throw failure(this.t('无效的附件'), 'INVALID_ATTACHMENT');
     if (typeof text !== 'string' || (!text.trim() && !attachments.length)) throw failure(this.t('请输入消息。'), 'EMPTY_PROMPT');
-    if (this.active.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
-    await this.start();
-    if (this.sessionLoads.has(sessionId)) await this.sessionLoads.get(sessionId);
-    if (!this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
+    if (this.active.has(sessionId) || this.preparing.has(sessionId) || this.configuring.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
+    const turn = { sessionId, text: '', cancelled: false, cancelTimer: null, dispatched: false };
+    const stopped = () => {
+      this._event({ type: 'status', status: 'cancelled', sessionId });
+      return { stopReason: 'cancelled', text: '', cancelled: true };
+    };
+    // Starting the engine or restoring the conversation can take a while. A Stop
+    // meanwhile must keep the prompt from being sent at all.
+    this.preparing.set(sessionId, turn);
+    try {
+      await this.start();
+      if (this.sessionLoads.has(sessionId)) await this.sessionLoads.get(sessionId);
+      if (!turn.cancelled && !this.sessions.get(sessionId)?.loaded) await this.loadSession({ sessionId, cwd: this.sessions.get(sessionId)?.cwd || this.cwd });
+    } catch (error) {
+      if (turn.cancelled) return stopped();
+      throw error;
+    } finally { if (this.preparing.get(sessionId) === turn) this.preparing.delete(sessionId); }
+    if (turn.cancelled) return stopped();
     // Check again after the asynchronous connection/load to reject double sends.
     if (this.active.has(sessionId) || this.configuring.has(sessionId) || this.sessionLoads.has(sessionId)) throw failure(this.t('这个会话正在处理请求，请先停止或等待完成。'), 'SESSION_BUSY');
-    const turn = { sessionId, text: '', cancelled: false, cancelTimer: null, dispatched: false };
     this.active.set(sessionId, turn);
     this._event({ type: 'status', status: 'busy', sessionId });
     try {
@@ -683,7 +752,14 @@ class GrokAdapter extends EventEmitter {
 
   async cancel(sessionId) {
     const turn = this.active.get(sessionId);
-    if (!turn) return { cancelled: false };
+    if (!turn) {
+      // Not sent yet: prompt() sees the flag once the engine or restore is ready.
+      const preparing = this.preparing.get(sessionId);
+      if (!preparing) return { cancelled: false };
+      preparing.cancelled = true;
+      this._event({ type: 'status', status: 'cancelling', sessionId });
+      return { cancelled: true };
+    }
     turn.cancelled = true;
     this._cancelPermissions(sessionId);
     this._write({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
@@ -697,7 +773,7 @@ class GrokAdapter extends EventEmitter {
         // Wait for other conversations and their configuration/restoration to
         // finish before restarting the shared engine. If every turn was
         // explicitly cancelled, terminating them together is safe.
-        const othersRunning = [...this.active.values()].some(other => other !== turn && !other.cancelled);
+        const othersRunning = [...this.active.values(), ...this.preparing.values()].some(other => other !== turn && !other.cancelled);
         if (othersRunning || this.creating || this.sessionLoads.size || this.configuring.size) {
           turn.cancelTimer = setTimeout(cancelWhenSafe, 1000);
           turn.cancelTimer.unref?.();
@@ -723,9 +799,15 @@ class GrokAdapter extends EventEmitter {
     }
   }
 
-  _kill(child) {
-    if (this._killProcessGroup(child)) return Promise.resolve();
-    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  async _kill(child) {
+    if (process.platform !== 'win32' && child && child.exitCode === null && child.signalCode === null && Number.isInteger(child.pid)) {
+      // Ask first. Grok's SIGTERM handler stops the commands its tools started
+      // in their own sessions (setsid), which no process-group kill can reach.
+      try { process.kill(this.processGroups.has(child) ? -child.pid : child.pid, 'SIGTERM'); } catch { /* Already gone. */ }
+      await this._waitForExit(child, TERMINATE_GRACE);
+    }
+    if (this._killProcessGroup(child)) return;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
     if (process.platform === 'win32' && Number.isInteger(child.pid)) {
       return new Promise(resolve => {
         const taskkill = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
@@ -764,6 +846,7 @@ class GrokAdapter extends EventEmitter {
   }
 
   async _close() {
+    for (const turn of this.preparing.values()) turn.cancelled = true;
     for (const sessionId of this.active.keys()) {
       try { await this.cancel(sessionId); } catch {}
     }

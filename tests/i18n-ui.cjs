@@ -147,8 +147,8 @@ const translated = (locale, source, params) => createI18n(() => locale)(source, 
     await stage('validation and native dialogs follow unsaved language previews', async () => {
       await openSettings(); await choose('en');
       await page.locator('#executable-input').fill(''); await page.locator('#save-settings-button').click();
-      await assertText('#settings-feedback', '请选择 Grokbuild 的 Grok CLI 文件。', 'en');
-      await choose('ja'); await assertText('#settings-feedback', '请选择 Grokbuild 的 Grok CLI 文件。', 'ja');
+      await assertText('#settings-feedback', '请选择 Grok Build CLI 可执行文件。', 'en');
+      await choose('ja'); await assertText('#settings-feedback', '请选择 Grok Build CLI 可执行文件。', 'ja');
       await page.locator('#executable-input').fill(executable);
       await page.locator('#workspace-input').fill(path.join(testRoot, 'missing-workspace'));
       await page.locator('#save-settings-button').click();

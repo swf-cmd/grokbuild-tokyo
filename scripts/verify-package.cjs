@@ -26,7 +26,7 @@ const root = path.resolve(__dirname, '..');
     const plist = path.join(bundle, 'Contents', 'Info.plist');
     const readPlist = key => execFileSync('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, plist], { encoding: 'utf8' }).trim();
     assert.equal(readPlist('LSMinimumSystemVersion'), minimumMacOS, 'Incorrect minimum macOS version');
-    assert.equal(readPlist('CFBundleIdentifier'), 'com.swf-cmd.grokbuild-tokyo');
+    assert.equal(readPlist('CFBundleIdentifier'), 'com.swf-cmd.dirth');
     assert.equal(readPlist('CFBundleShortVersionString'), require('../package.json').version);
     assert.equal(fs.existsSync(path.join(bundle, 'Contents', 'Resources', readPlist('CFBundleIconFile'))), true, 'Missing Mac icon');
     for (const [source, destination] of [['LICENSE', 'LICENSE.electron.txt'], ['LICENSES.chromium.html', 'LICENSES.chromium.html']]) {

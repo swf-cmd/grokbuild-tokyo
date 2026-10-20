@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: tokyo-image:; media-src 'self'; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
-  <title>Grokbuild · Tokyo</title>
+  <title>Dirth</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="theme-colors.css">
   <link rel="stylesheet" href="themes.css">
@@ -13,8 +13,8 @@
 <body>
   <div class="app-shell">
     <header class="titlebar">
-      <img class="brand-mark" src="assets/icon.png" alt="" aria-hidden="true" draggable="false">
-      <div class="brand-name">grokbuild<span id="brand-edition" data-i18n="TOKYO EDITION">TOKYO EDITION</span></div>
+      <img class="brand-mark" src="assets/brand-mark.png" alt="" aria-hidden="true" draggable="false">
+      <div class="brand-name">dirth<span id="brand-edition" data-i18n="TOKYO EDITION">TOKYO EDITION</span></div>
       <span class="titlebar-center" data-i18n="A PLACE FOR YOUR NEXT IDEA">A PLACE FOR YOUR NEXT IDEA</span>
       <div class="window-controls">
         <button data-window="minimize" aria-label="最小化" data-i18n-aria-label="最小化">−</button>
@@ -55,8 +55,8 @@
           <div class="edition-line"><span class="tiny-cross">＋</span><span id="edition-tagline" data-i18n="YOUR IDEAS. AFTER DARK.">YOUR IDEAS. AFTER DARK.</span><span class="edition-rule"></span><span class="edition-number" id="edition-number" data-i18n="VOL. 01">VOL. 01</span></div>
           <div class="hero-title"><span id="hero-city">TOKYO</span><span class="title-outline"><span id="hero-subtitle" data-i18n="AFTER HOURS">AFTER HOURS</span><span class="hero-star" id="hero-star">✳</span></span></div>
           <div class="hero-bottom"><div class="hero-copy"><h1 id="hero-headline" data-i18n="城市未眠，&#10;你的灵感也是。" class="i18n-multiline">城市未眠，
-你的灵感也是。</h1><p data-i18n="代码、构想，还有那些没完成的计划。&#10;让 Grokbuild 陪你把它们变成现实。" class="i18n-multiline">代码、构想，还有那些没完成的计划。
-让 Grokbuild 陪你把它们变成现实。</p></div><div class="location-stamp"><span class="location-pin">◉</span><strong id="location-name" data-i18n="渋谷 · RAINY NIGHT">渋谷 · RAINY NIGHT</strong><span id="location-coordinates">35°40′ N / 139°42′ E</span><span class="location-time" id="tokyo-time">—</span></div></div>
+你的灵感也是。</h1><p data-i18n="代码、构想，还有那些没完成的计划。&#10;让 Grok Build 陪你把它们变成现实。" class="i18n-multiline">代码、构想，还有那些没完成的计划。
+让 Grok Build 陪你把它们变成现实。</p></div><div class="location-stamp"><span class="location-pin">◉</span><strong id="location-name" data-i18n="渋谷 · RAINY NIGHT">渋谷 · RAINY NIGHT</strong><span id="location-coordinates">35°40′ N / 139°42′ E</span><span class="location-time" id="tokyo-time">—</span></div></div>
           <div class="starter-label"><span data-i18n="从一个想法开始">从一个想法开始</span><span>↙</span></div>
           <div class="starter-grid">
             <button class="starter-card" data-prompt="请先查看当前工作目录，帮我理解这个项目的结构、技术栈和运行方式。" data-i18n-prompt="请先查看当前工作目录，帮我理解这个项目的结构、技术栈和运行方式。"><span class="starter-number" data-i18n="01 / EXPLORE">01 / EXPLORE</span><span class="starter-text"><span data-i18n="读懂这个项目">读懂这个项目</span><span>↗</span></span><span class="starter-detail" data-i18n="梳理结构，找到下一步">梳理结构，找到下一步</span></button>
@@ -73,22 +73,22 @@
           <div class="signin-actions"><button id="signin-button" type="button" class="primary-button" data-i18n="登录 Grok ↗">登录 Grok ↗</button><button id="signin-settings" type="button" class="secondary-button" data-i18n="设置 Grok CLI">设置 Grok CLI</button></div>
         </section>
         <div class="permission-panel" id="permission-panel" hidden aria-live="polite"></div>
-        <div class="activity-strip" id="activity-strip" hidden><span class="activity-spinner"></span><span id="activity-text" data-i18n="Grokbuild 正在思考">Grokbuild 正在思考</span><span class="activity-duration" id="activity-duration"></span></div>
+        <div class="activity-strip" id="activity-strip" hidden><span class="activity-spinner"></span><span id="activity-text" data-i18n="Grok Build 正在思考">Grok Build 正在思考</span><span class="activity-duration" id="activity-duration"></span></div>
         <form class="composer" id="composer-form">
           <div class="attachment-drafts" id="attachment-drafts" role="group" aria-label="待发送附件" data-i18n-aria-label="待发送附件" aria-live="polite" hidden></div>
-          <label class="sr-only" for="prompt" data-i18n="发送给 Grokbuild 的消息">发送给 Grokbuild 的消息</label>
+          <label class="sr-only" for="prompt" data-i18n="发送给 Grok Build 的消息">发送给 Grok Build 的消息</label>
           <textarea id="prompt" rows="2" placeholder="在雨声中，开始你的下一个想法…" spellcheck="false" data-i18n-placeholder="在雨声中，开始你的下一个想法…"></textarea>
           <div class="composer-toolbar"><div class="composer-options"><button class="attach-button icon-button" id="attach-button" type="button" aria-label="添加图片或附件" data-i18n-aria-label="添加图片或附件" title="添加图片或附件，也可拖放文件或粘贴图片" data-i18n-title="添加图片或附件，也可拖放文件或粘贴图片"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9m-6 12 8-8" transform="translate(2 2) scale(.85)"/></svg></button><span class="composer-divider"></span><div class="model-select-wrap"><span class="model-orbit" id="model-orbit" aria-hidden="true">✳</span><select id="model-select" aria-label="模型" data-i18n-aria-label="模型"><option value="" disabled data-i18n="正在读取模型…">正在读取模型…</option></select></div><span class="composer-divider"></span><select id="mode-select" aria-label="推理档位" data-i18n-aria-label="推理档位"><option value="" disabled data-i18n="正在读取推理档位…">正在读取推理档位…</option></select></div><div class="send-area"><span class="keyboard-hint" data-i18n="Enter 发送">Enter 发送</span><button class="send-button" id="send-button" type="submit" aria-label="发送消息" data-i18n-aria-label="发送消息"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button><button class="stop-button" id="stop-button" type="button" aria-label="停止生成" hidden data-i18n-aria-label="停止生成"><span></span></button></div></div>
         </form>
-        <div class="composer-footer"><span><span class="footer-spark">✧</span> <span data-i18n="本地工作空间 · 由 Grokbuild 驱动">本地工作空间 · 由 Grokbuild 驱动</span></span><span id="session-path" title="当前工作目录" data-i18n-title="当前工作目录" data-i18n="TOKYO / NIGHT SHIFT">TOKYO / NIGHT SHIFT</span></div>
+        <div class="composer-footer"><span><span class="footer-spark">✧</span> <span data-i18n="本地工作空间 · 由 Grok Build 驱动">本地工作空间 · 由 Grok Build 驱动</span></span><span id="session-path" title="当前工作目录" data-i18n-title="当前工作目录" data-i18n="TOKYO / NIGHT SHIFT">TOKYO / NIGHT SHIFT</span></div>
       </div>
       <button class="scroll-bottom" id="scroll-bottom" aria-label="回到最新消息" hidden data-i18n-aria-label="回到最新消息">↓</button>
     </main>
   </div>
 
-  <dialog id="settings-dialog" class="settings-dialog">
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
-      <div class="dialog-header"><div><span class="dialog-eyebrow" data-i18n="MAKE YOURSELF AT HOME">MAKE YOURSELF AT HOME</span><h2 data-i18n="偏好设置">偏好设置</h2></div><button type="button" class="icon-button dialog-close" data-close-dialog="settings-dialog" aria-label="关闭设置" data-i18n-aria-label="关闭设置">×</button></div>
+      <div class="dialog-header"><div><span class="dialog-eyebrow" data-i18n="MAKE YOURSELF AT HOME">MAKE YOURSELF AT HOME</span><h2 id="settings-title" data-i18n="偏好设置">偏好设置</h2></div><button type="button" class="icon-button dialog-close" data-close-dialog="settings-dialog" aria-label="关闭设置" data-i18n-aria-label="关闭设置">×</button></div>
       <div class="settings-body">
         <label class="field-label" for="language-select" data-i18n="界面语言">界面语言</label>
         <select id="language-select" class="language-select" aria-describedby="language-help">
@@ -101,15 +101,15 @@
           <option value="fr" lang="fr">Français</option>
         </select>
         <p id="language-help" class="field-help" data-i18n="切换语言即可预览，保存后下次沿用；关闭设置则还原。">切换语言即可预览，保存后下次沿用；关闭设置则还原。</p>
-        <label class="field-label" for="executable-input" data-i18n="Grokbuild 可执行文件">Grokbuild 可执行文件</label>
+        <label class="field-label" for="executable-input" data-i18n="Grok Build 可执行文件">Grok Build 可执行文件</label>
         <div class="input-with-button"><input id="executable-input" placeholder="Grok CLI 的完整文件路径" autocomplete="off" data-i18n-placeholder="Grok CLI 的完整文件路径"><button type="button" id="choose-executable" data-i18n="浏览">浏览</button></div>
-        <p class="field-help" data-i18n="使用电脑上已安装的 Grokbuild，沿用其登录配置。">使用电脑上已安装的 Grokbuild，沿用其登录配置。</p>
+        <p class="field-help" data-i18n="使用电脑上已安装的 Grok Build，沿用其登录配置。">使用电脑上已安装的 Grok Build，沿用其登录配置。</p>
         <label class="field-label" for="workspace-input" data-i18n="默认工作目录">默认工作目录</label>
         <div class="input-with-button"><input id="workspace-input" placeholder="选择项目所在文件夹" autocomplete="off" data-i18n-placeholder="选择项目所在文件夹"><button type="button" id="choose-workspace" data-i18n="浏览">浏览</button></div>
         <p class="field-help" data-i18n="新的对话会在此目录开始，已有对话保留各自的工作目录。">新的对话会在此目录开始，已有对话保留各自的工作目录。</p>
         <div class="setting-row"><div><strong id="subagents-label" data-i18n="允许使用子代理">允许使用子代理</strong><p id="subagents-help" data-i18n="明确开启或关闭此客户端引擎的子代理功能。&#10;更改后保存，客户端会自动重新连接使其生效。" class="i18n-multiline">明确开启或关闭此客户端引擎的子代理功能。
 更改后保存，客户端会自动重新连接使其生效。</p></div><label class="switch"><input id="subagents-input" type="checkbox" role="switch" aria-labelledby="subagents-label" aria-describedby="subagents-help" checked><span></span></label></div>
-        <div class="official-config-note"><strong data-i18n="Grokbuild 官方配置">Grokbuild 官方配置</strong><p data-i18n="模型和推理档位显示具体名称，新对话明确使用当前选择。已有对话可在任务结束后修改，等待引擎确认后用于后续消息。">模型和推理档位显示具体名称，新对话明确使用当前选择。已有对话可在任务结束后修改，等待引擎确认后用于后续消息。</p><p data-i18n="权限、沙箱、MCP 等配置由 Grokbuild CLI 管理，并按所选工作目录加载。修改这些官方配置后，请重新连接引擎。">权限、沙箱、MCP 等配置由 Grokbuild CLI 管理，并按所选工作目录加载。修改这些官方配置后，请重新连接引擎。</p></div>
+        <div class="official-config-note"><strong data-i18n="Grok Build 官方配置">Grok Build 官方配置</strong><p data-i18n="模型和推理档位显示具体名称，新对话明确使用当前选择。已有对话可在任务结束后修改，等待引擎确认后用于后续消息。">模型和推理档位显示具体名称，新对话明确使用当前选择。已有对话可在任务结束后修改，等待引擎确认后用于后续消息。</p><p data-i18n="权限、沙箱、MCP 等配置由 Grok Build CLI 管理，并按所选工作目录加载。修改这些官方配置后，请重新连接引擎。">权限、沙箱、MCP 等配置由 Grok Build CLI 管理，并按所选工作目录加载。修改这些官方配置后，请重新连接引擎。</p></div>
         <div class="setting-row"><div><strong id="quota-setting-label" data-i18n="显示账户额度">显示账户额度</strong><p id="quota-setting-help" data-i18n="在侧边栏显示当前账户的 Grok 用量额度。&#10;开启后，客户端会使用该账户的 CLI 登录凭据向 xAI 查询；关闭后不会发出此请求。" class="i18n-multiline">在侧边栏显示当前账户的 Grok 用量额度。
 开启后，客户端会使用该账户的 CLI 登录凭据向 xAI 查询；关闭后不会发出此请求。</p></div><label class="switch"><input id="quota-input" type="checkbox" role="switch" aria-labelledby="quota-setting-label" aria-describedby="quota-setting-help" checked><span></span></label></div>
         <fieldset class="theme-field" id="theme-field" aria-describedby="theme-help"><legend class="field-label" data-i18n="城市主题">城市主题</legend><div class="theme-options"><label class="theme-option" data-theme-option="tokyo"><input type="radio" name="theme" value="tokyo"><span class="theme-preview" aria-hidden="true"></span><span class="theme-name"><span data-i18n="东京">东京</span></span></label><label class="theme-option" data-theme-option="kyoto"><input type="radio" name="theme" value="kyoto"><span class="theme-preview" aria-hidden="true"></span><span class="theme-name"><span data-i18n="京都">京都</span></span></label><label class="theme-option" data-theme-option="okinawa"><input type="radio" name="theme" value="okinawa"><span class="theme-preview" aria-hidden="true"></span><span class="theme-name"><span data-i18n="冲绳">冲绳</span></span></label><label class="theme-option" data-theme-option="hokkaido"><input type="radio" name="theme" value="hokkaido"><span class="theme-preview" aria-hidden="true"></span><span class="theme-name"><span data-i18n="北海道">北海道</span></span></label></div><p id="theme-help" class="field-help" data-i18n="配色、背景、窗外景致与音乐随城市一起切换，选择即可预览。">配色、背景、窗外景致与音乐随城市一起切换，选择即可预览。</p></fieldset>
@@ -120,13 +120,13 @@
         <div class="music-volume-row"><label for="music-volume" data-i18n="音乐音量">音乐音量</label><input id="music-volume" type="range" min="0" max="100" step="1" value="90" aria-describedby="music-status"><output id="music-volume-value" for="music-volume">90%</output></div>
         <p id="music-status" class="field-help" role="status" aria-live="polite" data-i18n="音乐准备中…">音乐准备中…</p>
         <p class="field-help" data-i18n="主题、窗外景致与音乐即时预览，保存后下次沿用；关闭设置则还原。">主题、窗外景致与音乐即时预览，保存后下次沿用；关闭设置则还原。</p>
-        <div class="engine-info"><span class="connection-dot" id="settings-dot"></span><span id="settings-engine-status" data-i18n="正在检测 Grokbuild">正在检测 Grokbuild</span><button type="button" id="settings-reconnect" data-i18n="重新连接 ↗">重新连接 ↗</button></div>
+        <div class="engine-info"><span class="connection-dot" id="settings-dot"></span><span id="settings-engine-status" data-i18n="正在检测 Grok Build">正在检测 Grok Build</span><button type="button" id="settings-reconnect" data-i18n="重新连接 ↗">重新连接 ↗</button></div>
       </div>
       <div class="dialog-footer"><span id="settings-feedback" role="status"></span><button type="submit" class="primary-button" id="save-settings-button"><span data-i18n="保存设置">保存设置</span> <span>↗</span></button></div>
     </form>
   </dialog>
 
-  <dialog id="rename-dialog" class="small-dialog"><form id="rename-form"><div class="dialog-header"><h2 data-i18n="为对话命名">为对话命名</h2><button type="button" class="icon-button dialog-close" data-close-dialog="rename-dialog" aria-label="关闭" data-i18n-aria-label="关闭">×</button></div><div class="small-dialog-body"><label class="field-label" for="rename-input" data-i18n="对话标题">对话标题</label><input id="rename-input" maxlength="100" required autocomplete="off"></div><div class="dialog-footer"><button type="button" class="secondary-button" data-close-dialog="rename-dialog" data-i18n="取消">取消</button><button type="submit" class="primary-button" data-i18n="保存">保存</button></div></form></dialog>
+  <dialog id="rename-dialog" class="small-dialog" aria-labelledby="rename-title"><form id="rename-form"><div class="dialog-header"><h2 id="rename-title" data-i18n="为对话命名">为对话命名</h2><button type="button" class="icon-button dialog-close" data-close-dialog="rename-dialog" aria-label="关闭" data-i18n-aria-label="关闭">×</button></div><div class="small-dialog-body"><label class="field-label" for="rename-input" data-i18n="对话标题">对话标题</label><input id="rename-input" maxlength="100" required autocomplete="off"></div><div class="dialog-footer"><button type="button" class="secondary-button" data-close-dialog="rename-dialog" data-i18n="取消">取消</button><button type="submit" class="primary-button" data-i18n="保存">保存</button></div></form></dialog>
   <dialog id="accounts-dialog" class="accounts-dialog" aria-labelledby="accounts-title">
     <div class="dialog-header"><div><span class="dialog-eyebrow" data-i18n="YOUR ACCOUNTS">YOUR ACCOUNTS</span><h2 id="accounts-title" data-i18n="账户管理">账户管理</h2></div><button type="button" class="icon-button dialog-close" data-close-dialog="accounts-dialog" aria-label="关闭账户管理" data-i18n-aria-label="关闭账户管理">×</button></div>
     <div class="accounts-body">
@@ -155,7 +155,7 @@
     <div class="dialog-footer"><button type="button" id="account-delete-cancel" class="secondary-button" data-close-dialog="account-delete-dialog" autofocus data-i18n="保留账户">保留账户</button><button type="button" id="account-delete-confirm" class="danger-button" data-i18n="删除本地账户">删除本地账户</button></div>
   </dialog>
   <dialog id="image-dialog" class="image-dialog" aria-label="图片预览" data-i18n-aria-label="图片预览"><div class="image-toolbar"><span id="image-title" data-i18n="图片预览">图片预览</span><button type="button" class="icon-button dialog-close" data-close-dialog="image-dialog" aria-label="关闭图片预览" data-i18n-aria-label="关闭图片预览">×</button></div><img id="image-preview" alt="图片预览" data-i18n-alt="图片预览"></dialog>
-  <dialog id="delete-dialog" class="small-dialog"><div class="dialog-header"><h2 data-i18n="删除这段对话？">删除这段对话？</h2><button type="button" class="icon-button dialog-close" data-close-dialog="delete-dialog" aria-label="关闭" data-i18n-aria-label="关闭">×</button></div><div class="small-dialog-body"><p>“<span id="delete-title"></span><span data-i18n="”将从本客户端记录中移除。项目文件和 Grok CLI 底层会话会保留。">”将从本客户端记录中移除。项目文件和 Grok CLI 底层会话会保留。</span></p></div><div class="dialog-footer"><button type="button" class="secondary-button" data-close-dialog="delete-dialog" data-i18n="保留对话">保留对话</button><button type="button" class="danger-button" id="confirm-delete" data-i18n="删除对话">删除对话</button></div></dialog>
+  <dialog id="delete-dialog" class="small-dialog" aria-labelledby="delete-dialog-title"><div class="dialog-header"><h2 id="delete-dialog-title" data-i18n="删除这段对话？">删除这段对话？</h2><button type="button" class="icon-button dialog-close" data-close-dialog="delete-dialog" aria-label="关闭" data-i18n-aria-label="关闭">×</button></div><div class="small-dialog-body"><p>“<span id="delete-title"></span><span data-i18n="”将从本客户端记录中移除。项目文件和 Grok CLI 底层会话会保留。">”将从本客户端记录中移除。项目文件和 Grok CLI 底层会话会保留。</span></p></div><div class="dialog-footer"><button type="button" class="secondary-button" data-close-dialog="delete-dialog" data-i18n="保留对话">保留对话</button><button type="button" class="danger-button" id="confirm-delete" data-i18n="删除对话">删除对话</button></div></dialog>
   <div class="session-menu" id="session-menu" hidden role="menu"><button id="menu-rename" role="menuitem"><span data-i18n="重命名">重命名</span><span>↗</span></button><button id="menu-export" role="menuitem"><span data-i18n="导出 Markdown">导出 Markdown</span><span>↓</span></button><button id="menu-delete" class="danger-text" role="menuitem"><span data-i18n="删除对话">删除对话</span><span>×</span></button></div>
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
   <script src="vendor/marked.umd.js"></script>

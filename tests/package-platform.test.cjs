@@ -24,15 +24,15 @@ test('Mac and Windows ship the same runtime and assets with platform-specific me
   assert.equal(mac.ignore, win.ignore);
   assert.equal(mac.asar, true);
   assert.equal(mac.extendInfo.LSMinimumSystemVersion, '13.0');
-  assert.equal(mac.appBundleId, 'com.swf-cmd.grokbuild-tokyo');
+  assert.equal(mac.appBundleId, 'com.swf-cmd.dirth');
   assert.ok(mac.icon.endsWith('.icns'));
   assert.ok(win.icon.endsWith('.ico'));
   assert.deepEqual(mac.osxUniversal, { mergeASARs: true });
 });
 
 test('packaged checks resolve the actual Windows and macOS bundle layouts', () => {
-  assert.equal(packagedArchive(root, 'darwin'), path.join(root, 'App', 'Grokbuild Tokyo.app', 'Contents', 'Resources', 'app.asar'));
-  assert.equal(packagedExecutable(root, 'darwin'), path.join(root, 'App', 'Grokbuild Tokyo.app', 'Contents', 'MacOS', 'Grokbuild Tokyo'));
+  assert.equal(packagedArchive(root, 'darwin'), path.join(root, 'App', 'Dirth.app', 'Contents', 'Resources', 'app.asar'));
+  assert.equal(packagedExecutable(root, 'darwin'), path.join(root, 'App', 'Dirth.app', 'Contents', 'MacOS', 'Dirth'));
   assert.equal(packagedArchive(root, 'win32'), path.join(root, 'App', 'resources', 'app.asar'));
-  assert.equal(packagedExecutable(root, 'win32'), path.join(root, 'App', 'Grokbuild Tokyo.exe'));
+  assert.equal(packagedExecutable(root, 'win32'), path.join(root, 'App', 'Dirth.exe'));
 });

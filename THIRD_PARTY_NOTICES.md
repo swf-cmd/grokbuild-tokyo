@@ -2,9 +2,9 @@
 
 ## Project license
 
-Grokbuild Tokyo's original code and documentation are available under the [MIT License](LICENSE), copyright 2026 swf-cmd and contributors. The project-maintained icon, synthesized music, generated background and documentation screenshots are made available under the same license to the extent the contributors hold applicable rights. Third-party software and third-party names, signs or marks remain subject to their respective rights; the MIT license does not grant trademark rights.
+Dirth's original code and documentation are available under the [MIT License](LICENSE), copyright 2026 swf-cmd and contributors. The project-maintained icon, synthesized music, generated background and documentation screenshots are made available under the same license to the extent the contributors hold applicable rights. Third-party software and third-party names, signs or marks remain subject to their respective rights; the MIT license does not grant trademark rights.
 
-Grokbuild Tokyo is an independent, unofficial client. It is not affiliated with or endorsed by SpaceXAI or xAI (the company was renamed SpaceXAI in 2026). The Grok, Grok Build, SpaceXAI and xAI names identify the service and CLI this client connects to. The official Grok Build CLI is installed separately and is not bundled in this repository or the desktop build; its own license and service terms apply independently.
+Dirth is an independent, unofficial client. It is not affiliated with or endorsed by SpaceXAI or xAI (the company was renamed SpaceXAI in 2026). The Grok, Grok Build, SpaceXAI and xAI names identify the service and CLI this client connects to. The official Grok Build CLI is installed separately and is not bundled in this repository or the desktop build; its own license and service terms apply independently.
 
 ## Bundled browser libraries
 
@@ -17,7 +17,7 @@ These browser distributions are included unmodified. Their original notices rema
 
 ## Electron and development dependencies
 
-On Windows, Electron and its bundled Chromium components retain their `LICENSE` and `LICENSES.chromium.html` files in the generated `App` directory. On Mac, they are included inside `Grokbuild Tokyo.app/Contents/Resources` as `LICENSE.electron.txt` and `LICENSES.chromium.html`, so the `.app` and its ZIP retain these notices. Keep these files when distributing a build. The project's own `LICENSE`, this notice and the browser-library license texts are included in `App/resources/app.asar` on Windows, or `Grokbuild Tokyo.app/Contents/Resources/app.asar` on Mac.
+On Windows, Electron and its bundled Chromium components retain their `LICENSE` and `LICENSES.chromium.html` files in the generated `App` directory. On Mac, they are included inside `Dirth.app/Contents/Resources` as `LICENSE.electron.txt` and `LICENSES.chromium.html`, so the `.app` and its ZIP retain these notices. Keep these files when distributing a build. The project's own `LICENSE`, this notice and the browser-library license texts are included in `App/resources/app.asar` on Windows, or `Dirth.app/Contents/Resources/app.asar` on Mac.
 
 Other development dependencies and their exact versions are recorded in `package-lock.json`. Their notices are available in their installed packages. The project's MIT license does not replace any dependency license.
 
@@ -27,8 +27,8 @@ Other development dependencies and their exact versions are recorded in `package
 | --- | --- |
 | `src/renderer/assets/tokyo-rain.png` | AI-generated Shibuya rainy-night scene. Generation prompt: [IMAGE-PROMPT.md](src/renderer/assets/IMAGE-PROMPT.md). It is an illustration, not a documentary photograph. |
 | `src/renderer/assets/kyoto-lanterns.webp`, `okinawa-emerald.webp`, `hokkaido-snowlight.webp`, `theme-previews.webp` | Kyoto, Okinawa and Hokkaido backdrops painted procedurally from geometry, gradients and seeded noise by [scripts/backdrop-art.js](scripts/backdrop-art.js); render with `node scripts/render-backdrops.cjs`. No photographs, image models or third-party artwork are used. The picker preview sprite also contains a reduced copy of `tokyo-rain.png`. |
-| `src/renderer/assets/icon.png`, `icon.ico`, `icon.icns` | Project icon drawn by [scripts/make-icon.py](scripts/make-icon.py); the Mac icon is converted from that PNG by [scripts/make-mac-icon.cjs](scripts/make-mac-icon.cjs). |
-| `src/renderer/assets/tokyo-afterimage.wav` | **Tokyo Afterimage · 東京残像**, an original, locally synthesized instrumental: 80 BPM, 96-second loop. Composition and synthesis: [scripts/ambient-score.js](scripts/ambient-score.js); render with `node scripts/render-ambience.cjs`. No third-party recordings or samples are used. |
+| `src/renderer/assets/icon.png`, `brand-mark.png`, `icon.ico`, `icon.icns` | Project icon, a dash and three corners stepping up on lime green, drawn from simple geometry by [scripts/make-icon.py](scripts/make-icon.py), which also writes the Windows and Mac icon files. No third-party artwork is used. |
+| `src/renderer/assets/tokyo-afterimage.flac` | **Tokyo Afterimage · 東京残像**, an original, locally synthesized instrumental: 80 BPM, 96-second loop. Composition and synthesis: [scripts/ambient-score.js](scripts/ambient-score.js); render with `node scripts/render-ambience.cjs`, encoded as lossless FLAC. No third-party recordings or samples are used. |
 | `src/renderer/assets/kyoto-lanterns.flac`, `okinawa-island-time.flac`, `hokkaido-snowlight.flac` | **Kyoto Lanterns · 京都灯籠**, **Okinawa Island Time · 沖縄島時間** and **Hokkaido Snowlight · 北海道雪あかり**, original, locally synthesized instrumentals (96-second loops) composed in [scripts/theme-scores.js](scripts/theme-scores.js); render with `node scripts/render-ambience.cjs --theme all`, encoded as lossless FLAC. Strings are Karplus-Strong models and bells and music-box tines are additive synthesis; no third-party recordings or samples are used. |
 | `docs/images/welcome-*`, `docs/images/app-*` | PNG and GIF captures of the project's real Electron interface using isolated demo data and a simulated engine. Demo text is illustrative, not an actual model response or performance claim. |
 | `docs/images/social-preview.png` | Link preview card rendered from [social-preview.html](docs/images/social-preview.html), combining `app-en.png` with the background and icon above. Text is set in Liberation Sans, Liberation Mono and Poppins (SIL Open Font License 1.1); no font files are distributed. |
@@ -39,6 +39,6 @@ Other development dependencies and their exact versions are recorded in `package
 
 本项目为独立、非官方客户端，与 SpaceXAI 或 xAI（该公司已于 2026 年更名为 SpaceXAI）无隶属关系，也未获其背书。Grok Build CLI 需单独安装，不随本仓库或桌面构建分发，其许可证和服务条款独立适用。
 
-Marked 与 DOMPurify 的原始声明和许可文本随程序保留。Windows 的 Electron 许可文件为 `App` 中的 `LICENSE` 与 `LICENSES.chromium.html`；Mac 则将它们以 `LICENSE.electron.txt` 和 `LICENSES.chromium.html` 保存在 `Grokbuild Tokyo.app/Contents/Resources` 内，单独分发 `.app` 或 ZIP 时也会保留。本项目的许可证、本文及浏览器库许可文本位于 Windows 的 `App/resources/app.asar` 或 Mac 的 `Grokbuild Tokyo.app/Contents/Resources/app.asar` 内。
+Marked 与 DOMPurify 的原始声明和许可文本随程序保留。Windows 的 Electron 许可文件为 `App` 中的 `LICENSE` 与 `LICENSES.chromium.html`；Mac 则将它们以 `LICENSE.electron.txt` 和 `LICENSES.chromium.html` 保存在 `Dirth.app/Contents/Resources` 内，单独分发 `.app` 或 ZIP 时也会保留。本项目的许可证、本文及浏览器库许可文本位于 Windows 的 `App/resources/app.asar` 或 Mac 的 `Dirth.app/Contents/Resources/app.asar` 内。
 
 涩谷背景为 AI 生成图，并非实景纪实照片；京都、冲绳、北海道背景由 `scripts/backdrop-art.js` 以代码绘制，未使用照片、图像模型或第三方作品；图标由脚本绘制；《Tokyo Afterimage · 東京残像》及三座城市的配乐均为无第三方录音采样的原创合成器器乐。文档截图采用隔离演示数据和模拟引擎，不展示真实账户信息或真实模型回复；社交预览卡片由 `docs/images/social-preview.html` 将上述截图、背景与图标组合生成，文字字体采用 SIL Open Font License，仓库不分发字体文件。

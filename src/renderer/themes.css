@@ -68,7 +68,7 @@
   background:
     repeating-linear-gradient(90deg, transparent 0 21px, #3a2a1c0b 21px 22px),
     var(--washi),
-    linear-gradient(160deg, #e8e5da, #e4e1d5 65%);
+    linear-gradient(160deg, #e8e5da, #e4e1d5 65%) #e4e1d5;
 }
 :root[data-theme="kyoto"] .hero-title { font-family: var(--mincho); font-weight: 500; }
 :root[data-theme="kyoto"] .hero-title > span:first-child { font-size: clamp(60px, 6.6vw, 112px); letter-spacing: .14em; text-shadow: none; }
@@ -158,7 +158,7 @@
   opacity: 1;
 }
 :root[data-theme="okinawa"] .main-panel.has-messages .ambient-image { opacity: .1; }
-:root[data-theme="okinawa"] .sidebar { background: var(--minsa) top left / 62px 8px repeat-x, linear-gradient(170deg, #ffffff, #f3f9f9 70%); }
+:root[data-theme="okinawa"] .sidebar { background: var(--minsa) top left / 62px 8px repeat-x, linear-gradient(170deg, #ffffff, #f3f9f9 70%) #f3f9f9; }
 :root[data-theme="okinawa"] .titlebar { background: #ffffff; }
 :root[data-theme="okinawa"] .hero-title { font-family: "Arial Rounded MT Bold", "Hiragino Maru Gothic ProN", "Yu Gothic UI", "Segoe UI Black", "Arial Black", sans-serif; }
 :root[data-theme="okinawa"] .hero-title > span:first-child { font-weight: 900; letter-spacing: -.035em; font-size: clamp(66px, 7.4vw, 124px); color: #0b3c55; text-shadow: 0 2px 0 #ffffff, 0 18px 40px #0b5a7a1f; }
@@ -248,7 +248,7 @@
   opacity: 1;
 }
 :root[data-theme="hokkaido"] .main-panel.has-messages .ambient-image { opacity: .14; }
-:root[data-theme="hokkaido"] .sidebar { background: linear-gradient(180deg, #ffffffb8, #ffffff00 40%), linear-gradient(160deg, #eef2f8, #e8edf5 65%); }
+:root[data-theme="hokkaido"] .sidebar { background: linear-gradient(180deg, #ffffffb8, #ffffff00 40%), linear-gradient(160deg, #eef2f8, #e8edf5 65%) #e8edf5; }
 :root[data-theme="hokkaido"] .hero-title { font-family: "Segoe UI", "Helvetica Neue", "Avenir Next", "Hiragino Sans", "Microsoft YaHei UI", sans-serif; }
 :root[data-theme="hokkaido"] .hero-title > span:first-child { font-weight: 200; letter-spacing: .06em; font-size: clamp(60px, 6.8vw, 116px); color: #1a2b44; text-shadow: none; }
 :root[data-theme="hokkaido"] .title-outline { font-weight: 300; letter-spacing: .3em; font-size: clamp(24px, 2.6vw, 40px); margin-top: 8px; color: #4f7fbf; -webkit-text-stroke: 0; }

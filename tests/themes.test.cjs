@@ -184,3 +184,21 @@ test('the daylight cities keep text, links and buttons readable', () => {
     assert.ok(contrast(color('#000000', 'box-shadow'), '#ffffff') > 7, `${id}: shadows stay dark`);
   }
 });
+
+test('every sidebar background ends in an opaque color, so its text keeps subpixel antialiasing', () => {
+  // The animated weather layer makes Chromium composite the sidebar, which is
+  // painted after it. A composited layer keeps ClearType text only when it is
+  // known to be opaque, and a gradient alone does not tell Chromium that.
+  const declarations = [];
+  for (const file of ['styles.css', 'theme-colors.css', 'themes.css']) {
+    const css = fs.readFileSync(path.join(renderer, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!selector.split(',').some(part => /\.sidebar$/.test(part.trim()))) continue;
+      for (const [, value] of body.matchAll(/(?:^|;)\s*background\s*:([^;]+)/g)) declarations.push({ file, selector: selector.trim(), value: value.trim() });
+    }
+  }
+  assert.ok(declarations.length >= 7, `found ${declarations.length} sidebar backgrounds`);
+  for (const { file, selector, value } of declarations) {
+    assert.match(value, /\s#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i, `${file} ${selector} needs an opaque color at the end of its background: ${value}`);
+  }
+});

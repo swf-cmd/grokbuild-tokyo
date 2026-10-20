@@ -1,34 +1,34 @@
 <div align="center">
 
-<img src="src/renderer/assets/icon.png" alt="Grokbuild Tokyo 图标" width="88" />
+<img src="src/renderer/assets/icon.png" alt="Dirth 图标：青柠绿底色上，一道短横与三个折角逐级向右上攀升" width="88" />
 
-# Grokbuild Tokyo · 东京雨夜
+# Dirth
 
-**城市未眠，你的灵感也是。**
+**城市灯火，照亮你的灵感。**
 
-为 [Grok Build](https://x.ai/cli) 编程智能体打造的桌面应用：流式对话、多任务并行、多账户独立管理，窗外是东京的雨夜。
+为 [Grok Build](https://x.ai/cli) 编程智能体打造的桌面应用：流式对话、多任务并行、多账户独立管理，窗外是东京的雨夜、京都的灯笼、冲绳的海或北海道的雪。
 
 [English](README.md) · **简体中文**
 
-[![测试](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml/badge.svg)](https://github.com/swf-cmd/grokbuild-tokyo/actions/workflows/test.yml)
-[![最新版本](https://img.shields.io/github/v/release/swf-cmd/grokbuild-tokyo?label=release&color=c1adff)](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)
+[![测试](https://github.com/swf-cmd/dirth/actions/workflows/test.yml/badge.svg)](https://github.com/swf-cmd/dirth/actions/workflows/test.yml)
+[![最新版本](https://img.shields.io/github/v/release/swf-cmd/dirth?label=release&color=c1adff)](https://github.com/swf-cmd/dirth/releases/latest)
 [![MIT 许可证](https://img.shields.io/badge/license-MIT-71d6c6)](LICENSE)
 ![Windows x64](https://img.shields.io/badge/platform-Windows_x64-86b7f9)
 ![macOS 13+ · Intel + Apple Silicon](https://img.shields.io/badge/macOS-13%2B_Intel_%2B_Apple_Silicon-86b7f9)
 
-**[下载 Mac 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip) · [下载 Windows 版](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip) · [全部版本](https://github.com/swf-cmd/grokbuild-tokyo/releases)**
+**[下载 Mac 版](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip) · [下载 Windows 版](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip) · [全部版本](https://github.com/swf-cmd/dirth/releases)**
 
-<sub>免费开源 · 非官方 · 需另行安装官方 <a href="#安装-grok-build">Grok Build CLI</a></sub>
+<sub>免费开源 · 非官方 · 需另行安装官方 <a href="#安装-grok-build">Grok Build CLI</a> · 原名 Grokbuild Tokyo</sub>
 
-[快速开始](#快速开始) · [功能](#陪你把灵感写到深夜) · [常见问题](#常见问题) · [完整使用指南](docs/guide.zh-CN.md) · [参与贡献](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/swf-cmd/grokbuild-tokyo/issues/new/choose)
+[快速开始](#快速开始) · [功能](#陪你把灵感写到深夜) · [常见问题](#常见问题) · [完整使用指南](docs/guide.zh-CN.md) · [参与贡献](CONTRIBUTING.zh-CN.md) · [反馈问题](https://github.com/swf-cmd/dirth/issues/new/choose)
 
 </div>
 
-![Grokbuild Tokyo 中文欢迎界面，涩谷夜景中的雨滴动态演示](docs/images/welcome-zh-CN.gif?v=20260930)
+![Dirth 中文欢迎界面，涩谷夜景中的雨滴动态演示](docs/images/welcome-zh-CN.gif?v=20261020)
 
-*Windows 欢迎页雨滴动态演示，使用隔离的演示账户；Mac 使用原生窗口按钮和 Command 快捷键。[静态截图](docs/images/welcome-zh-CN.png?v=20260930) · [拍摄说明](docs/images/README.md)。*
+*Windows 欢迎页雨滴动态演示，使用隔离的演示账户；Mac 使用原生窗口按钮和 Command 快捷键。[静态截图](docs/images/welcome-zh-CN.png?v=20261020) · [拍摄说明](docs/images/README.md)。*
 
-[Grok Build](https://x.ai/cli) 是 SpaceXAI（原 xAI）推出的终端编程智能体。Grokbuild Tokyo 是它的**非官方开源桌面应用**：启动你本机安装的 Grok Build CLI，并通过 [Agent Client Protocol](https://agentclientprotocol.com/)（ACP）与之通信。登录、模型、工具、授权规则、MCP 服务和 Skills 都按 CLI 原有配置运行，应用只是为它们开了一扇值得一直亮着的窗。
+[Grok Build](https://x.ai/cli) 是 SpaceXAI（原 xAI）推出的终端编程智能体。Dirth 是它的**非官方开源桌面应用**：启动你本机安装的 Grok Build CLI，并通过 [Agent Client Protocol](https://agentclientprotocol.com/)（ACP）与之通信。登录、模型、工具、授权规则、MCP 服务和 Skills 都按 CLI 原有配置运行，应用只是为它们开了一扇值得一直亮着的窗。
 
 本项目与 SpaceXAI 或 xAI 无隶属关系，也未获其背书。登录、模型访问和用量由官方 CLI 及你的账户处理。
 
@@ -36,7 +36,7 @@
 
 | 功能 | 你可以做什么 |
 | --- | --- |
-| **有氛围的工作空间** | 涩谷雨夜背景、可关闭的动态雨滴，以及原创离线合成器音乐。 |
+| **有氛围的工作空间** | 窗外的城市景致、可关闭的天气动画，以及每座城市各自的原创离线配乐。 |
 | **四座城市主题** | 东京、京都、冲绳、北海道随时切换：东京保持雨夜深色，京都（和纸与墨）、冲绳（阳光海面）、北海道（雪与磨砂玻璃）为浅色日间版；每座城市都有自己的配色、字体、背景、窗外景致（雨、红叶、海面波光、飘雪）和原创配乐。 |
 | **多任务同时进行** | 最多四段对话并行生成，各自保留进度、授权请求、停止按钮和草稿。 |
 | **持续积累的对话** | 流式 Markdown 与代码块、搜索与重命名、历史恢复和 Markdown 导出。 |
@@ -47,7 +47,7 @@
 | **跟随官方引擎的控制** | 可选模型与推理档位来自 CLI 并自动更新，还可设置子代理与工作目录。 |
 | **七种界面语言** | 中文、English、日本語、한국어、Español、Deutsch、Français。 |
 
-![真实桌面界面中的中文演示对话，背景保留较淡的雨滴](docs/images/app-zh-CN.png?v=20260930)
+![真实桌面界面中的中文演示对话，背景保留较淡的雨滴](docs/images/app-zh-CN.png?v=20261020)
 
 *截图来自隔离的演示账户与模拟引擎，对话内容和额度数字仅作界面展示；可用模型和工具取决于你安装的 CLI。*
 
@@ -73,15 +73,15 @@ irm https://x.ai/cli/install.ps1 | iex
 
 ### 下载说明
 
-**[前往最新 Release](https://github.com/swf-cmd/grokbuild-tokyo/releases/latest)**：公开下载，无需登录 GitHub。
+**[前往最新 Release](https://github.com/swf-cmd/dirth/releases/latest)**：公开下载，无需登录 GitHub。v1.2.5 发布于改名之前，文件名和应用名仍是 Grokbuild Tokyo。
 
 | v1.2.5 下载 | 适用环境 | 校验文件 |
 | --- | --- | --- |
-| **[Mac 通用版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip)** | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256) |
-| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip)** | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/grokbuild-tokyo/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256) |
+| **[Mac 通用版 ZIP](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip)** | macOS 13 Ventura 及以上 · Intel 与 Apple Silicon | [SHA-256](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-mac-universal.zip.sha256) |
+| **[Windows x64 便携版 ZIP](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip)** | Windows x64 · 完整应用文件夹，免安装 | [SHA-256](https://github.com/swf-cmd/dirth/releases/download/v1.2.5/Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256) |
 
-- **Mac**：解压一次，将 **Grokbuild Tokyo.app** 拖入**应用程序**。应用使用临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。如首次启动被 macOS 阻止，请确认下载来自本仓库，再按照**系统设置 → 隐私与安全性 → 仍要打开**操作（[Apple 说明](https://support.apple.com/en-us/102445)）。
-- **Windows**：将 ZIP 完整解压到可写入的目录，运行 **`App\Grokbuild Tokyo.exe`**。请保留**整个 `App` 文件夹**；这是便携版，不是安装器。应用尚未进行代码签名。如果出现 SmartScreen 提示，请先核实下载来源；如果系统提供相应选项，可点击**更多信息 → 仍要运行**。
+- **Mac**：解压一次，将 **Dirth.app** 拖入**应用程序**（v1.2.5 及更早版本名为 **Grokbuild Tokyo.app**）。应用使用临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。如首次启动被 macOS 阻止，请确认下载来自本仓库，再按照**系统设置 → 隐私与安全性 → 仍要打开**操作（[Apple 说明](https://support.apple.com/en-us/102445)）。
+- **Windows**：将 ZIP 完整解压到可写入的目录，运行 **`App\Dirth.exe`**（v1.2.5 及更早版本为 **`App\Grokbuild Tokyo.exe`**）。请保留**整个 `App` 文件夹**；这是便携版，不是安装器。升级时用新的 **`App`** 文件夹替换旧的即可，旁边的 `data` 与 `Workspace` 保持不动。应用尚未进行代码签名。如果出现 SmartScreen 提示，请先核实下载来源；如果系统提供相应选项，可点击**更多信息 → 仍要运行**。
 - 两版均已包含桌面运行环境，只有[从源码构建](#从源码构建)时才需要 Node.js。最低 macOS 版本来自 [Electron 44](https://www.electronjs.org/blog/electron-44-0)。客户端暂不将 Linux 作为支持目标。
 
 <details>
@@ -108,7 +108,7 @@ Get-Content .\Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256
 
 1. Windows 默认寻找 `%USERPROFILE%\.grok\bin\grok.exe`，Mac 默认寻找 `~/.grok/bin/grok`，即官方安装脚本的默认位置。如果安装在其他位置（例如设置了 `GROK_BIN_DIR` 或通过 WinGet 安装），在左下角**偏好设置**（Preferences）中选择对应的可执行文件；可在 PowerShell 中运行 `(Get-Command grok).Source`，或在 Mac 终端运行 `command -v grok` 查看路径。Mac 上选择不带 `.exe` 后缀的 `grok`。
 2. 如果尚未保存登录，点击消息输入区上方的**登录 Grok ↗**（Sign in to Grok ↗），再点击**打开登录页面 ↗**（Open sign-in page ↗），在浏览器中登录并核对验证码；授权完成后应用会自动连接。需要更多账户时，使用**账户切换**（Switch account）添加。
-3. 在**偏好设置**中选择项目目录，再开启新对话。Windows 默认使用打包后 `App` 文件夹旁的 `Workspace`（源码运行时位于源码目录中），Mac 默认使用 `~/Library/Application Support/Grokbuild Tokyo/Workspace`；已有会话保留各自原来的工作目录。
+3. 在**偏好设置**中选择项目目录，再开启新对话。Windows 默认使用打包后 `App` 文件夹旁的 `Workspace`（源码运行时位于源码目录中），Mac 默认使用 `~/Library/Application Support/Dirth/Workspace`；已有会话保留各自原来的工作目录。
 
 在 **Preferences → Interface language** 中选择中文并保存即可切换界面语言。桌面界面无需手动填写 API Key。
 
@@ -117,14 +117,14 @@ Get-Content .\Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256
 <details>
 <summary><b>这是官方应用吗？</b></summary>
 
-不是。Grokbuild Tokyo 是采用 MIT 许可证的独立项目，与 SpaceXAI 或 xAI 无隶属关系，也未获其背书。它不内置、也不修改 CLI，只是启动你安装的 Grok Build CLI，并显示 CLI 返回的内容。
+不是。Dirth 是采用 MIT 许可证的独立项目，与 SpaceXAI 或 xAI 无隶属关系，也未获其背书。它不内置、也不修改 CLI，只是启动你安装的 Grok Build CLI，并显示 CLI 返回的内容。
 
 </details>
 
 <details>
 <summary><b>它和 Grok 应用里的 Grok Build 是一回事吗？</b></summary>
 
-不是。Grok 网页版和手机 App 也使用 Grok Build 这个名字，指在对话中生成应用的功能。Grokbuild Tokyo 配合的是终端版 Grok Build，也就是在你电脑上的项目文件夹中工作的 `grok` 命令行编程智能体。如果终端里能运行 `grok --version`，就说明已安装本应用所需的 CLI。
+不是。Grok 网页版和手机 App 也使用 Grok Build 这个名字，指在对话中生成应用的功能。Dirth 配合的是终端版 Grok Build，也就是在你电脑上的项目文件夹中工作的 `grok` 命令行编程智能体。如果终端里能运行 `grok --version`，就说明已安装本应用所需的 CLI。
 
 </details>
 
@@ -159,7 +159,7 @@ Get-Content .\Grokbuild-Tokyo-1.2.5-win-x64.zip.sha256
 <details>
 <summary><b>为什么首次打开时 macOS 或 Windows 会提示风险？</b></summary>
 
-Mac 版只使用临时签名、未经公证，Windows 版未进行代码签名。请确认下载来自本仓库的 [Releases](https://github.com/swf-cmd/grokbuild-tokyo/releases)，必要时校验 SHA-256，再按照[下载说明](#下载说明)中的步骤打开。
+Mac 版只使用临时签名、未经公证，Windows 版未进行代码签名。请确认下载来自本仓库的 [Releases](https://github.com/swf-cmd/dirth/releases)，必要时校验 SHA-256，再按照[下载说明](#下载说明)中的步骤打开。
 
 </details>
 
@@ -183,7 +183,7 @@ Mac 版只使用临时签名、未经公证，Windows 版未进行代码签名�
 ## 它如何工作
 
 ```text
-Grokbuild Tokyo（Electron 桌面界面）
+Dirth（Electron 桌面界面）
           │
           │  通过本地进程使用 ACP
           ▼
@@ -199,7 +199,7 @@ Grokbuild Tokyo（Electron 桌面界面）
 
 ## 你的数据放在哪里
 
-Windows 的 `data/` 位于源码根目录，或打包后 `App` 文件夹的旁边。Mac 使用 `~/Library/Application Support/Grokbuild Tokyo/data`，保存在 `.app` 之外，源码运行与打包程序共用该位置。它保存聊天、附件、设置，以及 CLI 写入的账户凭据。它存放在本地、被 Git 忽略，**本应用不额外加密这些文件**。本机账户也可能使用 `GROK_HOME`（默认 `~/.grok`）。独立账户隔离配置和历史，不提供操作系统级沙箱。
+Windows 的 `data/` 位于源码根目录，或打包后 `App` 文件夹的旁边。Mac 使用 `~/Library/Application Support/Dirth/data`，保存在 `.app` 之外，源码运行与打包程序共用该位置。v1.2.5 及更早版本存放在 `Grokbuild Tokyo` 文件夹中；Dirth 首次启动时会把它整体移过来，并在旧位置留下链接，已有会话的工作目录照常可用。它保存聊天、附件、设置，以及 CLI 写入的账户凭据。它存放在本地、被 Git 忽略，**本应用不额外加密这些文件**。本机账户也可能使用 `GROK_HOME`（默认 `~/.grok`）。独立账户隔离配置和历史，不提供操作系统级沙箱。
 
 远程图片会向公开图片网站发起请求。权限、文件与网络访问边界见[安全说明](SECURITY.zh-CN.md)，各类文件的存放位置见[使用指南](docs/guide.zh-CN.md#本地数据与仓库内容)。请单独备份个人数据，不要将其放进 issue、截图或发布包。
 
@@ -208,8 +208,8 @@ Windows 的 `data/` 位于源码根目录，或打包后 `App` 文件夹的旁�
 需要 **Git**、**Node.js 22.13.0 或更高版本**及 npm；开发和 CI 使用 Node.js 24。安装依赖和首次构建需联网下载 Electron。
 
 ```sh
-git clone https://github.com/swf-cmd/grokbuild-tokyo.git
-cd grokbuild-tokyo
+git clone https://github.com/swf-cmd/dirth.git
+cd dirth
 npm ci
 npm start
 ```
@@ -227,7 +227,7 @@ npm start
 ```powershell
 npm run build
 node scripts/verify-package.cjs
-& '.\App\Grokbuild Tokyo.exe'
+& '.\App\Dirth.exe'
 ```
 
 运行或分发 Windows 版时，请保留**整个 `App` 文件夹**。
@@ -237,10 +237,10 @@ Mac 上如有需要先安装 Apple 命令行工具（`xcode-select --install`）
 ```sh
 npm run build:mac
 node scripts/verify-package.cjs --platform darwin --arch universal
-open "App/Grokbuild Tokyo.app"
+open "App/Dirth.app"
 ```
 
-可分发文件为 `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`，旁边附有 `.zip.sha256` 校验文件。也可用 `npm run build:mac:arm64` 或 `npm run build:mac:x64` 生成体积较小的单架构版本。`npm run build` 为当前电脑构建；Mac 上使用当前 Node.js 进程的架构。
+可分发文件为 `dist/Dirth-1.2.5-mac-universal.zip`，旁边附有 `.zip.sha256` 校验文件。也可用 `npm run build:mac:arm64` 或 `npm run build:mac:x64` 生成体积较小的单架构版本。`npm run build` 为当前电脑构建；Mac 上使用当前 Node.js 进程的架构。
 
 Mac 构建使用本地临时签名（ad hoc），尚未使用 Developer ID 证书或经过 Apple 公证。两版共用相同界面和功能；Mac 增加原生窗口按钮与菜单。关闭 Mac 窗口后应用和正在进行的工作仍会运行，点击 Dock 图标可重新打开；按 **Cmd+Q** 完全退出。
 
@@ -257,14 +257,14 @@ npm run test:all
 
 `test:all` 依次运行 ESLint、JavaScript 类型检查、单元测试和全部离线 UI 测试。测试使用隔离环境与模拟 CLI，不发送真实模型请求。CI 还会审计依赖、构建 Windows 版与 Mac 通用版，并在 Windows、Apple Silicon 和 Intel Mac 上对打包后的应用重跑 UI 测试。[贡献指南](CONTRIBUTING.zh-CN.md)包含完整检查命令、贡献流程及需主动开启的真实模型测试说明。
 
-欢迎反馈问题、提交范围清晰的修复、完善翻译和文档。敏感安全问题请使用 [GitHub 私密漏洞报告](https://github.com/swf-cmd/grokbuild-tokyo/security/advisories/new)。
+欢迎反馈问题、提交范围清晰的修复、完善翻译和文档。敏感安全问题请使用 [GitHub 私密漏洞报告](https://github.com/swf-cmd/dirth/security/advisories/new)。
 
-如果 Grokbuild Tokyo 陪你度过了不少深夜，给仓库点个 Star，能帮更多人发现它。
+如果 Dirth 陪你度过了不少深夜，给仓库点个 Star，能帮更多人发现它。
 
 ## 许可证与致谢
 
 [MIT 许可证](LICENSE) © 2026 swf-cmd and contributors。第三方组件保留原有许可证；内置库、Electron 和素材来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-涩谷雨夜背景由 AI 生成，[提示词随仓库提供](src/renderer/assets/IMAGE-PROMPT.md)；京都、冲绳、北海道背景由 [`scripts/backdrop-art.js`](scripts/backdrop-art.js) 用代码绘制。图标由 [`scripts/make-icon.py`](scripts/make-icon.py) 绘制；**Tokyo Afterimage · 東京残像**与三座城市的配乐均为原创合成器器乐，可从 [`scripts/ambient-score.js`](scripts/ambient-score.js) 和 [`scripts/theme-scores.js`](scripts/theme-scores.js) 重新生成。
+涩谷雨夜背景由 AI 生成，[提示词随仓库提供](src/renderer/assets/IMAGE-PROMPT.md)；京都、冲绳、北海道背景由 [`scripts/backdrop-art.js`](scripts/backdrop-art.js) 用代码绘制。图标（青柠绿底色上逐级攀升的一道短横与三个折角）由 [`scripts/make-icon.py`](scripts/make-icon.py) 绘制；**Tokyo Afterimage · 東京残像**与三座城市的配乐均为原创合成器器乐，可从 [`scripts/ambient-score.js`](scripts/ambient-score.js) 和 [`scripts/theme-scores.js`](scripts/theme-scores.js) 重新生成。
 
 使用 [Electron](https://www.electronjs.org/)、[Marked](https://github.com/markedjs/marked) 与 [DOMPurify](https://github.com/cure53/DOMPurify) 构建，通过 [ACP](https://agentclientprotocol.com/) 连接 [Grok Build](https://github.com/xai-org/grok-build)。

@@ -1,4 +1,4 @@
-# Contributing to Grokbuild Tokyo
+# Contributing to Dirth
 
 English · [简体中文](CONTRIBUTING.zh-CN.md)
 
@@ -18,8 +18,8 @@ Use Windows x64 or macOS 13+ on Intel or Apple Silicon, with Node.js 22.13.0 or 
 Fork this repository, clone your fork, and create a branch for your change:
 
 ```sh
-git clone https://github.com/YOUR-USERNAME/grokbuild-tokyo.git
-cd grokbuild-tokyo
+git clone https://github.com/YOUR-USERNAME/dirth.git
+cd dirth
 git switch -c describe-your-change
 npm ci
 npm start
@@ -27,7 +27,7 @@ npm start
 
 Installation and the first build need network access to download dependencies and Electron. Windows defaults to `%USERPROFILE%\.grok\bin\grok.exe`; Mac defaults to `~/.grok/bin/grok`, with common installation paths as fallbacks. Select your executable in settings if necessary. On Mac, packaging requires Apple Command Line Tools (`xcode-select --install`).
 
-Mac source and packaged runs share `~/Library/Application Support/Grokbuild Tokyo` for `data/` and `Workspace/`. Tests use isolated roots; use those fixtures when checking account or history changes. Windows keeps its existing data layout in the checkout or beside `App/`.
+Mac source and packaged runs share `~/Library/Application Support/Dirth` for `data/` and `Workspace/`. Tests use isolated roots; use those fixtures when checking account or history changes. Windows keeps its existing data layout in the checkout or beside `App/`.
 
 ## Make a focused change
 
@@ -66,9 +66,9 @@ npm run build:mac
 npm run test:packaged -- --platform darwin --arch universal
 ```
 
-This creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip` with a `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` produce individual architecture builds.
+This creates `App/Dirth.app` and `dist/Dirth-1.2.5-mac-universal.zip` with a `.zip.sha256` checksum. `npm run build:mac:arm64` and `npm run build:mac:x64` produce individual architecture builds.
 
-`npm run build:win` explicitly targets Windows x64 and creates `dist/Grokbuild-Tokyo-1.2.5-win-x64.zip` plus its `.zip.sha256` checksum. This is a portable archive, not an installer: extract the complete `App/` folder and launch `App/Grokbuild Tokyo.exe`. The archive retains the runtime license files and excludes development `data/` and `Workspace/` directories. Windows uses the built-in PowerShell `Compress-Archive`; macOS cross-builds use `ditto` (Linux cross-builds require `zip`).
+`npm run build:win` explicitly targets Windows x64 and creates `dist/Dirth-1.2.5-win-x64.zip` plus its `.zip.sha256` checksum. This is a portable archive, not an installer: extract the complete `App/` folder and launch `App/Dirth.exe`. The archive retains the runtime license files and excludes development `data/` and `Workspace/` directories. Windows uses the built-in PowerShell `Compress-Archive`; macOS cross-builds use `ditto` (Linux cross-builds require `zip`).
 
 Mac packages are ad-hoc signed, without a Developer ID certificate or notarization. Do not label them as notarized releases. See the [user guide](docs/guide.md#getting-started) for installation and first-launch behavior. Validate a universal package on both architectures before claiming runtime coverage for both; inspecting its Mach-O slices alone is not a runtime test.
 

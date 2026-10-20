@@ -7,7 +7,7 @@ body:
       value: |
         Please check existing issues first. Never post credentials or private conversations.
         请先搜索已有问题，不要提交凭据或私人聊天。
-        For vulnerabilities / 漏洞反馈: [Security policy / 安全说明](https://github.com/swf-cmd/grokbuild-tokyo/blob/main/SECURITY.md).
+        For vulnerabilities / 漏洞反馈: [Security policy / 安全说明](https://github.com/swf-cmd/dirth/blob/main/SECURITY.md).
   - type: input
     id: versions
     attributes:

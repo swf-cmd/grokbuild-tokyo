@@ -1,4 +1,4 @@
-/* Grokbuild Tokyo — local desktop renderer. All engine access stays in preload. */
+/* Dirth — local desktop renderer. All engine access stays in preload. */
 'use strict';
 
 (() => {
@@ -79,7 +79,7 @@
       const result = await api[method](...args);
       if (result?.error && (result.ok === false || result.success === false)) throw new Error(safeText(result.error));
       return result;
-    } catch (error) { throw new Error(diagnostic(error.message || t('操作失败，请稍后重试。'))); }
+    } catch (error) { throw new Error(diagnostic(error.message || t('操作失败，请稍后重试。')), { cause: error }); }
   }
 
   async function guarded(work) {
@@ -116,7 +116,11 @@
       const old = oldMessages.get(normalized.id);
       return old && equalMessageValue(old, normalized) ? old : normalized;
     }) : previous?.messages || [];
-    return { ...previous, ...session, messages, messagesLoaded: Array.isArray(session.messages) || previous?.messagesLoaded === true };
+    const normalized = { ...previous, ...session, messages, messagesLoaded: Array.isArray(session.messages) || previous?.messagesLoaded === true };
+    // Full conversations carry no summary status; their messages are the truth.
+    // A "working" left over from older metadata would keep a finished reply busy.
+    if (Array.isArray(session.messages)) normalized.lastMessageStatus = messages.at(-1)?.status || null;
+    return normalized;
   }
 
   function replaceSessionList(sessions = []) {
@@ -145,18 +149,25 @@
     if (state.activeId === id) renderMessages(true);
   }
 
-  function fillSelect(element, items, selected, placeholder) {
-    element.replaceChildren();
+  function fillSelect(element, items, selected, placeholder, { suffix = '', firstLabel = '' } = {}) {
     const choices = [...items];
     if (selected && !choices.some(item => item.id === selected)) choices.unshift({ id: selected, name: t('{model}（未验证）', { model: selected }), disabled: true });
     if (!selected) choices.unshift({ id: '', name: placeholder, disabled: true });
-    for (const item of choices) {
-      const option = document.createElement('option');
-      option.value = item.id;
-      option.textContent = element.id === 'mode-select' ? reasoningLabel(item.name) : item.name;
-      option.title = item.description ? (element.id === 'mode-select' ? reasoningDescription(item.description) : item.description) : option.textContent;
-      option.disabled = Boolean(item.disabled);
-      element.append(option);
+    const options = choices.map((item, index) => {
+      const name = element.id === 'mode-select' ? reasoningLabel(item.name) : item.name;
+      const title = item.description ? (element.id === 'mode-select' ? reasoningDescription(item.description) : item.description) : name;
+      const label = (index === 0 && firstLabel) || `${name}${selected && item.id === selected ? suffix : ''}`;
+      return { value: item.id, label, title, disabled: Boolean(item.disabled) };
+    });
+    // Refilling an unchanged menu would close it if it is open, and drop focus.
+    const signature = JSON.stringify(options);
+    if (element.choiceSignature !== signature) {
+      element.replaceChildren(...options.map(item => {
+        const option = document.createElement('option');
+        option.value = item.value; option.textContent = item.label; option.title = item.title; option.disabled = item.disabled;
+        return option;
+      }));
+      element.choiceSignature = signature;
     }
     element.value = selected || '';
   }
@@ -213,11 +224,11 @@
     for (const id of ['sidebar-dot', 'connection-dot', 'settings-dot']) $(id).className = dotClass;
     $('connection-label').textContent = label;
     $('sidebar-status').textContent = !pending && needsSignIn() ? t('登录 Grok，开始对话') : online ? t('本地引擎在线') : pending ? t('正在连接本地引擎') : t('本地引擎离线');
-    $('connection-button').title = needsSignIn() ? t('登录 Grok ↗') : state.connected ? t('Grokbuild 已连接，点击重新连接') : t('点击重新连接 Grokbuild');
-    $('settings-engine-status').textContent = online ? t('Grokbuild {version} · 已连接', { version: state.info.version || '' }) : pending ? t('正在连接本地引擎') : diagnostic(state.lastError) || t('Grokbuild 未连接，请检查文件路径与登录状态');
+    $('connection-button').title = needsSignIn() ? t('登录 Grok ↗') : state.connected ? t('Grok Build 已连接，点击重新连接') : t('点击重新连接 Grok Build');
+    $('settings-engine-status').textContent = online ? t('Grok Build {version} · 已连接', { version: state.info.version || '' }) : pending ? t('正在连接本地引擎') : diagnostic(state.lastError) || t('Grok Build 未连接，请检查文件路径与登录状态');
     $('settings-engine-status').title = $('settings-engine-status').textContent;
     $('version-label').textContent = state.info.version ? `v${String(state.info.version).replace(/^v/, '')}` : t('本地');
-    $('version-label').title = state.info.version || t('本地 Grokbuild');
+    $('version-label').title = state.info.version || t('本地 Grok Build');
     renderSelects();
     renderComposerState();
   }
@@ -301,27 +312,24 @@
     const model = session ? session.model || session.modelId || '' : state.selectedModel;
     const modes = session ? normalizeChoices(session.modes) : newChatModes();
     const mode = session ? session.mode || session.modeId || '' : state.selectedMode;
-    fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'));
-    fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'));
+    // A choice saved earlier but not yet confirmed by this connection says so.
+    const pending = session?.modelSelectionVerified === false ? t('（待确认）') : '';
+    const selectedModel = models.find(item => item.id === model);
+    const needsCliUpdate = !modes.length && selectedModel?.supportsReasoningEffort === true && !Array.isArray(selectedModel.reasoningEfforts);
+    const modeHint = !modes.length && (needsCliUpdate || !mode) ? (needsCliUpdate ? t('请更新 Grok CLI') : model ? t('无可选推理档位') : t('请先选择模型')) : '';
+    fillSelect($('model-select'), models, model, session ? t('未返回模型') : t('请选择模型'), { suffix: pending });
+    fillSelect($('mode-select'), modes, mode, session ? t('未返回推理档位') : t('请选择推理档位'), { suffix: pending, firstLabel: modeHint });
     const locked = uiLocked({ engine: true, connected: true, busy: true });
     for (const element of [$('model-select'), $('mode-select')]) {
       element.disabled = locked;
-      element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grokbuild 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : activeBusy() ? t('任务结束后可更改配置。') : session ? t('更改后由 Grokbuild 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
+      element.title = state.login ? t('请先完成或取消账户登录。') : state.configuring ? t('正在等待 Grok Build 确认配置…') : !state.connected ? t('离线时仅可查看历史，重新连接后可更改配置。') : activeBusy() ? t('任务结束后可更改配置。') : session ? t('更改后由 Grok Build 确认生效，用于后续消息。') : t('新对话会明确使用所选模型和推理档位。');
     }
     if (!models.length) $('model-select').disabled = true;
     if (!modes.length) {
-      const selectedModel = models.find(item => item.id === model);
-      const needsCliUpdate = selectedModel?.supportsReasoningEffort === true && !Array.isArray(selectedModel.reasoningEfforts);
       $('mode-select').disabled = true;
       $('mode-select').title = needsCliUpdate ? t('当前 Grok CLI 未提供推理强度选项。请运行 grok update，然后重新连接。') : t('当前模型不提供可选的推理档位。');
-      if (needsCliUpdate || !mode) $('mode-select').options[0].textContent = needsCliUpdate ? t('请更新 Grok CLI') : model ? t('无可选推理档位') : t('请先选择模型');
     }
-    if (session?.modelSelectionVerified === false) {
-      for (const element of [$('model-select'), $('mode-select')]) {
-        if (element.value) element.selectedOptions[0].textContent += t('（待确认）');
-        element.title += t(' 当前显示的是保存的选择，尚未经本次连接确认。');
-      }
-    }
+    if (pending) for (const element of [$('model-select'), $('mode-select')]) element.title += t(' 当前显示的是保存的选择，尚未经本次连接确认。');
   }
 
   function historyGroup(session) {
@@ -341,9 +349,16 @@
     badge.title = label; badge.setAttribute('aria-label', label);
   }
 
+  // A row pressed but not yet released: redrawing the list now would replace
+  // it under the pointer and lose the click, so the redraw waits.
+  let sessionPress = false;
+  let sessionsDeferred = false;
   function renderSessions() {
     renderRunning();
+    if (sessionPress) { sessionsDeferred = true; return; }
     const list = $('session-list');
+    // Keyboard focus on a row moves to the same row once the list is redrawn.
+    const focused = list.contains(document.activeElement) ? { id: document.activeElement.closest('.session-item')?.dataset.sessionId, more: document.activeElement.classList.contains('session-more') } : null;
     const query = $('session-search').value.toLocaleLowerCase().trim();
     const sessions = state.sessions.filter(session => sessionTitle(session).toLocaleLowerCase().includes(query)).sort((a, b) => sessionTime(b) - sessionTime(a));
     list.replaceChildren();
@@ -366,6 +381,7 @@
       }
       const row = document.createElement('div');
       row.className = `session-item${session.id === state.activeId ? ' active' : ''}${state.busy.has(session.id) ? ' working' : ''}`;
+      row.dataset.sessionId = session.id;
       const select = document.createElement('button');
       select.className = 'session-select';
       select.disabled = uiLocked();
@@ -384,42 +400,109 @@
       row.append(select, more);
       list.append(row);
     }
+    if (focused?.id) [...list.querySelectorAll('.session-item')].find(row => row.dataset.sessionId === focused.id)?.querySelector(focused.more ? '.session-more' : '.session-select')?.focus({ preventScroll: true });
   }
 
+  // Reply HTML must not create application controls, duplicate their IDs,
+  // borrow application CSS classes, or initiate its own resource loads.
+  const PURIFY_CONFIG = {
+    ALLOWED_TAGS: ['a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'kbd', 'li', 'mark', 'ol', 'p', 'pre', 's', 'samp', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'var'],
+    ALLOWED_ATTR: ['href', 'title', 'colspan', 'rowspan', 'start', 'reversed', 'open', 'align', 'data-image-source', 'data-image-alt', 'data-href'],
+    // These are inert, including Windows drive paths and file: links: the
+    // main-process image resolver validates image sources before setting
+    // img.src, and data-href is only matched against the reply's attachments.
+    ADD_URI_SAFE_ATTR: ['data-image-source', 'data-image-alt', 'data-href'],
+    ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
+  };
+  let markdownRenderer = null;
+  function markdownOptions() {
+    if (!markdownRenderer) {
+      const renderer = new window.marked.Renderer();
+      const image = ({ href, text }) => `<span data-image-source="${escapeHtml(href)}" data-image-alt="${escapeHtml(text || '')}"></span>`;
+      renderer.image = image;
+      const link = renderer.link;
+      renderer.link = function(token) {
+        if (/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i.test(token.href || '')) return image(token);
+        // DOMPurify drops hrefs that are not web addresses (file: URLs, Windows
+        // paths). Keep the target as inert data so a click can still find the
+        // attachment it names.
+        const html = link.call(this, token);
+        const href = /^<a href="([^"]*)"/.exec(html)?.[1];
+        return href === undefined ? html : html.replace(/^<a /, `<a data-href="${href}" `);
+      };
+      // Task-list boxes would be stripped as form controls; show their state as text.
+      renderer.checkbox = ({ checked }) => checked ? '☑ ' : '☐ ';
+      markdownRenderer = renderer;
+    }
+    return { breaks: true, gfm: true, renderer: markdownRenderer };
+  }
+  function sanitizeHtml(html) {
+    // Images in raw HTML become the same inert placeholders as Markdown images.
+    // The whole document is parsed at once: HTML split over several Markdown
+    // tokens (<kbd>, text, </kbd>) must keep its structure.
+    if (/<img\b/i.test(html)) {
+      const template = document.createElement('template'); template.innerHTML = html;
+      for (const img of template.content.querySelectorAll('img')) {
+        const placeholder = document.createElement('span');
+        placeholder.dataset.imageSource = img.getAttribute('src') || '';
+        placeholder.dataset.imageAlt = img.getAttribute('alt') || '';
+        img.replaceWith(placeholder);
+      }
+      html = template.innerHTML;
+    }
+    return window.DOMPurify.sanitize(html, PURIFY_CONFIG);
+  }
   function markdown(text) {
     if (window.marked && window.DOMPurify) {
-      try {
-        const renderer = new window.marked.Renderer();
-        const image = ({ href, text }) => `<span data-image-source="${escapeHtml(href)}" data-image-alt="${escapeHtml(text || '')}"></span>`;
-        renderer.image = image;
-        renderer.html = ({ text }) => {
-          const template = document.createElement('template'); template.innerHTML = text;
-          for (const img of template.content.querySelectorAll('img')) {
-            const placeholder = document.createElement('span');
-            placeholder.dataset.imageSource = img.getAttribute('src') || '';
-            placeholder.dataset.imageAlt = img.getAttribute('alt') || '';
-            img.replaceWith(placeholder);
-          }
-          return template.innerHTML;
-        };
-        const link = renderer.link;
-        renderer.link = function(token) {
-          if (/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i.test(token.href || '')) return image(token);
-          return link.call(this, token);
-        };
-        // Reply HTML must not create application controls, duplicate their IDs,
-        // borrow application CSS classes, or initiate its own resource loads.
-        return window.DOMPurify.sanitize(window.marked.parse(text || '', { breaks: true, gfm: true, renderer }), {
-          ALLOWED_TAGS: ['a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'kbd', 'li', 'mark', 'ol', 'p', 'pre', 's', 'samp', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'var'],
-          ALLOWED_ATTR: ['href', 'title', 'colspan', 'rowspan', 'start', 'reversed', 'open', 'data-image-source', 'data-image-alt'],
-          // These are inert placeholders, including Windows drive paths. The
-          // main-process image resolver validates them before setting img.src.
-          ADD_URI_SAFE_ATTR: ['data-image-source', 'data-image-alt'],
-          ALLOW_DATA_ATTR: false, ALLOW_ARIA_ATTR: false,
-        });
-      } catch (_) { /* Fall through to safe plain text. */ }
+      try { return sanitizeHtml(window.marked.parse(text || '', markdownOptions())); }
+      catch (_) { /* Fall through to safe plain text. */ }
     }
     return escapeHtml(text).replace(/\n/g, '<br>');
+  }
+  // Raw HTML in a block (a <details> opened in one paragraph and closed in a
+  // later one) can only be rendered with the rest of the reply.
+  const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+  function rawHtmlOf(token, out = []) {
+    if (token.type === 'html') out.push(token.raw);
+    for (const child of token.tokens || []) rawHtmlOf(child, out);
+    for (const item of token.items || []) rawHtmlOf(item, out);
+    for (const cell of token.header || []) rawHtmlOf(cell, out);
+    for (const row of token.rows || []) for (const cell of row) rawHtmlOf(cell, out);
+    return out;
+  }
+  function closesItsHtml(token) {
+    const html = rawHtmlOf(token).join('').replace(/<!--[\s\S]*?-->/g, '');
+    if (!html) return true;
+    if (html.includes('<!--')) return false;
+    const open = [];
+    for (const [, closing, tag] of html.matchAll(/<(\/?)([A-Za-z][A-Za-z0-9-]*)\b[^>]*>/g)) {
+      const name = tag.toLowerCase();
+      if (VOID_TAGS.has(name)) continue;
+      if (!closing) { open.push(name); continue; }
+      const index = open.lastIndexOf(name);
+      if (index < 0) return false;
+      open.length = index;
+    }
+    return open.length === 0;
+  }
+  // A streaming reply grows at its end. Its completed top-level blocks keep
+  // their sanitized HTML, so each update parses and sanitizes only the blocks
+  // that changed instead of the whole reply. A reply drawn once (history, a
+  // language change) is rendered whole: one sanitizer pass is much cheaper
+  // than one per block. So is a reply whose raw HTML spans blocks.
+  function markdownBlocks(text, previous, incremental) {
+    if (!incremental && !previous?.blocks) return { text, html: markdown(text) };
+    if (!window.marked?.lexer || !window.DOMPurify) return { text, html: markdown(text) };
+    try {
+      const options = markdownOptions();
+      const tokens = window.marked.lexer(text || '', options);
+      if (!tokens.every(closesItsHtml)) return { text, html: markdown(text) };
+      const links = JSON.stringify(tokens.links || {});
+      const reusable = previous?.links === links ? previous.blocks || [] : [];
+      const blocks = tokens.map((token, index) => reusable[index]?.raw === token.raw ? reusable[index]
+        : { raw: token.raw, html: sanitizeHtml(window.marked.parser(Object.assign([token], { links: tokens.links }), options)) });
+      return { text, html: blocks.map(block => block.html).join(''), blocks, links };
+    } catch (_) { return { text, html: markdown(text) }; }
   }
 
   const imageCache = new Map();
@@ -445,9 +528,11 @@
   }
   function createImage(source, session, messageId, previousImages) {
     const key = `${messageId}:${source.src}`;
-    if (previousImages.has(key)) { const figure = previousImages.get(key); figure.localize?.(); return figure; }
+    // The same image can appear twice in one reply; each earlier figure is reused once.
+    const reused = previousImages.get(key)?.shift();
+    if (reused) { reused.localize?.(); return reused; }
     const alt = () => source.altIsDefault === true || (source.altIsDefault == null && source.alt === 'Grok 返回的图片') ? t('Grok 返回的图片') : source.alt || t('图片');
-    const figure = document.createElement('figure'); figure.className = 'chat-image'; figure.imageKey = key;
+    const figure = document.createElement('figure'); figure.className = 'chat-image'; figure.imageKey = key; figure.imageSrc = source.src;
     const button = document.createElement('button'); button.type = 'button'; button.className = 'image-thumbnail'; button.disabled = true;
     button.setAttribute('aria-label', t('放大图片：{alt}', { alt: alt() }));
     // IntersectionObserver controls preparation; consume the short-lived image
@@ -464,7 +549,6 @@
     const load = async () => {
       if (!current() || loading) return;
       loading = true;
-      const follow = nearBottom();
       failure = ''; caption.textContent = t('正在加载图片…'); retry.hidden = true; img.hidden = false; button.disabled = true;
       let request = imageCache.get(cacheKey);
       try {
@@ -481,7 +565,7 @@
         img.onload = () => {
           if (!current()) return;
           button.disabled = false; caption.textContent = t('{alt} · 点击放大', { alt: alt() });
-          if (follow && figure.isConnected) $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight;
+          if (readingLatest && figure.isConnected) followLatest();
         };
         img.onerror = () => { if (current()) failed(t('图片加载失败，地址可能已失效或需要登录'), request); };
         img.src = resolved.src;
@@ -509,24 +593,55 @@
     return figure;
   }
 
-  function mountImages(body, message, session, previousImages) {
-    const seen = new Set();
-    for (const placeholder of body.querySelectorAll('[data-image-source]')) {
-      const src = placeholder.dataset.imageSource;
-      seen.add(src);
-      placeholder.replaceWith(createImage({ src, alt: placeholder.dataset.imageAlt, altIsDefault: false }, session, message.id, previousImages));
+  // Replaces image placeholders inside the newly drawn nodes, then adds the
+  // reply's other images at the end. Images already shown keep their figures.
+  function mountImages(body, message, session, previousImages, roots = [body]) {
+    const seen = new Set([...body.querySelectorAll('.chat-image')].map(figure => figure.imageSrc));
+    // A figure still shown in a block that was kept stays where it is.
+    for (const [key, figures] of previousImages) previousImages.set(key, figures.filter(figure => !body.contains(figure)));
+    for (const root of roots) {
+      if (root.nodeType !== Node.ELEMENT_NODE) continue;
+      // A raw <img> on a line of its own becomes a top-level placeholder: a root itself.
+      for (const placeholder of [...root.matches('[data-image-source]') ? [root] : [], ...root.querySelectorAll('[data-image-source]')]) {
+        const src = placeholder.dataset.imageSource;
+        seen.add(src);
+        placeholder.replaceWith(createImage({ src, alt: placeholder.dataset.imageAlt, altIsDefault: false }, session, message.id, previousImages));
+      }
     }
     for (const image of message.images || []) {
       if (typeof image.src !== 'string' || seen.has(image.src)) continue;
       seen.add(image.src); body.append(createImage(image, session, message.id, previousImages));
     }
   }
-
   function attachmentSize(size) {
     if (!Number.isFinite(size) || size < 0) return '';
     return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
   }
 
+  // Fills a reply segment. With per-block HTML, blocks that did not change keep
+  // their nodes; returns the nodes drawn now.
+  function fillContent(content, rendered) {
+    const nodesOf = html => { const template = document.createElement('template'); template.innerHTML = html; return [...template.content.childNodes]; };
+    const previous = content.blockState;
+    if (!rendered.blocks) {
+      content.innerHTML = rendered.html; content.blockState = null;
+      return [...content.childNodes];
+    }
+    let keep = 0;
+    if (previous) while (keep < previous.length && keep < rendered.blocks.length && previous[keep].raw === rendered.blocks[keep].raw && previous[keep].html === rendered.blocks[keep].html) keep++;
+    else content.replaceChildren();
+    for (const block of previous?.slice(keep) || []) for (const node of block.nodes) node.remove();
+    const blocks = previous?.slice(0, keep) || [];
+    const added = [];
+    for (const block of rendered.blocks.slice(keep)) {
+      const nodes = nodesOf(block.html);
+      content.append(...nodes);
+      blocks.push({ raw: block.raw, html: block.html, nodes });
+      added.push(...nodes);
+    }
+    content.blockState = blocks;
+    return added;
+  }
   function mountAttachments(body, message, session) {
     if (!message.attachments?.length) return;
     const list = document.createElement('div'); list.className = 'message-attachments';
@@ -557,24 +672,96 @@
     return ({ pending: t('等待中'), running: t('执行中'), in_progress: t('执行中'), completed: t('已完成'), complete: t('已完成'), success: t('已完成'), failed: t('失败'), error: t('失败'), cancelled: t('已取消') })[status] || status || t('执行中');
   }
 
+  // A streaming reply is rebuilt on every frame. Each tool update replaces its
+  // object, so the text of an unchanged tool (a large diff, say) is kept.
+  const toolTexts = new WeakMap();
+  function toolText(tool) {
+    const language = i18n.getLanguage();
+    const cached = toolTexts.get(tool);
+    if (cached?.language === language) return cached.text;
+    const text = safeText(tool.content ?? tool.output ?? tool.rawInput ?? tool.input);
+    toolTexts.set(tool, { language, text });
+    return text;
+  }
+
   function createTool(tool) {
     const details = document.createElement('details');
     details.className = 'tool-entry';
-    details.dataset.status = tool.status || 'running';
     details.dataset.toolId = tool.toolCallId || tool.id || '';
     const summary = document.createElement('summary');
     const status = document.createElement('span');
     status.className = 'tool-state';
-    status.textContent = ['completed', 'complete', 'success'].includes(tool.status) ? '✓' : ['failed', 'error'].includes(tool.status) ? '!' : '↗';
     const title = document.createElement('span');
-    title.className = 'tool-title'; title.textContent = tool.title || tool.name || t('工具调用'); title.title = title.textContent;
+    title.className = 'tool-title';
     const label = document.createElement('span');
-    label.className = 'tool-status'; label.textContent = toolStatus(tool.status);
+    label.className = 'tool-status';
     summary.append(status, title, label);
     const content = document.createElement('pre');
-    content.textContent = safeText(tool.content ?? tool.output ?? tool.rawInput ?? tool.input) || t('等待工具返回结果…');
     details.append(summary, content);
+    updateTool(details, tool);
     return details;
+  }
+  // Redraws a tool entry from a newer update of the same call. Output that
+  // grew is appended, so an open entry keeps its scroll position and selection.
+  function updateTool(details, tool) {
+    details.toolRef = tool;
+    details.dataset.status = tool.status || 'running';
+    const [status, title, label] = details.querySelector('summary').children;
+    status.textContent = ['completed', 'complete', 'success'].includes(tool.status) ? '✓' : ['failed', 'error'].includes(tool.status) ? '!' : '↗';
+    title.textContent = tool.title || tool.name || t('工具调用'); title.title = title.textContent;
+    label.textContent = toolStatus(tool.status);
+    const content = details.querySelector('pre');
+    const text = toolText(tool) || t('等待工具返回结果…');
+    if (content.toolText === text) return;
+    if (content.toolText && text.startsWith(content.toolText)) content.append(text.slice(content.toolText.length));
+    else content.textContent = text;
+    content.toolText = text;
+  }
+
+  // An article's parts, in the order they appear.
+  const SECTION_ORDER = ['message-heading', 'thought-details', 'message-tools', 'plan-details', 'message-body'];
+  function setSection(article, className, element) {
+    const current = [...article.children].find(child => child.classList.contains(className));
+    if (current === element) return;
+    if (!element) { current?.remove(); return; }
+    if (current) { current.replaceWith(element); return; }
+    const later = SECTION_ORDER.slice(SECTION_ORDER.indexOf(className) + 1);
+    article.insertBefore(element, [...article.children].find(child => later.some(name => child.classList.contains(name))) || null);
+  }
+  function syncThought(article, message, openDetails) {
+    if (!message.thought) { setSection(article, 'thought-details', null); return; }
+    const current = [...article.children].find(child => child.classList.contains('thought-details'));
+    const body = current?.querySelector('.thought-content');
+    if (body) {
+      if (body.thoughtText === message.thought) return;
+      if (body.thoughtText && message.thought.startsWith(body.thoughtText)) body.append(message.thought.slice(body.thoughtText.length));
+      else body.textContent = message.thought;
+      body.thoughtText = message.thought;
+      return;
+    }
+    const thought = document.createElement('details'); thought.className = 'thought-details'; thought.dataset.thoughtId = message.id;
+    thought.open = openDetails.has(message.id);
+    const summary = document.createElement('summary'); summary.textContent = t('思考过程');
+    const content = document.createElement('div'); content.className = 'thought-content'; content.textContent = message.thought; content.thoughtText = message.thought;
+    thought.append(summary, content); setSection(article, 'thought-details', thought);
+  }
+  function syncTools(article, message, openDetails) {
+    const tools = message.tools || [];
+    let container = [...article.children].find(child => child.classList.contains('message-tools'));
+    if (!tools.length) { container?.remove(); return; }
+    if (!container) { container = document.createElement('div'); container.className = 'message-tools'; setSection(article, 'message-tools', container); }
+    // Calls without an ID cannot be told apart; they are matched by position.
+    const keyOf = (id, index) => id || `#${index}`;
+    const existing = new Map([...container.children].map((element, index) => [keyOf(element.dataset.toolId, index), element]));
+    tools.forEach((tool, index) => {
+      const key = keyOf(tool.toolCallId || tool.id || '', index);
+      let element = existing.get(key);
+      existing.delete(key);
+      if (element) { if (element.toolRef !== tool) updateTool(element, tool); }
+      else { element = createTool(tool); element.open = openDetails.has(element.dataset.toolId); }
+      if (container.children[index] !== element) container.insertBefore(element, container.children[index] || null);
+    });
+    for (const element of existing.values()) element.remove();
   }
 
   function createPlan(entries, messageId, openDetails, previousPlans) {
@@ -592,6 +779,17 @@
     details.append(summary, list); return details;
   }
 
+  // Whether the reader is at the latest message, as of their last scroll. A
+  // late image follows only then, not if they have since scrolled up to read.
+  let readingLatest = true;
+  // The scroller animates scrolls (CSS smooth). Following new output must
+  // land at once: a follow still on its way reads as "scrolled away" on the
+  // next frame, and the view would stop following a fast reply.
+  function followLatest() {
+    const scroller = $('conversation-scroll');
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'instant' });
+    readingLatest = true;
+  }
   function nearBottom() {
     const scroller = $('conversation-scroll');
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 100;
@@ -603,7 +801,6 @@
   function touchMessage(message) { messageRevisions.set(message, (messageRevisions.get(message) || 0) + 1); }
 
   function renderMessages(forceBottom = false) {
-    const scroller = $('conversation-scroll');
     const pinned = forceBottom || nearBottom();
     const session = activeSession();
     const messages = session?.messages || [];
@@ -631,52 +828,86 @@
       const previous = cached?.article;
       const openDetails = new Set([...previous?.querySelectorAll('details[open]') || []].map(item => item.dataset.toolId || item.dataset.thoughtId || item.dataset.planId || item.dataset.responseId));
       const previousPlans = new Set([...previous?.querySelectorAll('[data-plan-id]') || []].map(item => item.dataset.planId));
-      const previousImages = new Map([...previous?.querySelectorAll('.chat-image') || []].map(figure => [figure.imageKey, figure]));
-      const article = document.createElement('article');
-      article.className = `message ${message.role === 'user' ? 'user' : 'assistant'}`;
-      article.dataset.messageId = message.id;
-      const heading = document.createElement('div'); heading.className = 'message-heading';
-      const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? t('你') : activeTheme().glyph; avatar.setAttribute('aria-hidden', 'true');
-      const name = document.createElement('strong'); name.textContent = message.role === 'user' ? t('YOU') : 'GROKBUILD';
-      const time = document.createElement('time');
-      if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } }
-      heading.append(avatar, name, time); article.append(heading);
-      if (message.thought) {
-        const thought = document.createElement('details'); thought.className = 'thought-details'; thought.dataset.thoughtId = message.id;
-        thought.open = openDetails.has(message.id);
-        const summary = document.createElement('summary'); summary.textContent = t('思考过程');
-        const body = document.createElement('div'); body.className = 'thought-content'; body.textContent = message.thought;
-        thought.append(summary, body); article.append(thought);
+      const previousImages = new Map();
+      for (const figure of previous?.querySelectorAll('.chat-image') || []) previousImages.set(figure.imageKey, [...previousImages.get(figure.imageKey) || [], figure]);
+      // A reply that is still arriving is the same object, updated in place. Its
+      // article is kept and only what changed is redrawn: an open tool output or
+      // thought keeps its scroll position and selection while text streams in.
+      const inPlace = Boolean(cached && cached.message === message && cached.displayContext === displayContext && previous?.parentNode === container);
+      const article = inPlace ? previous : document.createElement('article');
+      if (!inPlace) {
+        article.className = `message ${message.role === 'user' ? 'user' : 'assistant'}`;
+        article.dataset.messageId = message.id;
+        const heading = document.createElement('div'); heading.className = 'message-heading';
+        const avatar = document.createElement('span'); avatar.className = 'message-avatar'; avatar.textContent = message.role === 'user' ? t('你') : activeTheme().glyph; avatar.setAttribute('aria-hidden', 'true');
+        const name = document.createElement('strong'); name.textContent = message.role === 'user' ? t('YOU') : 'GROK BUILD';
+        const time = document.createElement('time');
+        if (message.createdAt) { const date = new Date(message.createdAt); if (!Number.isNaN(date.getTime())) { time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString(i18n.getLanguage(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); } }
+        heading.append(avatar, name, time); article.append(heading);
       }
-      if (message.tools?.length) {
-        const tools = document.createElement('div'); tools.className = 'message-tools';
-        for (const tool of message.tools) { const element = createTool(tool); element.open = openDetails.has(element.dataset.toolId); tools.append(element); }
-        article.append(tools);
-      }
-      if (message.plan?.length) article.append(createPlan(message.plan, message.id, openDetails, previousPlans));
-      const body = document.createElement('div'); body.className = 'message-body';
+      syncThought(article, message, openDetails);
+      syncTools(article, message, openDetails);
+      if (!message.plan?.length) setSection(article, 'plan-details', null);
+      else if (!inPlace || cached.plan !== message.plan) setSection(article, 'plan-details', createPlan(message.plan, message.id, openDetails, previousPlans));
+      // A streaming reply keeps its body: completed Markdown blocks keep their
+      // nodes (and any selection in them); only the growing tail is redrawn.
+      const keptBody = inPlace && message.role !== 'user' ? [...article.children].find(child => child.classList.contains('message-body')) : null;
+      const body = keptBody || document.createElement('div'); body.className = 'message-body';
+      const segmentHtml = [];
+      const added = [];
       if (message.role === 'user') body.textContent = message.text;
       else {
+        // Everything after the reply text is rebuilt below.
+        const wrappers = body.segmentWrappers || [];
+        for (const child of [...body.children]) if (!wrappers.some(wrapper => wrapper?.element === child)) child.remove();
         // Only protocol boundaries distinguish progress from the answer. Older
         // history and text mixed upstream remain intact without content guessing.
         const segments = message.responseSegments?.length ? message.responseSegments : [{ text: message.text, kind: 'response' }];
+        // Only the last segment of a streaming reply grows; earlier ones keep
+        // their parsed Markdown, and the growing one its completed blocks.
+        const previousHtml = cached?.segmentHtml || [];
         const hasContext = message.thought || message.tools?.length || segments.some(segment => segment.kind === 'commentary');
+        const next = [];
         segments.forEach((segment, segmentIndex) => {
           if (!segment.text) return;
-          const content = document.createElement('div'); content.className = 'response-content'; content.innerHTML = markdown(segment.text);
-          if (segment.kind === 'commentary') {
-            const details = document.createElement('details'); details.className = 'response-commentary'; details.dataset.responseId = `${message.id}-response-${segmentIndex}`;
-            details.open = openDetails.has(details.dataset.responseId);
-            const summary = document.createElement('summary'); summary.textContent = t('过程说明');
-            details.append(summary, content); body.append(details);
-          } else {
-            const answer = document.createElement('section'); answer.className = 'response-answer';
-            if (hasContext) { const label = document.createElement('div'); label.className = 'response-label'; label.textContent = message.status === 'complete' ? t('回答') : t('回复'); answer.append(label); }
-            answer.append(content); body.append(answer);
+          const rendered = previousHtml[segmentIndex]?.text === segment.text ? previousHtml[segmentIndex] : markdownBlocks(segment.text, previousHtml[segmentIndex], streaming);
+          segmentHtml[segmentIndex] = rendered;
+          let wrapper = wrappers[segmentIndex];
+          if (wrapper?.kind !== segment.kind) {
+            const content = document.createElement('div'); content.className = 'response-content';
+            let element;
+            if (segment.kind === 'commentary') {
+              element = document.createElement('details'); element.className = 'response-commentary'; element.dataset.responseId = `${message.id}-response-${segmentIndex}`;
+              element.open = openDetails.has(element.dataset.responseId);
+              const summary = document.createElement('summary'); summary.textContent = t('过程说明');
+              element.append(summary, content);
+            } else {
+              element = document.createElement('section'); element.className = 'response-answer';
+              element.append(content);
+            }
+            wrapper = { kind: segment.kind, element, content };
           }
+          if (segment.kind !== 'commentary') {
+            let label = wrapper.element.querySelector(':scope > .response-label');
+            if (hasContext) {
+              if (!label) { label = document.createElement('div'); label.className = 'response-label'; wrapper.element.prepend(label); }
+              label.textContent = message.status === 'complete' ? t('回答') : t('回复');
+            } else label?.remove();
+          }
+          added.push(...fillContent(wrapper.content, rendered));
+          next[segmentIndex] = wrapper;
         });
+        // Place the segments in order, then drop any that are gone.
+        let position = 0;
+        for (const wrapper of next) {
+          if (!wrapper) continue;
+          if (body.children[position] !== wrapper.element) body.insertBefore(wrapper.element, body.children[position] || null);
+          position++;
+        }
+        for (const wrapper of wrappers) if (wrapper && !next.includes(wrapper)) wrapper.element.remove();
+        body.segmentWrappers = next;
       }
-      mountImages(body, message, session, previousImages);
+      mountImages(body, message, session, previousImages, message.role === 'user' ? [body] : added);
       mountAttachments(body, message, session);
       if (streaming) {
         const cursor = document.createElement('span'); cursor.className = 'streaming-caret'; cursor.setAttribute('aria-label', t('正在生成')); body.append(cursor);
@@ -684,17 +915,20 @@
       if (message.status === 'error') { const error = document.createElement('div'); error.className = 'message-error'; error.textContent = diagnostic(message.error) || t('本次请求未能完成，请检查引擎连接后重试。'); body.append(error); }
       if (message.noticeKey) { const notice = document.createElement('div'); notice.className = 'message-notice'; notice.textContent = t(message.noticeKey); body.append(notice); }
       if (message.status === 'cancelled') { const cancelled = document.createElement('div'); cancelled.className = 'message-cancelled'; cancelled.textContent = t('本次生成已停止'); body.append(cancelled); }
-      article.append(body);
-      article.querySelectorAll('pre > code').forEach(code => {
-        const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = t('复制'); button.setAttribute('aria-label', t('复制代码'));
-        button.addEventListener('click', async () => {
-          try { await call('copyText', code.textContent); button.textContent = t('已复制'); setTimeout(() => { if (button.isConnected) button.textContent = t('复制'); }, 1800); }
-          catch (_) { toast(t('无法访问剪贴板，请选择代码后复制。'), true); }
+      setSection(article, 'message-body', body);
+      for (const node of message.role === 'user' ? [body] : added) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        node.querySelectorAll('pre > code').forEach(code => {
+          const button = document.createElement('button'); button.className = 'copy-code'; button.textContent = t('复制'); button.setAttribute('aria-label', t('复制代码'));
+          button.addEventListener('click', async () => {
+            try { await call('copyText', code.textContent); button.textContent = t('已复制'); setTimeout(() => { if (button.isConnected) button.textContent = t('复制'); }, 1800); }
+            catch (_) { toast(t('无法访问剪贴板，请选择代码后复制。'), true); }
+          });
+          code.parentElement.append(button);
         });
-        code.parentElement.append(button);
-      });
-      messageNodes.set(message.id, { article, message, revision, streaming, displayContext });
-      if (previous?.parentNode === container) previous.replaceWith(article);
+      }
+      messageNodes.set(message.id, { article, message, revision, streaming, displayContext, segmentHtml, plan: message.plan });
+      if (!inPlace && previous?.parentNode === container) previous.replaceWith(article);
       if (container.children[index] !== article) container.insertBefore(article, container.children[index] || null);
     });
     for (const [id, cached] of messageNodes) {
@@ -703,12 +937,9 @@
     for (const figure of pendingImages.keys()) {
       if (!figure.isConnected) { imageObserver.unobserve(figure); pendingImages.delete(figure); }
     }
-    if (pinned) {
-      // Opening history must jump directly to its latest message; an animated
-      // trip through the entire conversation would preload every image en route.
-      if (forceBottom || contextChanged) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'instant' });
-      else scroller.scrollTop = scroller.scrollHeight;
-    }
+    // Opening history also jumps directly to its latest message; an animated
+    // trip through the entire conversation would preload every image en route.
+    if (pinned) followLatest();
     $('scroll-bottom').hidden = !hasMessages || nearBottom();
     renderComposerState();
     renderPermissions();
@@ -749,19 +980,25 @@
     if (!state.busy.has(state.activeId)) return;
     const message = activeSession()?.messages.filter(item => item.role === 'assistant').at(-1);
     const tool = message?.tools?.filter(item => ['running', 'pending', 'in_progress'].includes(item.status)).at(-1);
-    $('activity-text').textContent = sessionPermissions(state.activeId).length ? t('等待你的授权') : tool ? tool.title || t('正在执行工具') : message?.text ? t('Grokbuild 正在回答') : t('Grokbuild 正在思考');
+    $('activity-text').textContent = sessionPermissions(state.activeId).length ? t('等待你的授权') : tool ? tool.title || t('正在执行工具') : message?.text ? t('Grok Build 正在回答') : t('Grok Build 正在思考');
     const start = state.started.get(state.activeId) || Date.now();
     const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
     $('activity-duration').textContent = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
   }
 
+  let shownPermission, shownPermissionLanguage;
   function renderPermissions() {
     const panel = $('permission-panel');
     const permissionSessionId = state.activeId;
     const permission = sessionPermissions(permissionSessionId)[0];
+    // Unrelated renders keep the prompt as it is: rebuilding it would move
+    // keyboard focus off its buttons, re-enable a choice already being sent
+    // and make screen readers announce it again.
+    if (permission === shownPermission && i18n.getLanguage() === shownPermissionLanguage) return;
+    shownPermission = permission; shownPermissionLanguage = i18n.getLanguage();
     panel.replaceChildren(); panel.hidden = !permission;
     if (!permission) return;
-    const heading = document.createElement('div'); heading.className = 'permission-heading'; heading.textContent = permission.title || permission.toolCall?.title || t('Grokbuild 请求执行操作');
+    const heading = document.createElement('div'); heading.className = 'permission-heading'; heading.textContent = permission.title || permission.toolCall?.title || t('Grok Build 请求执行操作');
     const description = document.createElement('p'); description.className = 'permission-description';
     description.textContent = safeText(permission.toolCall?.rawInput ?? permission.toolCall?.content ?? permission.description) || t('请确认是否允许此操作。你的选择会发送给本地引擎。');
     const actions = document.createElement('div'); actions.className = 'permission-actions';
@@ -903,7 +1140,7 @@
       const updated = await call('configureSession', { sessionId: session.id, ...patch });
       if (updated?.id !== session.id) throw new Error(t('引擎未确认这段对话的新配置，请重新连接后重试。'));
       upsertSession(updated);
-      toast(t('对话配置已由 Grokbuild 确认。'));
+      toast(t('对话配置已由 Grok Build 确认。'));
     } finally {
       state.configuring = false;
       renderSelects(); renderComposerState();
@@ -936,7 +1173,7 @@
     const attachments = [...draft.attachments];
     if ((!text && !attachments.length) || draft.pending || uiLocked({ engine: true, busy: true })) return;
     if (atCapacity()) { toast(t('最多同时运行 {count} 个任务，请等待其中一个完成。', { count: state.maxConcurrentTurns }), true); return; }
-    if (!state.connected) { toast(t('请先连接本地 Grokbuild。点击右上角的连接状态可重试。'), true); return; }
+    if (!state.connected) { toast(t('请先连接本地 Grok Build。点击右上角的连接状态可重试。'), true); return; }
     if (!newChatConfigReady()) { toast(t('请先选择具体的模型和推理档位。'), true); return; }
     state.sending = true;
     renderComposerState(); renderSelects();
@@ -1017,6 +1254,9 @@
     }
     if (event.type === 'status') {
       const status = event.status;
+      // Token usage and "stopping" change nothing on screen. Redrawing the list
+      // and menus for them, many times a reply, would cost focus and clicks.
+      if (['usage', 'cancelling'].includes(status)) return;
       if (status === 'plan') {
         const message = getStreamMessage(sessionId);
         if (message) message.plan = Array.isArray(event.entries) ? event.entries : [];
@@ -1030,7 +1270,8 @@
         state.connectionStatus = status;
         state.connected = status === 'ready';
         if (state.connected) state.lastError = '';
-        if (status === 'disconnected') { state.busy.clear(); state.permissions.clear(); }
+        // Settings shows why the engine went offline, not an older conversation's error.
+        if (status === 'disconnected') { state.busy.clear(); state.permissions.clear(); if (event.message) state.lastError = safeText(event.message); }
         renderConnection(); renderPermissions(); renderSessions(); queueMessages();
       }
       if (sessionId && ['working', 'busy'].includes(status)) {
@@ -1040,7 +1281,9 @@
         const wasBusy = state.busy.delete(sessionId); state.started.delete(sessionId); clearPermissions(sessionId);
         const session = state.sessions.find(item => item.id === sessionId);
         const last = session?.messages.at(-1);
-        if (last?.role === 'assistant' && last.status === 'working') { last.status = status === 'cancelled' ? 'cancelled' : status === 'error' ? 'error' : 'complete'; touchMessage(last); }
+        const ended = status === 'cancelled' ? 'cancelled' : status === 'error' || event.failed ? 'error' : 'complete';
+        if (last?.role === 'assistant' && last.status === 'working') { last.status = ended; touchMessage(last); }
+        if (session?.lastMessageStatus === 'working') session.lastMessageStatus = ended;
         // A conversation finishing out of view gets a short notice; failures already raise an error toast.
         if (wasBusy && status === 'idle' && !event.failed && session && sessionId !== state.activeId && last?.status !== 'error') toast(t('对话“{title}”已完成。', { title: sessionTitle(session) }), false, 6000);
         if (event.stopReason === 'max_tokens') toast(t('已达到本次回复的长度限制，可以继续追问。'));
@@ -1107,15 +1350,27 @@
     }
   }
 
+  let menuOpener = null;
   function openSessionMenu(id, button) {
     state.menuId = id;
+    menuOpener = button;
     const rect = button.getBoundingClientRect();
     const menu = $('session-menu'); menu.hidden = false;
     menu.style.left = `${Math.min(rect.right + 7, window.innerWidth - 180)}px`;
     menu.style.top = `${Math.max(55, Math.min(rect.top, window.innerHeight - 140))}px`;
     $('menu-rename').focus();
   }
-  function closeSessionMenu() { $('session-menu').hidden = true; state.menuId = null; }
+  function closeSessionMenu({ returnFocus = false } = {}) {
+    const menu = $('session-menu');
+    const hadFocus = menu.contains(document.activeElement);
+    menu.hidden = true; state.menuId = null;
+    // Escape returns to the "···" button the menu came from (or its redrawn twin).
+    if (returnFocus && hadFocus && menuOpener) {
+      const row = menuOpener.isConnected ? null : [...$('session-list').querySelectorAll('.session-item')].find(item => item.dataset.sessionId === menuOpener.closest('.session-item')?.dataset.sessionId);
+      (menuOpener.isConnected ? menuOpener : row?.querySelector('.session-more'))?.focus();
+    }
+    menuOpener = null;
+  }
 
   function renderAccounts() {
     const current = state.accounts.find(a => a.id === state.activeAccountId);
@@ -1395,7 +1650,7 @@
     $('save-settings-button').disabled = true; $('settings-feedback').textContent = '';
     try {
       const patch = settingsPatch();
-      if (!patch.executable) throw new Error(t('请选择 Grokbuild 的 Grok CLI 文件。'));
+      if (!patch.executable) throw new Error(t('请选择 Grok Build CLI 可执行文件。'));
       if (!patch.workspace) throw new Error(t('请选择默认工作目录。'));
       const reconnectRequired = forceReconnect || ['executable', 'workspace', 'subagentsEnabled'].some(key => patch[key] !== state.settings[key]);
       if (reconnectRequired && state.startingEngine) throw new Error(t('请等待当前操作完成，再重新连接引擎。'));
@@ -1432,7 +1687,7 @@
         const session = await call('selectSession', state.activeId);
         if (session?.id) upsertSession(session);
       }
-      renderSelects(); renderWorkspace(); queueMessages(); toast(t('Grokbuild 已重新连接。'));
+      renderSelects(); renderWorkspace(); queueMessages(); toast(t('Grok Build 已重新连接。'));
     } catch (error) { state.connected = false; state.connectionStatus = 'disconnected'; state.lastError = error.message; throw error; }
     finally { state.selecting = false; renderConnection(); }
   }
@@ -1503,7 +1758,11 @@
     $('attach-button').addEventListener('click', () => { void addAttachments(); });
     $('prompt').addEventListener('paste', event => {
       const files = [...(event.clipboardData?.files || [])];
-      if (files.length) { event.preventDefault(); void addAttachments(files); }
+      // Office apps put a picture of copied rich text beside the text itself.
+      // Paste the text then; a copied file or a copied image is still attached.
+      const types = [...(event.clipboardData?.types || [])];
+      const renderedText = files.length && files.every(file => file.type.startsWith('image/')) && types.includes('text/html') && event.clipboardData.getData('text/plain').trim();
+      if (files.length && !renderedText) { event.preventDefault(); void addAttachments(files); }
     });
     const composer = $('composer-form');
     composer.addEventListener('dragover', event => {
@@ -1572,10 +1831,22 @@
       void savePreferences();
     });
     document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(button.dataset.closeDialog).close()));
-    document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('click', event => {
-      if (state.savingSettings || state.renaming || state.deleting || state.accountAction) return;
-      if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); }
-    }));
+    document.querySelectorAll('dialog').forEach(dialog => {
+      const onBackdrop = event => {
+        if (event.target !== dialog) return false;
+        const rect = dialog.getBoundingClientRect();
+        return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+      };
+      // Only a click that starts and ends on the backdrop closes a dialog. A
+      // drag that selects text inside it and is released outside does not.
+      let pressedBackdrop = false;
+      dialog.addEventListener('pointerdown', event => { pressedBackdrop = onBackdrop(event); });
+      dialog.addEventListener('click', event => {
+        const close = pressedBackdrop && onBackdrop(event);
+        pressedBackdrop = false;
+        if (close && !(state.savingSettings || state.renaming || state.deleting || state.accountAction)) dialog.close();
+      });
+    });
     document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('cancel', event => {
       if (state.savingSettings || state.renaming || state.deleting || state.accountAction) event.preventDefault();
     }));
@@ -1631,7 +1902,9 @@
       const anchor = event.target.closest('.message-body a');
       if (anchor) {
         event.preventDefault();
-        const url = anchor.getAttribute('href');
+        // A target that is not a web address (a file: URL or a Windows path) is
+        // kept only as data-href once sanitized.
+        const url = anchor.getAttribute('href') ?? anchor.getAttribute('data-href');
         const article = anchor.closest('.message');
         const message = activeSession()?.messages.find(item => item.id === article?.dataset.messageId);
         // Marked percent-encodes link targets (spaces, CJK names, Windows
@@ -1645,7 +1918,7 @@
       }
     });
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') closeSessionMenu();
+      if (event.key === 'Escape') closeSessionMenu({ returnFocus: true });
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') { event.preventDefault(); if (!document.querySelector('dialog[open]')) newChat(); }
       if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); showSettings(); }
     });
@@ -1653,8 +1926,34 @@
       if (action === 'preferences') showSettings();
       else if (action === 'new-conversation' && !document.querySelector('dialog[open]')) newChat();
     });
-    $('conversation-scroll').addEventListener('scroll', () => { $('scroll-bottom').hidden = !activeSession()?.messages.length || nearBottom(); });
-    $('scroll-bottom').addEventListener('click', () => { $('conversation-scroll').scrollTop = $('conversation-scroll').scrollHeight; });
+    $('session-menu').addEventListener('keydown', event => {
+      const items = [...$('session-menu').querySelectorAll('[role="menuitem"]')].filter(item => !item.hidden && !item.disabled);
+      const index = items.indexOf(document.activeElement);
+      const next = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 }[event.key];
+      if (next === undefined || !items.length) return;
+      event.preventDefault();
+      items[(next + items.length) % items.length].focus();
+    });
+    let sessionPressTimer;
+    const releaseSessionPress = () => {
+      clearTimeout(sessionPressTimer);
+      if (!sessionPress) return;
+      sessionPress = false;
+      // After the click this press makes has been handled.
+      if (sessionsDeferred) { sessionsDeferred = false; setTimeout(renderSessions); }
+    };
+    // A press whose release never arrives (the window lost focus mid-press)
+    // must not hold the list back for long.
+    $('session-list').addEventListener('pointerdown', () => { sessionPress = true; clearTimeout(sessionPressTimer); sessionPressTimer = setTimeout(releaseSessionPress, 1500); });
+    for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, releaseSessionPress, true);
+    window.addEventListener('blur', releaseSessionPress);
+    $('conversation-scroll').addEventListener('scroll', () => {
+      readingLatest = nearBottom();
+      $('scroll-bottom').hidden = !activeSession()?.messages.length || readingLatest;
+    });
+    // Jump at once: an animated scroll during a fast reply would read as
+    // scrolling away and stop following it.
+    $('scroll-bottom').addEventListener('click', followLatest);
     const composerRegion = document.querySelector('.composer-region');
     const composerObserver = new ResizeObserver(() => { $('scroll-bottom').style.bottom = `${composerRegion.getBoundingClientRect().height + 8}px`; });
     composerObserver.observe(composerRegion);

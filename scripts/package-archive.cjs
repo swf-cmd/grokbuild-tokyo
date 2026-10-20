@@ -8,7 +8,7 @@ const { packagedBundle } = require('./package-paths.cjs');
 async function archivePackagedBuild(root, target) {
   const version = require(path.join(root, 'package.json')).version;
   const platform = target.platform === 'darwin' ? 'mac' : 'win';
-  const filename = `Grokbuild-Tokyo-${version}-${platform}-${target.arch}.zip`;
+  const filename = `Dirth-${version}-${platform}-${target.arch}.zip`;
   const source = target.platform === 'darwin' ? packagedBundle(root) : path.join(root, 'App');
   if (!fs.lstatSync(source).isDirectory()) throw new Error(`Missing packaged directory: ${source}`);
   const output = path.join(root, 'dist', filename);
@@ -24,9 +24,9 @@ async function archivePackagedBuild(root, target) {
     } else if (process.platform === 'win32') {
       // Environment variables keep paths out of PowerShell source code.
       execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        "$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath $env:GROKBUILD_ARCHIVE_SOURCE -DestinationPath $env:GROKBUILD_ARCHIVE_DESTINATION -CompressionLevel Optimal"], {
+        "$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath $env:DIRTH_ARCHIVE_SOURCE -DestinationPath $env:DIRTH_ARCHIVE_DESTINATION -CompressionLevel Optimal"], {
         stdio: 'inherit',
-        env: { ...process.env, GROKBUILD_ARCHIVE_SOURCE: source, GROKBUILD_ARCHIVE_DESTINATION: temporary },
+        env: { ...process.env, DIRTH_ARCHIVE_SOURCE: source, DIRTH_ARCHIVE_DESTINATION: temporary },
       });
     } else {
       execFileSync('zip', ['-q', '-r', temporary, path.basename(source)], { cwd: path.dirname(source), stdio: 'inherit' });

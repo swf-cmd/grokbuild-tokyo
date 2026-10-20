@@ -117,6 +117,32 @@ test('large attachment previews use resized nativeImage bytes and orphan cleanup
   assert.ok((await fs.lstat(path.join(root, linked))).isSymbolicLink());
 });
 
+test('orphan cleanup keeps files saved under an earlier location of the data folder', async t => {
+  const root = await fixture(t);
+  const [moved, orphan] = await stageAttachments([
+    { name: 'moved.txt', data: Buffer.from('moved').toString('base64') },
+    { name: 'orphan.txt', data: Buffer.from('orphan').toString('base64') },
+  ], root);
+  // The history still names the folder where the portable app (or the Mac
+  // folder before its rename) used to be; that path no longer exists.
+  const before = path.join(path.dirname(root), 'moved-away', 'data', 'attachments', 'local');
+  const saved = { ...moved, src: path.join(before, moved.id, 'moved.txt') };
+  assert.deepEqual(await cleanupAttachments(root, [saved]), [orphan.id]);
+  assert.equal((await fs.readFile(moved.src)).toString(), 'moved');
+});
+
+test('one orphan pass reads the live references once, however many files it removes', async t => {
+  const root = await fixture(t);
+  const blobs = new BlobStore(root);
+  const kept = blobs.store(Buffer.from('kept'));
+  for (let index = 0; index < 50; index++) blobs.store(Buffer.from(`orphan ${index}`));
+  await blobs.flush();
+  let calls = 0;
+  await blobs.collect(() => { calls++; return new Set([kept]); });
+  assert.equal(calls, 1);
+  assert.deepEqual(await fs.readdir(root), [kept.slice('grok-blob:'.length)]);
+});
+
 test('image protocol responses stream bounded validated files without base64 conversion', async t => {
   const root = await fixture(t);
   const cwd = path.join(root, 'cwd');
@@ -158,14 +184,37 @@ test('session image directory lookup caches successful workspace scans and reval
   assert.equal(scans, 2);
 });
 
+test('a conversation opening with many CLI images searches the session folders once', async t => {
+  const root = await fixture(t);
+  const home = path.join(root, 'home');
+  const cwd = path.join(root, 'workspace');
+  await fs.mkdir(path.join(home, 'sessions', 'unrelated'), { recursive: true });
+  await fs.mkdir(cwd);
+  const readdir = fs.readdir;
+  let scans = 0;
+  t.mock.method(fs, 'readdir', async (...args) => { if (args[0] === path.join(home, 'sessions')) scans++; return readdir(...args); });
+  const found = await Promise.all(Array.from({ length: 30 }, () => findSessionImageDirectory(home, cwd, 'missing-session')));
+  assert.deepEqual(new Set(found), new Set([undefined]));
+  assert.equal(scans, 1);
+  // A miss is not remembered: the CLI may create the folder during a reply.
+  await findSessionImageDirectory(home, cwd, 'missing-session');
+  assert.equal(scans, 2);
+});
+
 test('blob flush retries failed disk writes without retaining a permanent error', async t => {
   const root = await fixture(t);
   const store = new BlobStore(path.join(root, 'blobs'));
-  const writeFile = fs.writeFile;
+  const open = fs.open;
   let full = true;
-  t.mock.method(fs, 'writeFile', async (...args) => {
-    if (full && String(args[0]).endsWith('.tmp')) throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' });
-    return writeFile(...args);
+  let synced = 0;
+  t.mock.method(fs, 'open', async (...args) => {
+    const handle = await open(...args);
+    if (!String(args[0]).endsWith('.tmp')) return handle;
+    return {
+      writeFile: async (...data) => { if (full) throw Object.assign(new Error('fixture disk full'), { code: 'ENOSPC' }); return handle.writeFile(...data); },
+      sync: async () => { synced++; return handle.sync(); },
+      close: () => handle.close(),
+    };
   });
   const ref = store.store(png);
   await assert.rejects(store.flush(), /disk full/);
@@ -173,7 +222,9 @@ test('blob flush retries failed disk writes without retaining a permanent error'
   full = false;
   await store.flush();
   assert.equal(store.pending.size, 0);
+  assert.equal(synced, 1, 'the bytes are flushed to disk before the file takes its name');
   assert.deepEqual(await fs.readFile(store.resolve(ref)), png);
+  assert.deepEqual((await fs.readdir(path.join(root, 'blobs'))).filter(name => name.endsWith('.tmp')), [], 'the failed temporary file is removed');
 });
 
 test('oversized or invalid embedded resources do not survive in serialized state', async t => {

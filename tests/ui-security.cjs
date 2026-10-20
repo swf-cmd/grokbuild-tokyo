@@ -101,10 +101,12 @@ fs.writeFileSync(path.join(testRoot, 'data/conversations.json'), JSON.stringify(
     console.log('PASS shutdown coalesces repeated close requests and preserves a retry after failure');
   } finally {
     // After a failed step the stubbed engine shutdown may still be pending;
-    // let it finish so the app can quit and the failure is reported.
+    // let it finish so the app can quit and the failure is reported. The
+    // fixture's own close also ends a reply still running, which quitting
+    // waits for (a no-op close left it running and the test hung).
     await desktop.evaluate(() => {
       const test = globalThis.__tokyoUITest;
-      if (test.adapter) test.adapter.close = async () => {};
+      if (test.adapter) delete test.adapter.close;
       test.releaseClose?.();
     }).catch(() => {});
     await desktop.close();

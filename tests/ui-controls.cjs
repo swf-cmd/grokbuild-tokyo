@@ -211,6 +211,11 @@ const readState = () => require('./fixtures/read-history.cjs')(path.join(testRoo
       });
       await page.locator('#permission-panel').filter({ hasText: 'queue-first' }).waitFor(); await page.locator('#permission-panel button').click();
       await page.locator('#permission-panel').filter({ hasText: 'queue-second' }).waitFor();
+      // An unrelated render (here, a notice) leaves the open prompt and its keyboard focus alone.
+      await page.locator('#permission-panel button').focus();
+      await desktop.evaluate(() => { const test = globalThis.__tokyoUITest; const sessionId = [...test.adapter.pending.keys()][0]; test.adapter.emit('event', { type: 'error', sessionId, message: 'Notice during a prompt' }); });
+      await page.locator('.toast').filter({ hasText: 'Notice during a prompt' }).waitFor(); await page.evaluate(() => new Promise(requestAnimationFrame));
+      assert.equal(await page.evaluate(() => Boolean(document.activeElement?.closest('#permission-panel'))), true, 'a render must not take focus from the permission prompt');
       await desktop.evaluate(() => { const test = globalThis.__tokyoUITest; const sessionId = [...test.adapter.pending.keys()][0]; test.adapter.emit('event', { type: 'status', status: 'permission_resolved', sessionId, requestId: 'queue-second' }); });
       await page.locator('#permission-panel').waitFor({ state: 'hidden' });
       await desktop.evaluate(() => { const test = globalThis.__tokyoUITest; const sessionId = [...test.adapter.pending.keys()][0]; test.adapter.emit('event', { type: 'error', sessionId, message: 'Recoverable fixture notification' }); });
@@ -259,8 +264,9 @@ const readState = () => require('./fixtures/read-history.cjs')(path.join(testRoo
       assert.equal(await page.locator('#quota-label').textContent(), '本月额度');
     });
     await stage('offline history stays readable and reconnect restores selections', async () => {
-      await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.emit('event', { type: 'status', status: 'disconnected' }));
+      await desktop.evaluate(() => globalThis.__tokyoUITest.adapter.emit('event', { type: 'status', status: 'disconnected', message: 'Fixture CLI exited (1).' }));
       await page.locator('#connection-label').filter({ hasText: '未连接' }).waitFor();
+      assert.equal(await page.locator('#settings-engine-status').textContent(), 'Fixture CLI exited (1).', 'settings shows why the engine went offline');
       await page.locator('#new-session').click(); await page.locator('.session-select').filter({ hasText: 'Renamed fixture' }).click();
       await page.locator('#messages').waitFor({ state: 'visible' }); assert.equal(await page.locator('#model-select').isDisabled(), true); assert.equal(await page.locator('#send-button').isDisabled(), true);
       await page.locator('#connection-button').click(); await ready(); assert.equal(await page.locator('#model-select').isDisabled(), false);

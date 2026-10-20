@@ -39,7 +39,8 @@ test('adapter streams assistant images and keeps tool images inside tool updates
   adapter._sessionUpdate({ sessionId: 's', update: { sessionUpdate: 'agent_message_chunk', content: imageBlock } });
   adapter.loading.clear();
   adapter._sessionUpdate({ sessionId: 's', update: { sessionUpdate: 'tool_call_update', toolCallId: 't', content: [{ type: 'content', content: imageBlock }] } });
-  assert.deepEqual(events.filter(e => e.type === 'image').map(e => e.replay), [false, true]);
+  // Replayed media is already saved with the conversation and is not decoded again.
+  assert.deepEqual(events.filter(e => e.type === 'image').map(e => e.replay), [false]);
   assert.deepEqual(imagesFromContent(events.find(e => e.type === 'tool').content), imagesFromContent(imageBlock));
   assert.equal(events.find(e => e.type === 'image').image.src, `data:image/png;base64,${encoded}`);
 });

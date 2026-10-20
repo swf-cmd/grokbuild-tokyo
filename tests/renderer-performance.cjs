@@ -44,9 +44,16 @@ fs.writeFileSync(path.join(profile, 'data', 'conversations.json'), JSON.stringif
     await page.evaluate(() => {
       window.__savedArticles = [...document.querySelectorAll('.message')];
       document.querySelector('.thought-details').open = true;
-      window.__parseCount = 0;
-      const parse = window.marked.parse;
-      window.marked = { ...window.marked, parse(...args) { window.__parseCount++; return parse.apply(this, args); } };
+      // A reply is read either whole (parse) or once by the lexer, after which
+      // only its changed blocks go through the parser.
+      window.__parseCount = 0; window.__blockParses = 0;
+      const { parse, lexer, parser } = window.marked;
+      window.marked = {
+        ...window.marked,
+        parse(...args) { window.__parseCount++; return parse.apply(this, args); },
+        lexer(...args) { window.__parseCount++; return lexer.apply(this, args); },
+        parser(tokens, ...args) { window.__blockParses += tokens.length; return parser.call(this, tokens, ...args); },
+      };
     });
     await page.locator('#prompt').fill('WAIT stream performance');
     await page.locator('#send-button').click();
@@ -61,6 +68,7 @@ fs.writeFileSync(path.join(profile, 'data', 'conversations.json'), JSON.stringif
     }
     const rendered = await page.evaluate(() => ({
       parses: window.__parseCount,
+      blockParses: window.__blockParses,
       preserved: window.__savedArticles.every((article, index) => document.querySelectorAll('.message')[index] === article),
       thoughtOpen: document.querySelector('.thought-details').open,
       copyButtons: document.querySelectorAll('.copy-code').length,
@@ -69,6 +77,65 @@ fs.writeFileSync(path.join(profile, 'data', 'conversations.json'), JSON.stringif
     assert.equal(rendered.thoughtOpen, true);
     assert.equal(rendered.copyButtons, 60, 'cached code blocks must not gain duplicate copy buttons');
     assert.ok(rendered.parses >= 6 && rendered.parses <= 8, `six chunks parsed ${rendered.parses} replies`);
+    // Each chunk extends the reply's one paragraph: only that block is rendered again.
+    assert.ok(rendered.blockParses >= 6 && rendered.blockParses <= 8, `six chunks rendered ${rendered.blockParses} blocks`);
+
+    // After a boundary freezes the progress text and a tool returns a large
+    // diff, each later chunk parses only the growing answer and leaves the
+    // diff's text alone.
+    const diff = { type: 'diff', path: 'src/large.js', oldText: 'old line\n'.repeat(20000), newText: 'new line\n'.repeat(20000) };
+    await desktop.evaluate((_, diff) => {
+      const test = globalThis.__tokyoUITest;
+      const sessionId = test.calls.filter(call => call.method === 'prompt').at(-1).sessionId;
+      test.adapter.emit('event', { type: 'tool', sessionId, toolCallId: 'large-edit', title: 'Edit src/large.js', status: 'completed', content: [diff] });
+      test.adapter.emit('event', { type: 'response-boundary', sessionId });
+      test.adapter.emit('event', { type: 'text', sessionId, text: 'answer-0 ' });
+    }, diff);
+    await page.locator('.message').last().filter({ hasText: 'answer-0' }).waitFor();
+    await page.evaluate(() => {
+      window.__frozenParses = 0; window.__diffSerializations = 0;
+      const { parse, lexer } = window.marked;
+      window.marked = {
+        ...window.marked,
+        parse(text, ...rest) { if (String(text).includes('chunk-0')) window.__frozenParses++; return parse.call(this, text, ...rest); },
+        lexer(text, ...rest) { if (String(text).includes('chunk-0')) window.__frozenParses++; return lexer.call(this, text, ...rest); },
+      };
+      const stringify = JSON.stringify;
+      JSON.stringify = function(value, ...rest) { if (value?.type === 'diff') window.__diffSerializations++; return stringify.call(this, value, ...rest); };
+    });
+    for (let index = 1; index <= 4; index++) {
+      await desktop.evaluate((_, index) => {
+        const test = globalThis.__tokyoUITest;
+        const sessionId = test.calls.filter(call => call.method === 'prompt').at(-1).sessionId;
+        test.adapter.emit('event', { type: 'text', sessionId, text: `answer-${index} ` });
+      }, index);
+      await page.locator('.message').last().filter({ hasText: `answer-${index}` }).waitFor();
+    }
+    assert.deepEqual(await page.evaluate(() => ({ frozen: window.__frozenParses, diffs: window.__diffSerializations })), { frozen: 0, diffs: 0 },
+      'later chunks must not parse frozen progress text or serialize an unchanged tool again');
+    // A long chunk is followed at once, not by a smooth scroll still on its way
+    // that the next frame would read as the user scrolling up.
+    await desktop.evaluate(() => {
+      const test = globalThis.__tokyoUITest;
+      const sessionId = test.calls.filter(call => call.method === 'prompt').at(-1).sessionId;
+      test.adapter.emit('event', { type: 'text', sessionId, text: `\n\n${'long-line\n\n'.repeat(40)}long-end` });
+    });
+    await page.locator('.message').last().filter({ hasText: 'long-end' }).waitFor();
+    assert.ok(await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => {
+      const scroller = document.querySelector('#conversation-scroll');
+      resolve(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2);
+    }))), 'a streaming reply stays scrolled to its latest line');
+    // The same image shown twice keeps both figures when the reply renders again.
+    for (const text of ['\n\n![](twice.png)\n\n![](twice.png)\n\ntwice-end', ' after-twice']) {
+      await desktop.evaluate((_, text) => {
+        const test = globalThis.__tokyoUITest;
+        const sessionId = test.calls.filter(call => call.method === 'prompt').at(-1).sessionId;
+        test.adapter.emit('event', { type: 'text', sessionId, text });
+      }, text);
+      await page.locator('.message').last().filter({ hasText: text.trim().split('\n').at(-1) }).waitFor();
+    }
+    assert.equal(await page.locator('.message').last().locator('.chat-image').count(), 2, 'a repeated image must not collapse into one');
+
     await desktop.evaluate(() => {
       for (const [sessionId, resolve] of globalThis.__tokyoUITest.adapter.pending) {
         resolve({ stopReason: 'end_turn' }); globalThis.__tokyoUITest.adapter.pending.delete(sessionId);

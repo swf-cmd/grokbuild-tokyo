@@ -16,7 +16,7 @@
   const MAX_OUTPUT_GAIN = 1.50;
   const CROSSFADE = 0.35;
   const TRACKS = Object.freeze({
-    tokyo: Object.freeze({ file: 'tokyo-afterimage.wav', title: 'Tokyo Afterimage · 東京残像', bpm: 80, duration: 96 }),
+    tokyo: Object.freeze({ file: 'tokyo-afterimage.flac', title: 'Tokyo Afterimage · 東京残像', bpm: 80, duration: 96 }),
     kyoto: Object.freeze({ file: 'kyoto-lanterns.flac', title: 'Kyoto Lanterns · 京都灯籠', bpm: 60, duration: 96 }),
     okinawa: Object.freeze({ file: 'okinawa-island-time.flac', title: 'Okinawa Island Time · 沖縄島時間', bpm: 90, duration: 96 }),
     hokkaido: Object.freeze({ file: 'hokkaido-snowlight.flac', title: 'Hokkaido Snowlight · 北海道雪あかり', bpm: 75, duration: 96 }),
@@ -79,6 +79,7 @@
     let offset = 0;
     let offsetTheme = DEFAULT_THEME;
     let state = 'paused';
+    let gestureRetried = false;
     let error = null;
     const wanted = () => enabled && volume > 0 && !disposed;
     const getStatus = () => {
@@ -106,6 +107,7 @@
     };
     function publish(next, message = null) {
       state = next;
+      if (next === 'playing') gestureRetried = false;
       error = message;
       if (typeof onStatus === 'function') {
         try { onStatus(getStatus()); } catch (_) { /* UI callbacks must not stop audio. */ }
@@ -275,6 +277,7 @@
       }
       enabled = nextEnabled;
       volume = nextVolume;
+      gestureRetried = false;
       if (wanted()) void start();
       else pause();
     }
@@ -283,6 +286,14 @@
       // start enabled music and must not activate disabled or muted music.
       if (!wanted()) return Promise.resolve();
       if (context?.state === 'running' && (source?.theme === theme || state === 'starting')) return Promise.resolve();
+      // A failed start gets one more try from the next gesture. If that fails
+      // too, turning music back on or choosing another city retries, as its
+      // status says; retrying on every key press would fetch and decode the
+      // track each time.
+      if (state === 'error') {
+        if (gestureRetried) return Promise.resolve();
+        gestureRetried = true;
+      }
       let resuming;
       try {
         const ctx = ensureContext();

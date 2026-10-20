@@ -26,6 +26,12 @@
     for (const template of new Set([source, ...Object.values(catalogs).map(catalog => catalog[source]).filter(Boolean)])) {
       const parameters = [...template.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)];
       if (!parameters.length) { diagnosticKeys.set(template, source); continue; }
+      // A short label such as "Delete {name}" or "Plan: {plan}" would match any
+      // engine error that merely starts or ends with those words and rewrite it.
+      // Such labels are never diagnostics; only templates with enough fixed
+      // text to identify the message are recognized.
+      const literal = template.replace(/\{[A-Za-z][A-Za-z0-9_]*\}/g, '').trim();
+      if (literal.length < (/[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(literal) ? 2 : 12)) continue;
       let pattern = '', position = 0;
       for (const parameter of parameters) {
         pattern += escapePattern(template.slice(position, parameter.index)) + '([\\s\\S]*?)';

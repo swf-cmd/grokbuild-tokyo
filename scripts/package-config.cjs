@@ -27,7 +27,7 @@ function parseTarget(argv = [], host = process) {
 function packageOptions(root, target) {
   const manifest = require(path.join(root, 'package.json'));
   const options = {
-    dir: root, name: 'Grokbuild Tokyo', executableName: 'Grokbuild Tokyo',
+    dir: root, name: 'Dirth', executableName: 'Dirth',
     ...target, electronVersion: manifest.devDependencies.electron,
     appVersion: manifest.version,
     out: path.join(root, 'work', 'package'), overwrite: true, asar: true, asarIntegrityDigest: true,
@@ -36,7 +36,7 @@ function packageOptions(root, target) {
   };
   if (target.platform === 'darwin') {
     Object.assign(options, {
-      appBundleId: 'com.swf-cmd.grokbuild-tokyo',
+      appBundleId: 'com.swf-cmd.dirth',
       appCategoryType: 'public.app-category.developer-tools',
       icon: path.join(root, 'src', 'renderer', 'assets', 'icon.icns'),
       darwinDarkModeSupport: true,
@@ -46,7 +46,7 @@ function packageOptions(root, target) {
   } else {
     Object.assign(options, {
       icon: path.join(root, 'src', 'renderer', 'assets', 'icon.ico'),
-      win32metadata: { CompanyName: 'swf-cmd', FileDescription: 'Grokbuild Tokyo — 东京雨夜', ProductName: 'Grokbuild Tokyo' },
+      win32metadata: { CompanyName: 'swf-cmd', FileDescription: 'Dirth', ProductName: 'Dirth' },
     });
   }
   return options;

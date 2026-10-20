@@ -1,11 +1,11 @@
 'use strict';
 
 // Rebuild the original soundtracks:
-//   node scripts/render-ambience.cjs                   Tokyo Afterimage (WAV)
-//   node scripts/render-ambience.cjs --theme kyoto     one city (lossless FLAC)
+//   node scripts/render-ambience.cjs                   Tokyo Afterimage
+//   node scripts/render-ambience.cjs --theme kyoto     one city
 //   node scripts/render-ambience.cjs --theme all       every city
 // Runs the scores in a hidden Electron window; no audio device, downloads or API.
-// The city tracks are encoded losslessly with ffmpeg (it must be on PATH);
+// The tracks are encoded as lossless FLAC with ffmpeg (it must be on PATH);
 // --output file.wav writes the uncompressed render instead.
 if (process.versions.electron) {
   const { app, BrowserWindow } = require('electron');

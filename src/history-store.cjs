@@ -106,12 +106,26 @@ class HistoryStore {
   // Explicit corruption-recovery snapshots are separate from the temporary v2
   // migration backup. Keep their blobs usable without rescanning them per save.
   readRecoveryReferences() {
+    return this.readRecovery().then(recovery => recovery.blobs);
+  }
+  // Uploaded files live in folders named by a UUID. Any such path segment in a
+  // snapshot keeps that folder, so restoring the snapshot finds its files.
+  readRecoveryAttachmentFolders() {
+    return this.readRecovery().then(recovery => recovery.attachmentFolders);
+  }
+  readRecovery() {
     if (!this.recoveryReferences) this.recoveryReferences = (async () => {
       const refs = new Set();
-      const files = await fs.promises.readdir(this.directory, { withFileTypes: true });
+      const attachmentFolders = new Set();
+      const files = await fs.promises.readdir(this.directory, { withFileTypes: true }).catch(error => {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      });
       const read = async file => {
         const text = await fs.promises.readFile(file, 'utf8');
         for (const match of text.matchAll(/grok-blob:[a-f0-9]{64}/g)) refs.add(match[0]);
+        // A path separator is '/' or, inside JSON, an escaped backslash.
+        for (const match of text.matchAll(/(?:\/|\\\\)([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})(?=\/|\\\\)/gi)) attachmentFolders.add(match[1].toLowerCase());
       };
       for (const entry of files) {
         if (!/^conversations\.(?:json|journal)\.unreadable-\d+(?:\.sessions)?$/.test(entry.name)) continue;
@@ -123,7 +137,7 @@ class HistoryStore {
           }
         }
       }
-      return refs;
+      return { blobs: refs, attachmentFolders };
     })().catch(error => { this.recoveryReferences = null; throw error; });
     return this.recoveryReferences;
   }

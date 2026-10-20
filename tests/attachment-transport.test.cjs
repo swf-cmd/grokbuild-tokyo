@@ -136,13 +136,11 @@ test('non-image ACP message resources become attachments while tool resources re
   update({ sessionUpdate: 'agent_message_chunk', content: { type: 'resource', resource: { uri: 'file:///reports/notes.txt', mimeType: 'text/plain', text: 'Some notes' } } });
   update({ sessionUpdate: 'tool_call_update', toolCallId: 'build-report', content: [{ type: 'content', content: link }] });
   update({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', mimeType: 'image/png', data: png.toString('base64') } });
+  // Replayed media is already saved with the conversation and is not decoded again.
   const attachments = events.filter(item => item.type === 'attachment');
-  assert.equal(attachments.length, 2);
-  assert.equal(attachments[0].role, 'user');
-  assert.equal(attachments[0].replay, true);
-  assert.equal(attachments[0].attachment.name, 'result.pdf');
-  assert.equal(attachments[1].role, 'assistant');
-  assert.equal(attachments[1].replay, false);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].role, 'assistant');
+  assert.equal(attachments[0].replay, false);
   assert.deepEqual(events.find(item => item.type === 'tool').content, [{ type: 'content', content: link }]);
   assert.equal(events.filter(item => item.type === 'image').length, 1);
   assert(!events.some(item => item.type === 'text' && item.text === 'Some notes'), 'embedded documents are not duplicated into assistant chat text');

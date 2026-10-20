@@ -1,8 +1,8 @@
-# Grokbuild Tokyo user guide
+# Dirth user guide
 
 [简体中文](guide.zh-CN.md) · [Back to the project](../README.md)
 
-Grokbuild Tokyo is an unofficial Windows and Mac desktop client for Grok Build CLI. It connects to your locally installed Grok through ACP, with a rainy Tokyo backdrop, streaming chat, image and file uploads, downloadable reply attachments, and separate account profiles.
+Dirth is an unofficial Windows and Mac desktop client for Grok Build CLI. It connects to your locally installed Grok through ACP, with four city editions (Tokyo, Kyoto, Okinawa and Hokkaido), streaming chat, image and file uploads, downloadable reply attachments, and separate account profiles.
 
 Current version: **1.2.5**. The project uses the [MIT License](../LICENSE). See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for component notices and [SECURITY.md](../SECURITY.md) for security boundaries and vulnerability reporting.
 
@@ -15,21 +15,21 @@ You need Windows x64 or **macOS 13 Ventura or newer on Intel or Apple Silicon**,
 Running from source or building also requires Git, Node.js 22.13.0 or newer, and npm. Development and automated tests use Node.js 24. The packaged app bundles Electron and does not need a separate Node.js installation.
 
 ```sh
-git clone https://github.com/swf-cmd/grokbuild-tokyo.git
-cd grokbuild-tokyo
+git clone https://github.com/swf-cmd/dirth.git
+cd dirth
 npm ci
 npm start
 ```
 
 By default, the client looks for `%USERPROFILE%\.grok\bin\grok.exe` on Windows or `~/.grok/bin/grok` on Mac. If your CLI is elsewhere, open settings in the lower-left corner and select the executable (`grok` without a `.exe` extension on Mac). The local account uses the CLI's existing login and configuration. If no login is saved, choose **Sign in to Grok ↗** above the composer, then open the browser login page and verify the code. You can sign in directly with the default account; adding another account is optional. The client connects automatically after authorization and keeps your draft. Use **Set up Grok CLI** if you need to select the executable.
 
-The default working directory is `Workspace` inside the source project on Windows (beside `App` when packaged), or `~/Library/Application Support/Grokbuild Tokyo/Workspace` on Mac, created on first launch. To work on an existing project, select its folder in settings and start a new conversation. Existing conversations keep their original working directories.
+The default working directory is `Workspace` inside the source project on Windows (beside `App` when packaged), or `~/Library/Application Support/Dirth/Workspace` on Mac, created on first launch. To work on an existing project, select its folder in settings and start a new conversation. Existing conversations keep their original working directories.
 
 On Windows:
 
 ```powershell
 npm run build
-& '.\App\Grokbuild Tokyo.exe'
+& '.\App\Dirth.exe'
 ```
 
 Keep the complete `App` directory and its accompanying files when running or distributing the Windows version.
@@ -39,10 +39,10 @@ On Mac, install Apple Command Line Tools if needed (`xcode-select --install`), t
 ```sh
 npm run build:mac
 node scripts/verify-package.cjs --platform darwin --arch universal
-open "App/Grokbuild Tokyo.app"
+open "App/Dirth.app"
 ```
 
-The build creates `App/Grokbuild Tokyo.app` and `dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip`, plus a `.zip.sha256` checksum file. Unzip the archive and drag **Grokbuild Tokyo.app** to **Applications**. The `.app` includes its runtime files and licenses. For a smaller, single-architecture build, use `npm run build:mac:arm64` on Apple Silicon or `npm run build:mac:x64` for Intel. Both can be built on a Mac. `npm run build` targets the host platform and, on Mac, the current Node.js architecture; `npm run build:win` explicitly selects Windows x64.
+The build creates `App/Dirth.app` and `dist/Dirth-1.2.5-mac-universal.zip`, plus a `.zip.sha256` checksum file. Unzip the archive and drag **Dirth.app** to **Applications**. The `.app` includes its runtime files and licenses. For a smaller, single-architecture build, use `npm run build:mac:arm64` on Apple Silicon or `npm run build:mac:x64` for Intel. Both can be built on a Mac. `npm run build` targets the host platform and, on Mac, the current Node.js architecture; `npm run build:win` explicitly selects Windows x64.
 
 Mac builds use an ad-hoc local signature. They are not Developer ID signed or Apple notarized. For a downloaded copy whose source you trust, macOS may require **System Settings → Privacy & Security → Open Anyway**; follow [Apple’s instructions](https://support.apple.com/en-us/102445).
 
@@ -126,7 +126,7 @@ Every soundtrack is an original 96-second loop that works offline, and changing 
 
 ## Local data and repository contents
 
-The data root on Windows is the source checkout, or the folder containing the packaged `App` directory. On Mac, both source and packaged runs use **`~/Library/Application Support/Grokbuild Tokyo`**. Thus `data` below means `~/Library/Application Support/Grokbuild Tokyo/data` on Mac, and `Workspace` is its sibling. Accounts, attachments, settings, and browser cache stay outside the Mac `.app`, so replacing or moving the app does not replace personal data. The local CLI account may also use `GROK_HOME` (default `~/.grok`).
+The data root on Windows is the source checkout, or the folder containing the packaged `App` directory. On Mac, both source and packaged runs use **`~/Library/Application Support/Dirth`**. Thus `data` below means `~/Library/Application Support/Dirth/data` on Mac, and `Workspace` is its sibling. Versions up to 1.2.5 used `~/Library/Application Support/Grokbuild Tokyo`; on first launch Dirth moves that folder to the new location (a folder you had replaced with a link to another disk moves as a link) and leaves a symbolic link at the old path. Saved attachments are re-pointed at the new folder; earlier conversations still run in their old folder path through the link, so keep it. While Grokbuild Tokyo is still open, opening Dirth brings up the running app instead; quit it first to move the data. Accounts, attachments, settings, and browser cache stay outside the Mac `.app`, so replacing or moving the app does not replace personal data. The local CLI account may also use `GROK_HOME` (default `~/.grok`).
 
 | Path | Purpose | Tracked in Git |
 | --- | --- | --- |

@@ -1,4 +1,4 @@
-# 参与 Grokbuild Tokyo
+# 参与 Dirth
 
 [English](CONTRIBUTING.md) · 简体中文
 
@@ -18,8 +18,8 @@
 Fork 仓库，克隆自己的分支仓库，然后创建用于修改的分支：
 
 ```sh
-git clone https://github.com/YOUR-USERNAME/grokbuild-tokyo.git
-cd grokbuild-tokyo
+git clone https://github.com/YOUR-USERNAME/dirth.git
+cd dirth
 git switch -c describe-your-change
 npm ci
 npm start
@@ -27,7 +27,7 @@ npm start
 
 安装依赖和首次构建需要联网下载依赖及 Electron。Windows 默认使用 `%USERPROFILE%\.grok\bin\grok.exe`；Mac 默认使用 `~/.grok/bin/grok`，并可回退查找常见安装路径。必要时可在应用设置中选择实际的可执行文件。Mac 打包还需要 Apple 命令行工具（`xcode-select --install`）。
 
-Mac 的源码运行和打包程序共用 `~/Library/Application Support/Grokbuild Tokyo` 中的 `data/` 与 `Workspace/`。测试使用隔离根目录，验证账户或历史改动时应使用这些测试环境。Windows 保留原有的源码根目录或 `App/` 旁边的数据布局。
+Mac 的源码运行和打包程序共用 `~/Library/Application Support/Dirth` 中的 `data/` 与 `Workspace/`。测试使用隔离根目录，验证账户或历史改动时应使用这些测试环境。Windows 保留原有的源码根目录或 `App/` 旁边的数据布局。
 
 ## 修改约定
 
@@ -66,9 +66,9 @@ npm run build:mac
 npm run test:packaged -- --platform darwin --arch universal
 ```
 
-这会生成 `App/Grokbuild Tokyo.app`、`dist/Grokbuild-Tokyo-1.2.5-mac-universal.zip` 和 `.zip.sha256` 校验文件。`npm run build:mac:arm64` 与 `npm run build:mac:x64` 生成对应单架构版本。
+这会生成 `App/Dirth.app`、`dist/Dirth-1.2.5-mac-universal.zip` 和 `.zip.sha256` 校验文件。`npm run build:mac:arm64` 与 `npm run build:mac:x64` 生成对应单架构版本。
 
-`npm run build:win` 明确构建 Windows x64，生成 `dist/Grokbuild-Tokyo-1.2.5-win-x64.zip` 及其 `.zip.sha256` 校验文件。这是便携版压缩包，不是安装器：完整解压 `App/` 目录，然后启动 `App/Grokbuild Tokyo.exe`。压缩包保留运行时许可文件，不包含开发环境的 `data/` 与 `Workspace/` 目录。Windows 使用系统自带的 PowerShell `Compress-Archive`，macOS 交叉构建使用 `ditto`（Linux 交叉构建需要 `zip`）。
+`npm run build:win` 明确构建 Windows x64，生成 `dist/Dirth-1.2.5-win-x64.zip` 及其 `.zip.sha256` 校验文件。这是便携版压缩包，不是安装器：完整解压 `App/` 目录，然后启动 `App/Dirth.exe`。压缩包保留运行时许可文件，不包含开发环境的 `data/` 与 `Workspace/` 目录。Windows 使用系统自带的 PowerShell `Compress-Archive`，macOS 交叉构建使用 `ditto`（Linux 交叉构建需要 `zip`）。
 
 Mac 包使用本地临时签名（ad hoc），未使用 Developer ID 证书或经过 Apple 公证，不应将其标记为已公证的发布包。安装及首次启动说明见[使用指南](docs/guide.zh-CN.md#启动)。只有在两种架构上分别验证运行后，才应宣称两者均通过运行检查；检查 Mach-O 中包含两种架构本身不能代替运行测试。
 

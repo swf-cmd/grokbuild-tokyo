@@ -57,6 +57,23 @@ test('persisted and IPC diagnostics follow preview language without changing int
   } finally { setLanguage('en'); }
 });
 
+test('engine errors that only start or end like a short label are shown unchanged', () => {
+  const errors = [
+    "Delete failed: EACCES: permission denied, unlink '/repo/a.txt'",
+    'Rename operation not supported on this filesystem',
+    'Switch to a supported model and retry',
+    'Plan: free tier does not include grok-4.6',
+    'Resets are not allowed while a tool is running',
+    '429 Too Many Requests: 100% used',
+  ];
+  try {
+    for (const code of codes) {
+      setLanguage(code);
+      for (const error of errors) assert.equal(localizeDiagnostic(error), error, `${code}: ${error}`);
+    }
+  } finally { setLanguage('en'); }
+});
+
 test('all declared static text, placeholders, accessible names and starter prompts have translations', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'index.html'), 'utf8');
   const decode = value => value.replace(/&#(?:x([a-f0-9]+)|([0-9]+));/gi, (_match, hex, decimal) => String.fromCodePoint(parseInt(hex || decimal, hex ? 16 : 10))).replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
@@ -66,7 +83,7 @@ test('all declared static text, placeholders, accessible names and starter promp
 });
 
 test('renderer and backend translation calls are covered by every catalog', () => {
-  for (const file of ['renderer/app.js', 'app-controller.cjs', 'account-manager.cjs', 'grok-adapter.cjs', 'media.cjs', 'attachments.cjs', 'main.cjs']) {
+  for (const file of ['renderer/app.js', 'app-controller.cjs', 'controller-accounts.cjs', 'account-manager.cjs', 'grok-adapter.cjs', 'media.cjs', 'attachments.cjs', 'resource-download.cjs', 'main.cjs']) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', file), 'utf8');
     for (const match of source.matchAll(/\bt\(('(?:\\.|[^'\\])*')/g)) {
       const key = vm.runInNewContext(match[1]);
